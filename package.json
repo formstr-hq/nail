@@ -1,0 +1,24 @@
+{
+  "name": "mail-to-nostr",
+  "version": "1.0.0",
+  "description": "Fetch emails via IMAP and forward them as Nostr gift-wrapped DMs",
+  "main": "index.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.0.1",
+    "dotenv": "^16.4.7",
+    "imapflow": "^1.0.171",
+    "mailparser": "^3.7.2",
+    "nostr-tools": "^2.10.4",
+    "websocket-polyfill": "^0.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.12.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
