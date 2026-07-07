@@ -19,6 +19,7 @@
  */
 
 import nodemailer from "nodemailer";
+import { randomUUID } from "crypto";
 import WebSocket from "ws";
 import { decode } from "nostr-tools/nip19";
 import { getPublicKey } from "nostr-tools/pure";
@@ -34,10 +35,13 @@ const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
 const RELAY_URL = process.env.RELAY_URL ?? "wss://relay.damus.io";
 const FROM_EMAIL = process.env.FROM_EMAIL ?? `test@${SMTP_HOST}`;
+const TIMEOUT_MS = Number(process.env.TIMEOUT_MS ?? 180_000);
+
+// Unique ID embedded in every test run — used to reject stale DMs from prior runs.
+const RUN_ID = randomUUID();
 const SUBJECT =
-  process.env.SUBJECT ?? `Bridge test ${new Date().toISOString()}`;
-const BODY = process.env.BODY ?? `Sent at ${new Date().toISOString()}`;
-const TIMEOUT_MS = Number(process.env.TIMEOUT_MS ?? 30_000);
+  process.env.SUBJECT ?? `Bridge test [${RUN_ID}]`;
+const BODY = process.env.BODY ?? `Run ID: ${RUN_ID}\nSent at ${new Date().toISOString()}`;
 
 if (!RECIPIENT_EMAIL || !RECIPIENT_NSEC) {
   console.error("Required: RECIPIENT_EMAIL and RECIPIENT_NSEC");
@@ -45,19 +49,20 @@ if (!RECIPIENT_EMAIL || !RECIPIENT_NSEC) {
 }
 
 // --- subscribe first, send second, so no race ---
+// Keeps listening and discards DMs that don't contain runId (stale events from prior runs).
 function subscribeForDM(
   relayUrl: string,
   recipientPubkey: string,
   recipientPrivkey: Uint8Array,
   timeoutMs: number,
+  runId: string,
 ): Promise<{ kind: number; content: string; tags: string[][] }> {
   return new Promise((resolve, reject) => {
-    const since = Math.floor((Date.now() - 1000 * 60 * 15) / 1000);
     const ws = new WebSocket(relayUrl);
 
     const timer = setTimeout(() => {
       ws.close();
-      reject(new Error(`Timeout: no DM arrived after ${timeoutMs / 1000}s`));
+      reject(new Error(`Timeout: no matching DM (run-id ${runId}) arrived after ${timeoutMs / 1000}s`));
     }, timeoutMs);
 
     ws.on("open", () => {
@@ -87,6 +92,17 @@ function subscribeForDM(
           event as Parameters<typeof unwrapEvent>[0],
           recipientPrivkey,
         );
+
+        // Check subject tag or content for our unique run ID.
+        const subjectTag = rumor.tags.find(([t]) => t === "subject")?.[1] ?? "";
+        const hasRunId =
+          subjectTag.includes(runId) || rumor.content.includes(runId);
+        console.log(rumor)
+        if (!hasRunId) {
+          console.log(`Skipped DM (no run-id match): subject="${subjectTag}"`);
+          return; // keep waiting
+        }
+
         clearTimeout(timer);
         ws.close();
         resolve({ kind: rumor.kind, content: rumor.content, tags: rumor.tags });
@@ -102,20 +118,25 @@ function subscribeForDM(
   });
 }
 
-// async function sendEmail(): Promise<void> {
-//   const transport = nodemailer.createTransport({
-//     host: SMTP_HOST,
-//     port: SMTP_PORT,
-//     secure: SMTP_PORT === 465,
-//     ...(SMTP_USER && SMTP_PASS
-//       ? { auth: { user: SMTP_USER, pass: SMTP_PASS }, requireTLS: SMTP_PORT === 587 }
-//       : { ignoreTLS: true }),
-//     tls: { rejectUnauthorized: false },
-//   });
+async function sendEmail(): Promise<void> {
+  const transport = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_PORT === 465,
+    ...(SMTP_USER && SMTP_PASS
+      ? { auth: { user: SMTP_USER, pass: SMTP_PASS }, requireTLS: SMTP_PORT === 587 }
+      : { ignoreTLS: true }),
+    tls: { rejectUnauthorized: false },
+  });
 
-//   await transport.sendMail({ from: FROM_EMAIL, to: RECIPIENT_EMAIL!, subject: SUBJECT, text: BODY });
-//   console.log(`Sent  : ${FROM_EMAIL} → ${RECIPIENT_EMAIL} via ${SMTP_HOST}:${SMTP_PORT}`);
-// }
+  const SEND_TIMEOUT_MS = 10_000;
+  const sendPromise = transport.sendMail({ from: FROM_EMAIL, to: RECIPIENT_EMAIL!, subject: SUBJECT, text: BODY });
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`SMTP timed out after ${SEND_TIMEOUT_MS / 1000}s — check SMTP_HOST/SMTP_PORT`)), SEND_TIMEOUT_MS),
+  );
+  await Promise.race([sendPromise, timeoutPromise]);
+  console.log(`Sent  : ${FROM_EMAIL} → ${RECIPIENT_EMAIL} via ${SMTP_HOST}:${SMTP_PORT}`);
+}
 
 async function main(): Promise<void> {
   const decoded = decode(RECIPIENT_NSEC!);
@@ -126,16 +147,19 @@ async function main(): Promise<void> {
   console.log(`Pubkey: ${recipientPubkey}`);
   console.log(`Relay : ${RELAY_URL}`);
 
+  console.log(`Run ID: ${RUN_ID}`);
+
   // Subscribe before sending so we don't miss the event.
   const dmPromise = subscribeForDM(
     RELAY_URL,
     recipientPubkey,
     recipientPrivkey,
     TIMEOUT_MS,
+    RUN_ID,
   );
 
+  console.log(`Waiting up to ${TIMEOUT_MS / 1000}s for DM with run-id …\n`);
   // await sendEmail();
-  console.log(`Waiting up to ${TIMEOUT_MS / 1000}s for DM …\n`);
 
   const rumor = await dmPromise;
 
