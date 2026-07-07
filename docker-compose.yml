@@ -1,0 +1,49 @@
+# Standalone dev compose for nail.
+#
+# Starts the nostr-bridge wired to a local mock relay — no mailcow required.
+# The bridge receives mail via LMTP on port 2400 (internal).
+#
+# Required env vars (create a .env file or export before running):
+#   NOSTR_BRIDGE_NSEC   — nsec1... or 64-char hex private key for the bridge identity
+#
+# Optional env vars:
+#   BRIDGE_DOMAIN       — domain the bridge handles (default: nostr-forward.local)
+#   LMTP_PORT           — LMTP listen port inside the container (default: 2400)
+#
+# Usage:
+#   docker compose up -d --build
+#   RELAY_URL=ws://127.0.0.1:4600 pnpm test   (inside e2e-nostr/)
+
+services:
+  nostr-mock-relay:
+    build:
+      context: e2e-nostr
+      dockerfile: Dockerfile.relay
+    ports:
+      - "127.0.0.1:4600:4600"
+    restart: unless-stopped
+    networks:
+      - nail-network
+
+  nostr-bridge:
+    build: ./nostr-bridge
+    container_name: nostr-bridge-nail
+    restart: unless-stopped
+    depends_on:
+      - nostr-mock-relay
+    environment:
+      - NOSTR_BRIDGE_NSEC=${NOSTR_BRIDGE_NSEC}
+      - BRIDGE_DOMAIN=${BRIDGE_DOMAIN:-nostr-forward.local}
+      - BOOTSTRAP_RELAYS=ws://nostr-mock-relay:4600
+      - DEFAULT_RELAY_URL=ws://nostr-mock-relay:4600
+      - NIP05_BASE_URL=http://host.docker.internal:4500
+      - POSTFIX_HOST=host.docker.internal
+      - POSTFIX_PORT=25
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - nail-network
+
+networks:
+  nail-network:
+    driver: bridge

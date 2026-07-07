@@ -1,0 +1,28 @@
+{
+  "name": "e2e-nostr",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "RELAY_URL=ws://127.0.0.1:4600 vitest",
+    "test:inbound": "RELAY_URL=ws://127.0.0.1:4600 vitest src/test-inbound.test.ts",
+    "test:outbound": "RELAY_URL=ws://127.0.0.1:4600 vitest src/test-outbound.test.ts",
+    "test:mail": "vitest src/test-mail.test.ts"
+  },
+  "dependencies": {
+    "imapflow": "^1.0.171",
+    "mailparser": "^3.7.1",
+    "nodemailer": "^6.9.13",
+    "nostr-mock-relay": "^0.1.1",
+    "nostr-tools": "^2.7.2",
+    "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.4",
+    "@types/node": "^22.0.0",
+    "@types/nodemailer": "^6.4.15",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.4.5",
+    "vitest": "^3.0.0"
+  }
+}

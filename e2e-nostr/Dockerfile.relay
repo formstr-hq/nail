@@ -1,0 +1,14 @@
+FROM node:24-alpine
+
+WORKDIR /app
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile --prod
+
+COPY relay-server.js ./
+
+EXPOSE 4600
+CMD ["node", "relay-server.js"]

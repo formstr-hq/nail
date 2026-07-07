@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Flag JS as available before first paint, so scroll-reveal styles only
+         hide content when JS can animate it back in. No-JS users and crawlers
+         keep everything visible, and there's no reveal flash on load. -->
+    <script>
+      document.documentElement.classList.add("js");
+    </script>
+
+    <!-- IMPORTANT: set this to the real deployed origin (canonical, OG & sitemap) -->
+    <link rel="canonical" href="https://mailstr.app/" />
+
+    <title>Mailstr — Email for your Nostr key. you@mailstr.app</title>
+    <meta
+      name="description"
+      content="Mailstr bridges email and Nostr. Claim you@mailstr.app and mail sent to it arrives as an encrypted message to your Nostr key — no password, no account to ban, no inbox mining your life. Pay once with Lightning, own it with your key."
+    />
+    <meta name="theme-color" content="#ff5c00" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="author" content="Formstr" />
+    <meta
+      name="keywords"
+      content="Mailstr, Nostr, Nostr email, email bridge, NIP-05, encrypted email, decentralized email, private email, Lightning payment, mailstr.app, Formstr"
+    />
+
+    <!-- icons -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Mailstr" />
+    <meta property="og:url" content="https://mailstr.app/" />
+    <meta
+      property="og:title"
+      content="Mailstr — Email for your Nostr key. you@mailstr.app"
+    />
+    <meta
+      property="og:description"
+      content="Claim you@mailstr.app and mail sent to it arrives as an encrypted message to your Nostr key. No password, no account to ban. Pay once with Lightning, own it with your key."
+    />
+    <meta property="og:image" content="https://mailstr.app/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Mailstr — email for your Nostr key. Mail to you@mailstr.app arrives as an encrypted Nostr message."
+    />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="Mailstr — Email for your Nostr key. you@mailstr.app"
+    />
+    <meta
+      name="twitter:description"
+      content="Claim you@mailstr.app and mail sent to it arrives as an encrypted message to your Nostr key. No password, no account to ban."
+    />
+    <meta name="twitter:image" content="https://mailstr.app/og-image.png" />
+
+    <!-- fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- structured data -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://mailstr.app/#org",
+            "name": "Formstr",
+            "url": "https://mailstr.app/",
+            "description": "Decentralized, privacy-first productivity tools built on the Nostr protocol.",
+            "sameAs": ["https://github.com/formstr-hq", "https://formstr.app", "https://about.formstr.app"]
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://mailstr.app/#website",
+            "url": "https://mailstr.app/",
+            "name": "Mailstr",
+            "publisher": { "@id": "https://mailstr.app/#org" }
+          },
+          {
+            "@type": "SoftwareApplication",
+            "name": "Mailstr",
+            "applicationCategory": "CommunicationApplication",
+            "operatingSystem": "Web",
+            "url": "https://mailstr.app",
+            "description": "A Nostr mail bridge: mail sent to you@mailstr.app arrives as an encrypted message to your Nostr key. NIP-05 identity included. Paid once via Lightning."
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <noscript>
+      <h1>Mailstr — email for your Nostr key</h1>
+      <p>
+        Mailstr bridges email and Nostr. Claim you@mailstr.app and mail sent to
+        it arrives as an encrypted message to your Nostr key — no password, no
+        account to ban, no inbox mining your life. Pay once with Lightning, own
+        it with your key. Signing up requires JavaScript; enable it to claim
+        your address.
+      </p>
+      <ul>
+        <li><a href="/mails">Open your Mailstr inbox</a></li>
+        <li><a href="/privacy-policy">Privacy policy</a></li>
+        <li><a href="https://about.formstr.app">The Formstr suite</a></li>
+        <li><a href="https://github.com/formstr-hq">Formstr on GitHub</a></li>
+      </ul>
+    </noscript>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
