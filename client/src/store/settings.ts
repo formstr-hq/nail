@@ -1,33 +1,43 @@
 import { create } from 'zustand'
+import type { ActiveSigner } from '@formstr/signer'
 import type { MailSettings } from '@/lib/nostr/settings'
-import { saveSettings, loadSettings } from '@/lib/nostr/settings'
-import type { Signer } from '@/lib/nostr/signer'
+import { saveSettings, subscribeSettings } from '@/lib/nostr/settings'
 
 interface SettingsState {
   settings: MailSettings
   loading: boolean
-  load: (pubkey: string, signer: Signer, sk: Uint8Array | null) => Promise<void>
-  save: (settings: MailSettings, pubkey: string, sk: Uint8Array) => Promise<void>
+  start: (pubkey: string, active: ActiveSigner) => void
+  stop: () => void
+  save: (settings: MailSettings, pubkey: string, active: ActiveSigner) => Promise<void>
   update: (patch: Partial<MailSettings>) => void
 }
 
-export const useSettingsStore = create<SettingsState>()((set, _get) => ({
+let unsubscribe: (() => void) | null = null
+
+export const useSettingsStore = create<SettingsState>()((set, get) => ({
   settings: {},
   loading: false,
 
-  load: async (pubkey, signer, sk) => {
-    set({ loading: true })
-    try {
-      const loaded = await loadSettings(pubkey, signer, sk)
-      if (loaded) set({ settings: loaded })
-    } finally {
-      set({ loading: false })
-    }
+  start: (pubkey, active) => {
+    get().stop()
+    set({ settings: {}, loading: true })
+    unsubscribe = subscribeSettings(
+      pubkey,
+      active,
+      (settings) => set({ settings }),
+      () => set({ loading: false }),
+    )
   },
 
-  save: async (settings, pubkey, sk) => {
+  stop: () => {
+    unsubscribe?.()
+    unsubscribe = null
+    set({ loading: false })
+  },
+
+  save: async (settings, pubkey, active) => {
     set({ settings })
-    await saveSettings(settings, pubkey, sk)
+    await saveSettings(settings, pubkey, active)
   },
 
   update: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),

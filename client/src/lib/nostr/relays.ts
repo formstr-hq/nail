@@ -1,10 +1,19 @@
 import { SimplePool } from 'nostr-tools'
+import type { Event } from 'nostr-tools'
 import { KIND_DM_RELAYS, DEFAULT_RELAYS } from './constants'
 
 const pool = new SimplePool()
 
 export function getPool(): SimplePool {
   return pool
+}
+
+// Extract the relay URLs from a kind 10050 DM relay list event.
+export function parseDmRelayTags(event: Event): string[] {
+  return event.tags
+    .filter((t) => t[0] === 'relay')
+    .map((t) => t[1])
+    .filter(Boolean) as string[]
 }
 
 export async function fetchDmRelays(pubkey: string): Promise<string[]> {
@@ -16,10 +25,6 @@ export async function fetchDmRelays(pubkey: string): Promise<string[]> {
 
   if (!events.length) return DEFAULT_RELAYS
 
-  const relays = events[0].tags
-    .filter((t) => t[0] === 'relay')
-    .map((t) => t[1])
-    .filter(Boolean) as string[]
-
+  const relays = parseDmRelayTags(events[0])
   return relays.length ? relays : DEFAULT_RELAYS
 }

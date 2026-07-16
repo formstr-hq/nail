@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
-import { signerFromAccount } from '@/lib/nostr/signer'
 import { useInbox } from '@/hooks/useInbox'
+import { useLocalRelayLifecycle } from '@/hooks/useLocalRelayLifecycle'
 import { LoginPage } from '@/components/LoginPage'
 import { Sidebar } from '@/components/Sidebar'
 import { EmailList } from '@/components/EmailList'
@@ -13,15 +13,15 @@ import { SettingsModal } from '@/components/SettingsModal'
 function MailApp() {
   const [composing, setComposing] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const { account, sk } = useAccountStore()
-  const { load } = useSettingsStore()
+  const { account, active } = useAccountStore()
+  const { start, stop } = useSettingsStore()
   useInbox()
 
   useEffect(() => {
-    if (!account) return
-    const signer = signerFromAccount(account.method, sk)
-    load(account.pubkey, signer, sk).catch(console.error)
-  }, [account, sk, load])
+    if (!account || !active) return
+    start(account.pubkey, active)
+    return stop
+  }, [account, active, start, stop])
 
   return (
     <div className="flex h-screen bg-background">
@@ -39,6 +39,22 @@ function MailApp() {
 }
 
 export default function App() {
-  const account = useAccountStore((s) => s.account)
-  return account ? <MailApp /> : <LoginPage />
+  const { account, active, ready, init } = useAccountStore()
+  // Lives in App (not MailApp) so logout tears down via effect deps rather
+  // than relying on unmount ordering.
+  useLocalRelayLifecycle()
+
+  useEffect(() => {
+    void init()
+  }, [init])
+
+  if (!ready) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    )
+  }
+
+  return account && active ? <MailApp /> : <LoginPage />
 }

@@ -2,45 +2,47 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Formstr brand: ink #0b0b0c, paper #f7f5ef, primary #ff5c00,
+   primary-light #ff8a00, amber #ffb020 */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 224 71.4% 4.1%;
+    --background: 45 33% 95%;
+    --foreground: 240 4% 5%;
     --card: 0 0% 100%;
-    --card-foreground: 224 71.4% 4.1%;
-    --border: 220 13% 91%;
-    --input: 220 13% 91%;
-    --ring: 262.1 83.3% 57.8%;
-    --primary: 262.1 83.3% 57.8%;
-    --primary-foreground: 210 20% 98%;
-    --secondary: 220 14.3% 95.9%;
-    --secondary-foreground: 220.9 39.3% 11%;
-    --muted: 220 14.3% 95.9%;
-    --muted-foreground: 220 8.9% 46.1%;
-    --accent: 220 14.3% 95.9%;
-    --accent-foreground: 220.9 39.3% 11%;
+    --card-foreground: 240 4% 5%;
+    --border: 45 12% 85%;
+    --input: 45 12% 82%;
+    --ring: 22 100% 50%;
+    --primary: 22 100% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 45 25% 91%;
+    --secondary-foreground: 240 4% 5%;
+    --muted: 45 25% 91%;
+    --muted-foreground: 240 4% 40%;
+    --accent: 26 100% 94%;
+    --accent-foreground: 22 90% 30%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 20% 98%;
-    --radius: 0.5rem;
+    --radius: 0.625rem;
   }
 
   .dark {
-    --background: 224 71.4% 4.1%;
-    --foreground: 210 20% 98%;
-    --card: 224 71.4% 4.1%;
-    --card-foreground: 210 20% 98%;
-    --border: 215 27.9% 16.9%;
-    --input: 215 27.9% 16.9%;
-    --ring: 263.4 70% 50.4%;
-    --primary: 263.4 70% 50.4%;
-    --primary-foreground: 210 20% 98%;
-    --secondary: 215 27.9% 16.9%;
-    --secondary-foreground: 210 20% 98%;
-    --muted: 215 27.9% 16.9%;
-    --muted-foreground: 217.9 10.6% 64.9%;
-    --accent: 215 27.9% 16.9%;
-    --accent-foreground: 210 20% 98%;
-    --destructive: 0 62.8% 30.6%;
+    --background: 240 4% 5%;
+    --foreground: 45 33% 95%;
+    --card: 240 4% 8%;
+    --card-foreground: 45 33% 95%;
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 32 100% 50%;
+    --primary: 32 100% 50%;
+    --primary-foreground: 240 4% 5%;
+    --secondary: 240 4% 12%;
+    --secondary-foreground: 45 33% 95%;
+    --muted: 240 4% 12%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 240 4% 14%;
+    --accent-foreground: 39 100% 56%;
+    --destructive: 0 62.8% 45%;
     --destructive-foreground: 210 20% 98%;
   }
 }
@@ -51,5 +53,341 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* @formstr/signer login UI — brand overrides on the shipped BEM base. */
+/* Selectors carry extra specificity so they win over the package      */
+/* stylesheet regardless of import order, including its                */
+/* prefers-color-scheme dark block; colors follow our theme tokens so  */
+/* the modal matches both light and .dark modes.                       */
+/* ------------------------------------------------------------------ */
+
+div.nostr-signer__root {
+  background: hsl(240 4% 5% / 0.5);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+.nostr-signer__root .nostr-signer__modal {
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 16px;
+}
+
+.nostr-signer__root .nostr-signer__title {
+  color: hsl(var(--foreground));
+}
+
+.nostr-signer__root .nostr-signer__close:hover {
+  background: hsl(var(--accent));
+}
+
+/* Brand header injected by tuneLoginUi replaces the stock one (whose
+   close button is inert here — no onCancel handler is passed). */
+.nostr-signer__root .nostr-signer__header {
+  display: none;
+}
+.nostr-signer__root .nostr-signer__brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: 4px 0 20px;
+  text-align: center;
+}
+.nostr-signer__root .nostr-signer__brand-glyph {
+  width: 46px;
+  height: 46px;
+  margin-bottom: 10px;
+}
+.nostr-signer__root .nostr-signer__brand-title {
+  margin: 0;
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: hsl(var(--foreground));
+}
+.nostr-signer__root .nostr-signer__brand-sub {
+  margin: 0;
+  font-size: 0.85rem;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Sign-in method picker (structure built in LoginPage's tuneLoginUi):
+   a primary "create" card, a mono eyebrow divider, then icon rows for
+   people who already have a key. methodListNav toggles the --picker
+   class; list and panel slide past each other like sorted mail. */
+.nostr-signer__root .nostr-signer__tabs {
+  border-bottom: none;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  margin-bottom: 0;
+}
+
+.nostr-signer__root .nostr-signer__tab {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 38px 10px 10px;
+  position: relative;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) + 2px);
+  background: transparent;
+}
+.nostr-signer__root .nostr-signer__tab::after {
+  content: '→';
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, monospace;
+  font-size: 0.9rem;
+  color: hsl(var(--muted-foreground) / 0.7);
+  transition:
+    transform 150ms ease,
+    color 150ms ease;
+}
+.nostr-signer__root .nostr-signer__tab:hover {
+  background: hsl(var(--muted) / 0.6);
+  border-color: hsl(var(--border));
+}
+.nostr-signer__root .nostr-signer__tab:hover::after {
+  color: hsl(var(--primary));
+  transform: translateY(-50%) translateX(3px);
+}
+.nostr-signer__root .nostr-signer__tab-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+.nostr-signer__root .nostr-signer__tab-icon svg {
+  width: 19px;
+  height: 19px;
+}
+.nostr-signer__root .nostr-signer__tab-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.nostr-signer__root .nostr-signer__tab-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.3;
+  color: hsl(var(--foreground));
+}
+.nostr-signer__root .nostr-signer__tab-desc {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: hsl(var(--muted-foreground));
+}
+
+/* the create card is the primary action — bordered card with the
+   brand-gradient chip (same gradient as the mailstr glyph) */
+.nostr-signer__root .nostr-signer__tab--create {
+  border-color: hsl(var(--border));
+  background: hsl(var(--background));
+  padding: 13px 38px 13px 12px;
+  margin-bottom: 6px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+}
+.nostr-signer__root .nostr-signer__tab--create:hover {
+  border-color: hsl(var(--primary) / 0.45);
+  background: hsl(var(--background));
+  box-shadow: 0 4px 14px hsl(var(--primary) / 0.12);
+}
+.nostr-signer__root .nostr-signer__tab--create::after {
+  color: hsl(var(--primary));
+}
+.nostr-signer__root .nostr-signer__tab--create .nostr-signer__tab-icon {
+  background: linear-gradient(180deg, #ff5c00, #ffb020);
+  color: #fff;
+}
+
+/* mono eyebrow divider — same register as the landing's section labels */
+.nostr-signer__root .nostr-signer__tabs-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 6px;
+  font-family: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, monospace;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground) / 0.8);
+  white-space: nowrap;
+}
+.nostr-signer__root .nostr-signer__tabs-label::before,
+.nostr-signer__root .nostr-signer__tabs-label::after {
+  content: '';
+  height: 1px;
+  flex: 1;
+  background: hsl(var(--border));
+}
+
+/* picker ⇄ detail: one visible at a time, sliding past each other */
+.nostr-signer__root .nostr-signer__modal--picker .nostr-signer__body,
+.nostr-signer__root .nostr-signer__modal--picker .nostr-signer__error {
+  display: none;
+}
+.nostr-signer__root
+  .nostr-signer__modal:not(.nostr-signer__modal--picker)
+  .nostr-signer__tabs {
+  display: none;
+}
+@keyframes nostr-signer-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes nostr-signer-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.nostr-signer__root .nostr-signer__body {
+  animation: nostr-signer-in-right 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.nostr-signer__root .nostr-signer__tabs {
+  animation: nostr-signer-in-left 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* back to the list — mono eyebrow, structurally rhymes with the divider */
+.nostr-signer__root .nostr-signer__back {
+  display: block;
+  margin: 0 0 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: 'SF Mono', ui-monospace, 'JetBrains Mono', Menlo, monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+.nostr-signer__root .nostr-signer__back:hover {
+  color: hsl(var(--primary));
+}
+/* after account creation the ncryptsec backup must be acknowledged —
+   no navigating away from it */
+.nostr-signer__root
+  .nostr-signer__body:has(.nostr-signer__panel--created:not([hidden]))
+  .nostr-signer__back {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nostr-signer__root .nostr-signer__body,
+  .nostr-signer__root .nostr-signer__tabs {
+    animation: none;
+  }
+  .nostr-signer__root .nostr-signer__tab::after {
+    transition: none;
+  }
+}
+
+.nostr-signer__root .nostr-signer__tab:focus-visible,
+.nostr-signer__root .nostr-signer__back:focus-visible,
+.nostr-signer__root .nostr-signer__button:focus-visible,
+.nostr-signer__root .nostr-signer__close:focus-visible {
+  outline: 2px solid hsl(var(--ring) / 0.5);
+  outline-offset: 1px;
+}
+
+/* prefilled/advanced fields the web client doesn't expose:
+   relays are auto-filled with defaults (Remote QR renders straight
+   to a QR code) and NIP-46 permission lists stay default */
+.nostr-signer__root .nostr-signer__input--perms,
+.nostr-signer__root label[for='nostr-signer-nc-perms'],
+.nostr-signer__root label[for='nostr-signer-bunker-perms'],
+.nostr-signer__root .nostr-signer__panel--nostrconnect .nostr-signer__input--relays,
+.nostr-signer__root label[for='nostr-signer-nc-relays'],
+.nostr-signer__root .nostr-signer__tab--android,
+.nostr-signer__root .nostr-signer__panel--android {
+  display: none;
+}
+
+.nostr-signer__root .nostr-signer__hint,
+.nostr-signer__root .nostr-signer__label,
+.nostr-signer__root .nostr-signer__status {
+  color: hsl(var(--muted-foreground));
+}
+
+.nostr-signer__root .nostr-signer__input {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--input));
+  border-radius: calc(var(--radius) - 2px);
+}
+.nostr-signer__root .nostr-signer__input:focus {
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 3px hsl(var(--ring) / 0.2);
+}
+
+.nostr-signer__root .nostr-signer__button {
+  border-radius: calc(var(--radius) - 2px);
+}
+.nostr-signer__root .nostr-signer__button--primary {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+}
+.nostr-signer__root .nostr-signer__button--primary:hover {
+  background: hsl(var(--primary) / 0.9);
+}
+.nostr-signer__root .nostr-signer__button--secondary {
+  background: transparent;
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--input));
+}
+.nostr-signer__root .nostr-signer__button--secondary:hover {
+  background: hsl(var(--accent));
+}
+
+.nostr-signer__root .nostr-signer__qr-uri {
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+.nostr-signer__root .nostr-signer__ncryptsec-display {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.nostr-signer__root .nostr-signer__error {
+  background: hsl(var(--destructive) / 0.1);
+  color: hsl(var(--destructive));
+}
+
+/* the package's `.nostr-signer__form { display: flex }` defeats the
+   [hidden] attribute it sets after the nostrconnect form is submitted */
+.nostr-signer__root .nostr-signer__form[hidden] {
+  display: none;
 }

@@ -1,4 +1,5 @@
 import { useMailStore } from '@/store/mail'
+import { useAccountStore } from '@/store/account'
 import type { Email } from '@/types/mail'
 
 function formatDate(ts: number): string {
@@ -44,17 +45,17 @@ function EmailRow({ email, selected }: { email: Email; selected: boolean }) {
 
 export function EmailList() {
   const { emails, folder, selectedId } = useMailStore()
+  const myPubkey = useAccountStore((s) => s.account?.pubkey)
 
   const filtered = Object.values(emails)
     .filter((e) => {
       if (folder === 'trash') return e.labels.includes('trash')
       if (folder === 'archive') return e.labels.includes('archive')
       if (folder === 'spam') return e.labels.includes('spam')
-      if (folder === 'sent') {
-        // Emails where we are the sender (self-copy in Sent)
-        return !e.labels.some((l) => ['trash', 'archive', 'spam'].includes(l))
-      }
-      return !e.labels.some((l) => ['trash', 'archive', 'spam'].includes(l))
+      const unlabeled = !e.labels.some((l) => ['trash', 'archive', 'spam'].includes(l))
+      // Sent = the self-copy we wrap to ourselves; Inbox = everything else
+      if (folder === 'sent') return unlabeled && e.senderPubkey === myPubkey
+      return unlabeled && e.senderPubkey !== myPubkey
     })
     .sort((a, b) => b.timestamp - a.timestamp)
 

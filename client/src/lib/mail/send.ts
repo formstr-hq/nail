@@ -1,4 +1,5 @@
 import { getPool, fetchDmRelays } from '@/lib/nostr/relays'
+import { getLocalRelay } from '@/lib/nostr/localRelay'
 import { buildMailRumor, giftWrap } from '@/lib/nostr/giftwrap'
 import { buildRfc2822 } from './rfc2822'
 import { resolveRecipient } from './resolve'
@@ -48,9 +49,11 @@ export async function sendMail(params: SendMailParams): Promise<void> {
     }),
   )
 
-  // Send a copy to self for Sent folder
+  // Send a copy to self for the Sent folder via the local relay: stored
+  // locally first (the inbox observe picks it up immediately, so Sent shows
+  // the mail before any relay ack), then delivered to the user's own relays
+  // with durable retry.
   const selfRumor = buildMailRumor(senderPubkey, senderPubkey, rfc2822)
   const selfWrapped = giftWrap(selfRumor, senderPubkey)
-  const selfRelays = await fetchDmRelays(senderPubkey)
-  await Promise.all(selfRelays.map((url) => pool.publish([url], selfWrapped)))
+  await getLocalRelay().publishEvent(selfWrapped)
 }
