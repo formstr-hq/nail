@@ -10,4 +10,6 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  // The local relay worker imports an ESM-only package.
+  worker: { format: "es" },
 });
