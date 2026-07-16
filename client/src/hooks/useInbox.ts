@@ -1,11 +1,11 @@
 import { useEffect } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useMailStore } from '@/store/mail'
-import { getPool, fetchDmRelays } from '@/lib/nostr/relays'
+import { getLocalRelay } from '@/lib/nostr/localRelay'
 import { decodeGiftWrap } from '@/lib/mail/receive'
 import { signerFromActive } from '@/lib/nostr/signer'
 import { KIND_GIFTWRAP, KIND_MAIL } from '@/lib/nostr/constants'
-import type { Event, Filter } from 'nostr-tools'
+import type { Filter } from 'nostr-tools'
 
 export function useInbox() {
   const { account, active } = useAccountStore()
@@ -15,33 +15,29 @@ export function useInbox() {
     if (!account || !active) return
 
     let alive = true
-    const pool = getPool()
     const signer = signerFromActive(active)
 
-    async function subscribe() {
-      const relays = await fetchDmRelays(account!.pubkey)
+    const filter: Filter = {
+      kinds: [KIND_GIFTWRAP],
+      '#p': [account.pubkey],
+      '#k': [String(KIND_MAIL)],
+    } as Filter
 
-      const filter: Filter = {
-        kinds: [KIND_GIFTWRAP],
-        '#p': [account!.pubkey],
-        '#k': [String(KIND_MAIL)],
-      } as Filter
+    // Cache replay → EOSE → live tail. Cached events re-deliver on every
+    // mount, so dedup BEFORE decrypting — nip44 per gift wrap is expensive
+    // (one NIP-46 round-trip each for remote-signer users).
+    const handle = getLocalRelay().observe([filter], {
+      onEvent: async (event) => {
+        if (!alive) return
+        if (useMailStore.getState().seenIds.has(event.id)) return
+        const email = await decodeGiftWrap(event, signer)
+        if (email) addEmail(email)
+      },
+    })
 
-      const sub = pool.subscribeMany(relays, filter, {
-        onevent: async (event: Event) => {
-          if (!alive) return
-          const email = await decodeGiftWrap(event, signer)
-          if (email) addEmail(email)
-        },
-      })
-
-      return sub
-    }
-
-    const subPromise = subscribe().catch(console.error)
     return () => {
       alive = false
-      subPromise.then((sub) => sub?.close())
+      handle.unobserve()
     }
   }, [account, active, addEmail])
 }
