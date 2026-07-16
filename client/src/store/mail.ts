@@ -10,6 +10,7 @@ interface MailState {
   markRead: (id: string) => void
   setFolder: (folder: EmailFolder) => void
   setSelected: (id: string | null) => void
+  clear: () => void
 }
 
 export const useMailStore = create<MailState>()((set, get) => ({
@@ -35,4 +36,7 @@ export const useMailStore = create<MailState>()((set, get) => ({
 
   setFolder: (folder) => set({ folder, selectedId: null }),
   setSelected: (id) => set({ selectedId: id }),
+
+  clear: () =>
+    set({ emails: {}, seenIds: new Set(), selectedId: null, folder: 'inbox' }),
 }))

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { useInbox } from '@/hooks/useInbox'
+import { useLocalRelayLifecycle } from '@/hooks/useLocalRelayLifecycle'
 import { LoginPage } from '@/components/LoginPage'
 import { Sidebar } from '@/components/Sidebar'
 import { EmailList } from '@/components/EmailList'
@@ -38,6 +39,9 @@ function MailApp() {
 
 export default function App() {
   const { account, active, ready, init } = useAccountStore()
+  // Lives in App (not MailApp) so logout tears down via effect deps rather
+  // than relying on unmount ordering.
+  useLocalRelayLifecycle()
 
   useEffect(() => {
     void init()
