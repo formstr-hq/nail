@@ -14,13 +14,14 @@ function MailApp() {
   const [composing, setComposing] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const { account, active } = useAccountStore()
-  const { load } = useSettingsStore()
+  const { start, stop } = useSettingsStore()
   useInbox()
 
   useEffect(() => {
     if (!account || !active) return
-    load(account.pubkey, active).catch(console.error)
-  }, [account, active, load])
+    start(account.pubkey, active)
+    return stop
+  }, [account, active, start, stop])
 
   return (
     <div className="flex h-screen bg-background">
