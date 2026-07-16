@@ -149,6 +149,60 @@ One account at a time. Public key = user identity. The signer is the sole creden
 
 ---
 
+## Local relay / data layer (@formstr/local-relay, Jul 2026)
+
+Event caching and most relay traffic go through `@formstr/local-relay`
+(`^0.4.2`): an IndexedDB-backed local relay running in a Web Worker. The app
+declares interests (`observe`) and publishes via a `DataLayer`; the worker
+owns upstream WebSocket networking, dedups subscriptions by filter hash,
+persists ciphertext, and retries failed publishes through a durable outbox.
+On reload the inbox renders from cache without touching the network.
+
+### Ownership split (hybrid — deliberate)
+
+| Local relay (`DataLayer`) | Stays on `SimplePool` |
+|---|---|
+| Inbox observe (kind 1059) | NIP-46 signer transport (`@formstr/signer` needs the pool) |
+| Own kind-10050 discovery | Recipient kind-10050 lookup (`fetchDmRelays`) |
+| Settings 30078 read + write | Recipient-targeted gift-wrap publish |
+| Self "Sent" copy publish | |
+
+**Why recipient publishes stay on the pool**: the worker's `publishTargets`
+routes p-tagged pubkeys via their cached NIP-65 kind-10002 relay list, not
+the NIP-17 kind-10050 list gift-wrap delivery requires, and `publishEvent`
+accepts no explicit relay list. Upstream contribution (10050-aware routing
+for DM kinds) is the long-term fix.
+
+### Key files
+
+- `src/relay.worker.ts` — custom worker entry: IndexedDB namespace `nail`,
+  prune policy protecting kinds 1059 and 30078 (the default policy would
+  evict mail after 7 days / past the 50k event cap)
+- `src/lib/nostr/localRelay.ts` — lazy `DataLayer` singleton +
+  `setLocalRelaySigner` (signer injected by the lifecycle hook, no store import)
+- `src/hooks/useLocalRelayLifecycle.ts` — binds account to the worker:
+  `setActiveAccount`, kind-10050 discovery → `setDmRelays` + `setUserRelays`
+  (this app has no kind-10002 concept; the 10050 list *is* the relay set),
+  mail-store clear on account switch
+- `src/hooks/useInbox.ts` — inbox observe; `src/lib/nostr/settings.ts` —
+  `subscribeSettings` / `publishEvent`; `src/lib/mail/send.ts` — self-copy
+
+### Invariants
+
+- **Ciphertext only**: never `addEvent`/`publishEvent` decrypted rumors or
+  parsed emails into the local relay — the store holds kind-1059 ciphertext;
+  decryption happens app-side per session.
+- **Dedup before decrypt**: cache replay re-delivers every stored wrap on
+  each observe mount; check `seenIds` before `decodeGiftWrap` or every
+  remount re-runs nip44 (one NIP-46 round-trip per event for remote signers).
+- **Never mix kind 1059 with other kinds in one filter** — DM routing
+  (`dmRelays ∪ userRelays`) only applies when every kind in the filter is a
+  DM kind; a mixed filter silently falls back to general relays.
+- Reads are cache-only (`fetchById`/`fetchReplaceable` never fetch); use a
+  standing `observe` when the network copy matters.
+
+---
+
 ## Bridge: mail.formstr.app
 
 | | |
@@ -197,8 +251,8 @@ The bridge is a **trusted third party** for legacy email paths — it necessaril
 - **Always** fetch Kind 10050 relay list before publishing to a recipient
 - Kind 1059 outer gift-wrap **must** include `["k", "1301"]` tag — follows NIP-17 precedent, allows relay filtering via `#k` without revealing content
 - Kind 1059 `created_at` should be randomised (±2 days) for metadata privacy per NIP-59
-- On receive: subscribe to Kind 1059 on own relay list → unwrap → parse RFC 2822 → store
-- Dedup received events by Kind 1059 event ID before storing
+- On receive: `observe` Kind 1059 on the local relay (cache replay → EOSE → live tail) → unwrap → parse RFC 2822 → store
+- Dedup received events by Kind 1059 event ID **before decrypting** (cache replay re-delivers on every mount)
 - Malformed/undecryptable events should be silently skipped
 - Threading: group emails by `Message-ID` / `In-Reply-To` / `References` headers
 - Read state is local-first, synced via Kind 1985 label events
