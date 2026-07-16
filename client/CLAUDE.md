@@ -138,11 +138,14 @@ Parameterized replaceable event with `d` tag identifying the setting group.
 
 ## Authentication
 
-Two supported login methods:
-1. **NIP-07 browser extension** (nos2x, Alby) — preferred for web; private key never exposed to app
-2. **Import nsec / generate new keypair** — store securely (browser: encrypted localStorage)
+Login is handled by the `@formstr/signer` package (`createSigner` in `src/lib/nostr/signer.ts`, UI from `@formstr/signer/ui` mounted in `LoginPage.tsx`). Supported methods:
+1. **NIP-07 browser extension** (nos2x, Alby) — private key never exposed to app
+2. **ncryptsec (NIP-49)** — new accounts get a passphrase-encrypted key; persisted account requires passphrase unlock on reload
+3. **NIP-46 remote signer** — bunker:// URI or nostrconnect QR pairing
 
-One account at a time. Public key = user identity. Private key = sole credential, never leave device.
+The package owns key persistence and session resume; the app never touches a raw secret key. Raw nsec import is intentionally unsupported. `src/store/account.ts` holds `{ account: StoredAccount, active: ActiveSigner }` and verifies resumed sessions (pubkey probe + nip44 capability check) before trusting them.
+
+One account at a time. Public key = user identity. The signer is the sole credential path — secret keys never leave the signer/extension boundary.
 
 ---
 

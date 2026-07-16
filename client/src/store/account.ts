@@ -1,57 +1,70 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
-import { generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
-import type { NostrAccount } from '@/types/nostr'
+import type { ActiveSigner, StoredAccount } from '@formstr/signer'
+import { nostrSigner } from '@/lib/nostr/signer'
+import { getPool } from '@/lib/nostr/relays'
 
 interface AccountState {
-  account: NostrAccount | null
-  sk: Uint8Array | null   // only set for nsec logins; never persisted
-  login: (method: 'nip07' | 'nsec', nsec?: string) => Promise<void>
-  logout: () => void
-  generateAndLogin: () => void
+  account: StoredAccount | null
+  active: ActiveSigner | null
+  ready: boolean
+  init: () => Promise<void>
+  refresh: () => void
+  unlockNcryptsec: (passphrase: string) => Promise<void>
+  logout: () => Promise<void>
 }
 
-export const useAccountStore = create<AccountState>()(
-  persist(
-    (set) => ({
-      account: null,
-      sk: null,
+let initialized = false
 
-      login: async (method, nsec) => {
-        if (method === 'nip07') {
-          if (!window.nostr) throw new Error('No NIP-07 extension found')
-          const pubkey = await window.nostr.getPublicKey()
-          set({
-            account: { pubkey, npub: nip19.npubEncode(pubkey), method: 'nip07' },
-            sk: null,
-          })
-        } else if (method === 'nsec' && nsec) {
-          const decoded = nip19.decode(nsec)
-          if (decoded.type !== 'nsec') throw new Error('Invalid nsec')
-          const sk = decoded.data as Uint8Array
-          const pubkey = getPublicKey(sk)
-          set({
-            account: { pubkey, npub: nip19.npubEncode(pubkey), method: 'nsec' },
-            sk,
-          })
-        }
-      },
+export const useAccountStore = create<AccountState>()((set, get) => ({
+  account: null,
+  active: null,
+  ready: false,
 
-      logout: () => set({ account: null, sk: null }),
+  // No global onChange subscription: createAccount() emits 'login' while the
+  // ncryptsec backup panel is still on screen, and refreshing then would
+  // unmount the login UI before the user backed up their key. State is
+  // refreshed explicitly instead — LoginPage's onLogin (fired after the
+  // backup ack), unlockNcryptsec, and logout.
+  init: async () => {
+    if (initialized) return
+    initialized = true
+    let active: ActiveSigner | null = null
+    try {
+      // Silent resume for extension / NIP-46 sessions. ncryptsec accounts
+      // stay locked by design — LoginPage drives the passphrase prompt.
+      active = await nostrSigner.unlock({ pool: getPool() })
+      // unlock() reconstructs the signer from stored state without checking
+      // it still works (uninstalled extension, extension switched to another
+      // account, extension without nip44). Probe before trusting it, or the
+      // app renders a mailbox whose every decrypt silently fails.
+      if (active) {
+        const account = nostrSigner.getActiveAccount()
+        const pubkey = await active.getPublicKey()
+        if (!account || pubkey !== account.pubkey) active = null
+        if (account?.method === 'extension' && !window.nostr?.nip44) active = null
+      }
+    } catch {
+      // resume failed — account stays locked, LoginPage handles re-auth
+      active = null
+    }
+    set({ account: nostrSigner.getActiveAccount(), active, ready: true })
+  },
 
-      generateAndLogin: () => {
-        const sk = generateSecretKey()
-        const pubkey = getPublicKey(sk)
-        set({
-          account: { pubkey, npub: nip19.npubEncode(pubkey), method: 'nsec' },
-          sk,
-        })
-      },
+  refresh: () =>
+    set({
+      account: nostrSigner.getActiveAccount(),
+      active: nostrSigner.getActiveSigner(),
     }),
-    {
-      name: 'nail-account',
-      // Never persist the secret key
-      partialize: (state) => ({ account: state.account }),
-    },
-  ),
-)
+
+  unlockNcryptsec: async (passphrase) => {
+    const account = nostrSigner.getActiveAccount()
+    if (!account?.ncryptsec) throw new Error('No encrypted key to unlock')
+    await nostrSigner.loginWithNcryptsec(account.ncryptsec, passphrase)
+    get().refresh()
+  },
+
+  logout: async () => {
+    await nostrSigner.logout()
+    get().refresh()
+  },
+}))

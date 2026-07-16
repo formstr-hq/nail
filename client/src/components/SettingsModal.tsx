@@ -8,7 +8,7 @@ interface SettingsModalProps {
 }
 
 export function SettingsModal({ onClose }: SettingsModalProps) {
-  const { account, sk } = useAccountStore()
+  const { account, active } = useAccountStore()
   const { settings, save } = useSettingsStore()
 
   const [senderAddress, setSenderAddress] = useState(settings.senderAddress ?? '')
@@ -19,14 +19,14 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const placeholder = `you@${BRIDGE_DOMAIN}`
 
   async function handleSave() {
-    if (!account || !sk) {
-      setError('Settings can only be saved with a secret key (not supported for NIP-07 yet)')
+    if (!account || !active) {
+      setError('Your session is locked — sign in again to save settings')
       return
     }
     setSaving(true)
     setError('')
     try {
-      await save({ ...settings, senderAddress: senderAddress || undefined, signature: signature || undefined }, account.pubkey, sk)
+      await save({ ...settings, senderAddress: senderAddress || undefined, signature: signature || undefined }, account.pubkey, active)
       onClose()
     } catch (e) {
       setError(String(e))

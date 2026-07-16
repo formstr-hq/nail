@@ -1,8 +1,7 @@
-import { finalizeEvent, nip44 } from 'nostr-tools'
 import type { Event } from 'nostr-tools'
+import type { ActiveSigner } from '@formstr/signer'
 import { getPool, fetchDmRelays } from './relays'
 import { KIND_SETTINGS } from './constants'
-import type { Signer } from './signer'
 
 const SETTINGS_D_TAG = 'mail-settings'
 
@@ -15,20 +14,17 @@ export interface MailSettings {
 export async function saveSettings(
   settings: MailSettings,
   pubkey: string,
-  sk: Uint8Array,
+  active: ActiveSigner,
 ): Promise<void> {
-  const conversationKey = nip44.getConversationKey(sk, pubkey)
-  const encrypted = nip44.encrypt(JSON.stringify(settings), conversationKey)
+  // Private settings are NIP-44 encrypted to self
+  const encrypted = await active.nip44Encrypt(pubkey, JSON.stringify(settings))
 
-  const event = finalizeEvent(
-    {
-      kind: KIND_SETTINGS,
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [['d', SETTINGS_D_TAG]],
-      content: encrypted,
-    },
-    sk,
-  )
+  const event = await active.signEvent({
+    kind: KIND_SETTINGS,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [['d', SETTINGS_D_TAG]],
+    content: encrypted,
+  })
 
   const pool = getPool()
   const relays = await fetchDmRelays(pubkey)
@@ -37,8 +33,7 @@ export async function saveSettings(
 
 export async function loadSettings(
   pubkey: string,
-  signer: Signer,
-  sk: Uint8Array | null,
+  active: ActiveSigner,
 ): Promise<MailSettings | null> {
   const pool = getPool()
   const relays = await fetchDmRelays(pubkey)
@@ -54,15 +49,7 @@ export async function loadSettings(
   const latest = events.sort((a: Event, b: Event) => b.created_at - a.created_at)[0]
 
   try {
-    // Private settings are encrypted to self — use sk directly if available,
-    // otherwise fall back to signer (NIP-07 nip44.decrypt)
-    let plaintext: string
-    if (sk) {
-      const conversationKey = nip44.getConversationKey(sk, pubkey)
-      plaintext = nip44.decrypt(latest.content, conversationKey)
-    } else {
-      plaintext = await signer.decrypt(pubkey, latest.content)
-    }
+    const plaintext = await active.nip44Decrypt(pubkey, latest.content)
     return JSON.parse(plaintext) as MailSettings
   } catch {
     return null

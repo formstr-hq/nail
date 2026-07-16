@@ -1,29 +1,21 @@
-import { nip44 } from 'nostr-tools'
+import { createSigner } from '@formstr/signer'
+import type { ActiveSigner } from '@formstr/signer'
 
+// Single signer instance for the whole app. appName/appUrl are what remote
+// signers (NIP-46 nostrconnect) display on their approval prompt.
+export const nostrSigner = createSigner({
+  appName: 'Mail by Formstr',
+  appUrl: 'https://mailstr.app',
+})
+
+// Minimal decryption surface the mail pipeline needs (gift-wrap unwrapping).
 export interface Signer {
   decrypt(counterpartyPubkey: string, ciphertext: string): Promise<string>
 }
 
-export function nsecSigner(sk: Uint8Array): Signer {
+export function signerFromActive(active: ActiveSigner): Signer {
   return {
-    async decrypt(counterpartyPubkey, ciphertext) {
-      const key = nip44.getConversationKey(sk, counterpartyPubkey)
-      return nip44.decrypt(ciphertext, key)
-    },
+    decrypt: (counterpartyPubkey, ciphertext) =>
+      active.nip44Decrypt(counterpartyPubkey, ciphertext),
   }
-}
-
-export function nip07Signer(): Signer {
-  return {
-    async decrypt(counterpartyPubkey, ciphertext) {
-      if (!window.nostr?.nip44) throw new Error('Extension does not support NIP-44')
-      return window.nostr.nip44.decrypt(counterpartyPubkey, ciphertext)
-    },
-  }
-}
-
-export function signerFromAccount(method: 'nip07' | 'nsec', sk: Uint8Array | null): Signer {
-  if (method === 'nip07') return nip07Signer()
-  if (!sk) throw new Error('No secret key available')
-  return nsecSigner(sk)
 }

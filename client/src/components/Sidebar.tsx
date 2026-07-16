@@ -69,7 +69,7 @@ export function Sidebar({ onCompose, onSettings }: SidebarProps) {
             Settings
           </button>
           <button
-            onClick={logout}
+            onClick={() => void logout()}
             className="flex-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             Sign out

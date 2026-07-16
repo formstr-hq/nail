@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
-import { signerFromAccount } from '@/lib/nostr/signer'
 import { useInbox } from '@/hooks/useInbox'
 import { LoginPage } from '@/components/LoginPage'
 import { Sidebar } from '@/components/Sidebar'
@@ -13,15 +12,14 @@ import { SettingsModal } from '@/components/SettingsModal'
 function MailApp() {
   const [composing, setComposing] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const { account, sk } = useAccountStore()
+  const { account, active } = useAccountStore()
   const { load } = useSettingsStore()
   useInbox()
 
   useEffect(() => {
-    if (!account) return
-    const signer = signerFromAccount(account.method, sk)
-    load(account.pubkey, signer, sk).catch(console.error)
-  }, [account, sk, load])
+    if (!account || !active) return
+    load(account.pubkey, active).catch(console.error)
+  }, [account, active, load])
 
   return (
     <div className="flex h-screen bg-background">
@@ -39,6 +37,19 @@ function MailApp() {
 }
 
 export default function App() {
-  const account = useAccountStore((s) => s.account)
-  return account ? <MailApp /> : <LoginPage />
+  const { account, active, ready, init } = useAccountStore()
+
+  useEffect(() => {
+    void init()
+  }, [init])
+
+  if (!ready) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    )
+  }
+
+  return account && active ? <MailApp /> : <LoginPage />
 }
