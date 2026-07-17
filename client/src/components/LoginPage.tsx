@@ -6,6 +6,17 @@ import { getPool } from '@/lib/nostr/relays'
 import { DEFAULT_RELAYS } from '@/lib/nostr/constants'
 import { useAccountStore } from '@/store/account'
 
+/*
+ * The login-UI helpers below (TAB_COPY, tuneLoginUi, methodListNav,
+ * autoGenerateQr) are intentionally duplicated in
+ * landing/src/components/SignupWizard.tsx. client/ and landing/ are
+ * independent builds — no pnpm workspace, React 18 vs 19, and per-app Docker
+ * build contexts — so a cross-app import compiles in dev but breaks
+ * `docker compose build` (the sibling directory is outside the context).
+ * Future direction: move this DOM tuning upstream into @formstr/signer as
+ * config/slots so both apps consume it from the package they already share.
+ */
+
 /** Copy + lucide icon shapes for the method picker rows, keyed by tab id. */
 const TAB_COPY: Record<string, { title: string; desc: string; icon: string }> = {
   create: {

@@ -4,6 +4,17 @@ import { renderLoginHtml, attachLoginListeners } from "@formstr/signer/ui";
 import "@formstr/signer/styles.css";
 import { signer, pool, NOSTRCONNECT_RELAYS } from "../lib/signer";
 
+/*
+ * The login-UI helpers below (TAB_COPY, tuneLoginUi, methodListNav,
+ * autoGenerateQr) are intentionally duplicated in
+ * client/src/components/LoginPage.tsx. landing/ and client/ are independent
+ * builds — no pnpm workspace, React 19 vs 18, and per-app Docker build
+ * contexts — so a cross-app import compiles in dev but breaks
+ * `docker compose build` (the sibling directory is outside the context).
+ * Future direction: move this DOM tuning upstream into @formstr/signer as
+ * config/slots so both apps consume it from the package they already share.
+ */
+
 /** Copy + lucide icon shapes for the method picker rows, keyed by tab id. */
 const TAB_COPY: Record<string, { title: string; desc: string; icon: string }> =
   {
