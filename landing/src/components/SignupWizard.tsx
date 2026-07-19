@@ -2,7 +2,148 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AtSign, Check, Loader2, PartyPopper, X } from "lucide-react";
 import { renderLoginHtml, attachLoginListeners } from "@formstr/signer/ui";
 import "@formstr/signer/styles.css";
-import { signer } from "../lib/signer";
+import { signer, pool, NOSTRCONNECT_RELAYS } from "../lib/signer";
+
+/*
+ * The login-UI helpers below (TAB_COPY, tuneLoginUi, methodListNav,
+ * autoGenerateQr) are intentionally duplicated in
+ * client/src/components/LoginPage.tsx. landing/ and client/ are independent
+ * builds — no pnpm workspace, React 19 vs 18, and per-app Docker build
+ * contexts — so a cross-app import compiles in dev but breaks
+ * `docker compose build` (the sibling directory is outside the context).
+ * Future direction: move this DOM tuning upstream into @formstr/signer as
+ * config/slots so both apps consume it from the package they already share.
+ */
+
+/** Copy + lucide icon shapes for the method picker rows, keyed by tab id. */
+const TAB_COPY: Record<string, { title: string; desc: string; icon: string }> =
+  {
+    create: {
+      title: "Create a new account",
+      desc: "Fresh key, protected by a passphrase",
+      icon: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/>',
+    },
+    extension: {
+      title: "Browser extension",
+      desc: "Alby, nos2x, or any NIP-07 signer",
+      icon: '<path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/>',
+    },
+    ncryptsec: {
+      title: "Existing key",
+      desc: "Sign in with an ncryptsec backup",
+      icon: '<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/>',
+    },
+    bunker: {
+      title: "Nostr bunker",
+      desc: "Connect with a bunker:// URI",
+      icon: '<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/><path d="m7.9 7.9 2.7 2.7"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/><path d="m13.4 10.6 2.7-2.7"/><circle cx="7.5" cy="16.5" r=".5" fill="currentColor"/><path d="m7.9 16.1 2.7-2.7"/><circle cx="16.5" cy="16.5" r=".5" fill="currentColor"/><path d="m13.4 13.4 2.7 2.7"/><circle cx="12" cy="12" r="2"/>',
+    },
+    nostrconnect: {
+      title: "Remote signer (QR)",
+      desc: "Scan with your signer app",
+      icon: '<rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/>',
+    },
+  };
+
+/** Order of the "already have a key?" rows under the create card. */
+const SECONDARY_TABS = ["extension", "ncryptsec", "bunker", "nostrconnect"];
+
+const ICON_SVG_OPEN =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+
+/**
+ * Trim the stock login markup down to what makes sense on the web:
+ * no Android (NIP-55 needs a native plugin), no relay/permission
+ * power-user fields — Remote (QR) goes straight to a QR code on
+ * the default relays. The tab row is rebuilt into a method picker:
+ * the create tab becomes the primary card and the rest get icon
+ * rows under an "already have an identity?" divider (the wizard
+ * card supplies the heading, so no brand header here).
+ */
+function tuneLoginUi(el: HTMLElement) {
+  el.querySelector('[data-tab="android"]')?.remove();
+  el.querySelector('[data-panel="android"]')?.remove();
+  const relaysInput = el.querySelector<HTMLInputElement>(
+    ".nostr-signer__input--relays",
+  );
+  if (relaysInput) relaysInput.value = NOSTRCONNECT_RELAYS.join(", ");
+
+  el.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((tab) => {
+    const copy = TAB_COPY[tab.dataset.tab ?? ""];
+    if (!copy) return;
+    const icon = document.createElement("span");
+    icon.className = "nostr-signer__tab-icon";
+    icon.innerHTML = ICON_SVG_OPEN + copy.icon + "</svg>";
+    const title = document.createElement("span");
+    title.className = "nostr-signer__tab-title";
+    title.textContent = copy.title;
+    const desc = document.createElement("span");
+    desc.className = "nostr-signer__tab-desc";
+    desc.textContent = copy.desc;
+    const text = document.createElement("span");
+    text.className = "nostr-signer__tab-text";
+    text.append(title, desc);
+    tab.replaceChildren(icon, text);
+  });
+
+  const tabs = el.querySelector<HTMLElement>(".nostr-signer__tabs");
+  if (tabs) {
+    const divider = document.createElement("div");
+    divider.className = "nostr-signer__tabs-label";
+    divider.setAttribute("aria-hidden", "true");
+    divider.textContent = "Already have a key?";
+    tabs.append(divider);
+    for (const id of SECONDARY_TABS) {
+      const btn = tabs.querySelector(`[data-tab="${id}"]`);
+      if (btn) tabs.append(btn);
+    }
+  }
+}
+
+/**
+ * Two-step navigation: a picker list of sign-in methods first, then the
+ * chosen method's panel with a back link. The tab row doubles as the
+ * list (index.css shows one or the other via the --picker modal class);
+ * the package's own tab→panel switching keeps running underneath.
+ */
+function methodListNav(el: HTMLElement): () => void {
+  const modal = el.querySelector<HTMLElement>(".nostr-signer__modal");
+  const body = el.querySelector<HTMLElement>(".nostr-signer__body");
+  if (!modal || !body) return () => {};
+  const back = document.createElement("button");
+  back.type = "button";
+  back.className = "nostr-signer__back";
+  back.textContent = "← All sign-in options";
+  body.prepend(back);
+  modal.classList.add("nostr-signer__modal--picker");
+  const showPanel = () => modal.classList.remove("nostr-signer__modal--picker");
+  const showPicker = () => {
+    // The freshly-created ncryptsec backup must be acknowledged before any
+    // navigation — the CSS :has() rule only hides the button, so refuse here.
+    const created = el.querySelector<HTMLElement>('[data-panel="created"]');
+    if (created && !created.hidden) return;
+    modal.classList.add("nostr-signer__modal--picker");
+  };
+  const tabs = Array.from(el.querySelectorAll<HTMLButtonElement>("[data-tab]"));
+  tabs.forEach((tab) => tab.addEventListener("click", showPanel));
+  back.addEventListener("click", showPicker);
+  return () => {
+    tabs.forEach((tab) => tab.removeEventListener("click", showPanel));
+    back.removeEventListener("click", showPicker);
+  };
+}
+
+/** Auto-generate the nostrconnect QR when the Remote (QR) tab opens. */
+function autoGenerateQr(el: HTMLElement): () => void {
+  const tab = el.querySelector<HTMLButtonElement>('[data-tab="nostrconnect"]');
+  const qr = el.querySelector<HTMLElement>('[data-region="nostrconnect-qr"]');
+  const form = el.querySelector<HTMLFormElement>('[data-form="nostrconnect"]');
+  const onClick = () => {
+    if (qr?.hidden) form?.requestSubmit();
+  };
+  tab?.addEventListener("click", onClick);
+  return () => tab?.removeEventListener("click", onClick);
+}
 import { config } from "../lib/config";
 import {
   apiUrl,
@@ -69,7 +210,7 @@ export default function SignupWizard({
 
     (async () => {
       try {
-        const resumed = await signer.unlock({});
+        const resumed = await signer.unlock({ pool });
         if (cancelled) return;
         if (resumed) {
           const account = signer.getActiveAccount();
@@ -84,7 +225,9 @@ export default function SignupWizard({
       const el = loginRef.current;
       if (!el || cancelled) return;
       el.innerHTML = renderLoginHtml();
+      tuneLoginUi(el);
       const binding = attachLoginListeners(el, signer, {
+        pool,
         onLogin: () => {
           const account = signer.getActiveAccount();
           if (account) void proceedAs(account.pubkey);
@@ -92,7 +235,13 @@ export default function SignupWizard({
         onError: (err: unknown) =>
           setError(err instanceof Error ? err.message : String(err)),
       });
-      detach = () => binding.detach();
+      const detachQr = autoGenerateQr(el);
+      const detachNav = methodListNav(el);
+      detach = () => {
+        detachNav();
+        detachQr();
+        binding.detach();
+      };
     })();
 
     return () => {
@@ -210,7 +359,7 @@ export default function SignupWizard({
           </p>
         )}
 
-        {step === "login" && <div ref={loginRef} />}
+        {step === "login" && <div ref={loginRef} className="signer-embed" />}
 
         {step === "name" && (
           <div>

@@ -1,13 +1,13 @@
 import { create } from 'zustand'
+import type { ActiveSigner } from '@formstr/signer'
 import type { MailSettings } from '@/lib/nostr/settings'
 import { saveSettings, loadSettings } from '@/lib/nostr/settings'
-import type { Signer } from '@/lib/nostr/signer'
 
 interface SettingsState {
   settings: MailSettings
   loading: boolean
-  load: (pubkey: string, signer: Signer, sk: Uint8Array | null) => Promise<void>
-  save: (settings: MailSettings, pubkey: string, sk: Uint8Array) => Promise<void>
+  load: (pubkey: string, active: ActiveSigner) => Promise<void>
+  save: (settings: MailSettings, pubkey: string, active: ActiveSigner) => Promise<void>
   update: (patch: Partial<MailSettings>) => void
 }
 
@@ -15,19 +15,19 @@ export const useSettingsStore = create<SettingsState>()((set, _get) => ({
   settings: {},
   loading: false,
 
-  load: async (pubkey, signer, sk) => {
+  load: async (pubkey, active) => {
     set({ loading: true })
     try {
-      const loaded = await loadSettings(pubkey, signer, sk)
+      const loaded = await loadSettings(pubkey, active)
       if (loaded) set({ settings: loaded })
     } finally {
       set({ loading: false })
     }
   },
 
-  save: async (settings, pubkey, sk) => {
+  save: async (settings, pubkey, active) => {
     set({ settings })
-    await saveSettings(settings, pubkey, sk)
+    await saveSettings(settings, pubkey, active)
   },
 
   update: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),

@@ -111,35 +111,325 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
-/* @formstr/signer login UI — brand overrides on the shipped BEM base  */
+/* @formstr/signer login UI — brand overrides on the shipped BEM base. */
+/* The landing is always light (paper), so the selectors carry extra   */
+/* specificity to also win over the package stylesheet's               */
+/* prefers-color-scheme dark block on dark-mode machines.              */
 /* ------------------------------------------------------------------ */
 
-.nostr-signer__modal {
+div.nostr-signer__root {
+  background: rgba(11, 11, 12, 0.6);
+  backdrop-filter: blur(4px);
+  font-family: var(--font-sans);
+}
+
+.nostr-signer__root .nostr-signer__modal {
   border-radius: 16px;
   border: 1px solid rgba(11, 11, 12, 0.1);
   background: #fff;
-  font-family: var(--font-sans);
+  color: #0b0b0c;
 }
-.nostr-signer__tab--active {
+
+.nostr-signer__root .nostr-signer__close:hover {
+  background: rgba(11, 11, 12, 0.05);
+}
+
+/* Sign-in method picker (structure built in SignupWizard's tuneLoginUi):
+   a primary "create" card, a mono eyebrow divider, then icon rows for
+   people who already have a key. methodListNav toggles the --picker
+   class; list and panel slide past each other like sorted mail. */
+.nostr-signer__root .nostr-signer__tabs {
+  border-bottom: none;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  margin-bottom: 0;
+}
+.nostr-signer__root .nostr-signer__tab {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 38px 10px 10px;
+  position: relative;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+}
+.nostr-signer__root .nostr-signer__tab::after {
+  content: '→';
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  color: #9ca3af;
+  transition:
+    transform 150ms ease,
+    color 150ms ease;
+}
+.nostr-signer__root .nostr-signer__tab:hover {
+  background: #fff;
+  border-color: rgba(11, 11, 12, 0.08);
+}
+.nostr-signer__root .nostr-signer__tab:hover::after {
   color: #ff5c00;
-  border-color: #ff5c00;
+  transform: translateY(-50%) translateX(3px);
 }
-.nostr-signer__button--primary {
+.nostr-signer__root .nostr-signer__tab-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 10px;
+  background: #fff1e8;
+  color: #ff5c00;
+}
+.nostr-signer__root .nostr-signer__tab-icon svg {
+  width: 19px;
+  height: 19px;
+}
+.nostr-signer__root .nostr-signer__tab-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.nostr-signer__root .nostr-signer__tab-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.3;
+  color: #0b0b0c;
+}
+.nostr-signer__root .nostr-signer__tab-desc {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: #6b7280;
+}
+
+/* the create card is the primary action — a white envelope card on
+   paper with the brand-gradient chip, like the hero cards behind it */
+.nostr-signer__root .nostr-signer__tab--create {
+  border-color: rgba(11, 11, 12, 0.1);
+  background: #fff;
+  padding: 13px 38px 13px 12px;
+  margin-bottom: 6px;
+  box-shadow: 0 1px 2px rgba(11, 11, 12, 0.04);
+}
+.nostr-signer__root .nostr-signer__tab--create:hover {
+  border-color: rgba(255, 92, 0, 0.45);
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(255, 92, 0, 0.1);
+}
+.nostr-signer__root .nostr-signer__tab--create::after {
+  color: #ff5c00;
+}
+.nostr-signer__root .nostr-signer__tab--create .nostr-signer__tab-icon {
+  background: linear-gradient(180deg, #ff5c00, #ffb020);
+  color: #fff;
+}
+
+/* mono eyebrow divider — same register as the landing's section labels */
+.nostr-signer__root .nostr-signer__tabs-label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0 6px;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #9ca3af;
+  white-space: nowrap;
+}
+.nostr-signer__root .nostr-signer__tabs-label::before,
+.nostr-signer__root .nostr-signer__tabs-label::after {
+  content: '';
+  height: 1px;
+  flex: 1;
+  background: rgba(11, 11, 12, 0.08);
+}
+
+/* picker ⇄ detail: one visible at a time, sliding past each other */
+.nostr-signer__root .nostr-signer__modal--picker .nostr-signer__body,
+.nostr-signer__root .nostr-signer__modal--picker .nostr-signer__error {
+  display: none;
+}
+.nostr-signer__root
+  .nostr-signer__modal:not(.nostr-signer__modal--picker)
+  .nostr-signer__tabs {
+  display: none;
+}
+@keyframes nostr-signer-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes nostr-signer-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.nostr-signer__root .nostr-signer__body {
+  animation: nostr-signer-in-right 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.nostr-signer__root .nostr-signer__tabs {
+  animation: nostr-signer-in-left 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* back to the list — mono eyebrow, structurally rhymes with the divider */
+.nostr-signer__root .nostr-signer__back {
+  display: block;
+  margin: 0 0 14px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #6b7280;
+  cursor: pointer;
+}
+.nostr-signer__root .nostr-signer__back:hover {
+  color: #ff5c00;
+}
+/* after account creation the ncryptsec backup must be acknowledged —
+   no navigating away from it */
+.nostr-signer__root
+  .nostr-signer__body:has(.nostr-signer__panel--created:not([hidden]))
+  .nostr-signer__back {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nostr-signer__root .nostr-signer__body,
+  .nostr-signer__root .nostr-signer__tabs {
+    animation: none;
+  }
+  .nostr-signer__root .nostr-signer__tab::after {
+    transition: none;
+  }
+}
+
+.nostr-signer__root .nostr-signer__tab:focus-visible,
+.nostr-signer__root .nostr-signer__back:focus-visible,
+.nostr-signer__root .nostr-signer__button:focus-visible,
+.nostr-signer__root .nostr-signer__close:focus-visible {
+  outline: 2px solid rgba(255, 92, 0, 0.5);
+  outline-offset: 1px;
+}
+
+/* prefilled/advanced fields the signup flow doesn't expose:
+   relays are auto-filled with defaults (Remote QR renders straight
+   to a QR code) and NIP-46 permission lists stay default */
+.nostr-signer__root .nostr-signer__input--perms,
+.nostr-signer__root label[for='nostr-signer-nc-perms'],
+.nostr-signer__root label[for='nostr-signer-bunker-perms'],
+.nostr-signer__root .nostr-signer__panel--nostrconnect .nostr-signer__input--relays,
+.nostr-signer__root label[for='nostr-signer-nc-relays'],
+.nostr-signer__root .nostr-signer__tab--android,
+.nostr-signer__root .nostr-signer__panel--android {
+  display: none;
+}
+
+.nostr-signer__root .nostr-signer__hint,
+.nostr-signer__root .nostr-signer__label,
+.nostr-signer__root .nostr-signer__status {
+  color: #6b7280;
+}
+
+.nostr-signer__root .nostr-signer__input {
+  border-radius: 10px;
+  border: 1px solid rgba(11, 11, 12, 0.15);
+  background: #fff;
+  color: #0b0b0c;
+}
+.nostr-signer__root .nostr-signer__input:focus {
+  border-color: #ff5c00;
+  box-shadow: 0 0 0 3px rgba(255, 92, 0, 0.15);
+}
+
+.nostr-signer__root .nostr-signer__button {
+  border-radius: 10px;
+}
+.nostr-signer__root .nostr-signer__button--primary {
   background: #ff5c00;
   border: none;
   color: #fff;
-  border-radius: 10px;
   font-weight: 600;
 }
-.nostr-signer__button--primary:hover {
+.nostr-signer__root .nostr-signer__button--primary:hover {
   background: #ff8a00;
 }
-.nostr-signer__input {
-  border-radius: 10px;
-  border: 1px solid rgba(11, 11, 12, 0.15);
+.nostr-signer__root .nostr-signer__button--secondary {
+  background: transparent;
+  color: #0b0b0c;
+  border-color: rgba(11, 11, 12, 0.15);
 }
-.nostr-signer__error {
+.nostr-signer__root .nostr-signer__button--secondary:hover {
+  background: rgba(11, 11, 12, 0.04);
+}
+
+.nostr-signer__root .nostr-signer__qr-uri {
+  background: #f7f5ef;
+  color: #6b7280;
+}
+.nostr-signer__root .nostr-signer__ncryptsec-display {
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.nostr-signer__root .nostr-signer__error {
+  background: #fef2f2;
   color: #dc2626;
+}
+
+/* the package's `.nostr-signer__form { display: flex }` defeats the
+   [hidden] attribute it sets after the nostrconnect form is submitted */
+.nostr-signer__root .nostr-signer__form[hidden] {
+  display: none;
+}
+
+/* Inside the signup wizard the signer UI is embedded in the wizard's own
+   modal card — strip the package's overlay/modal chrome (backdrop, box,
+   duplicate header) so it doesn't stack a second modal on top. */
+.signer-embed .nostr-signer__root {
+  position: static;
+  background: none;
+  backdrop-filter: none;
+  display: block;
+  z-index: auto;
+}
+.signer-embed .nostr-signer__modal {
+  background: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  width: 100%;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+}
+.signer-embed .nostr-signer__header {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
