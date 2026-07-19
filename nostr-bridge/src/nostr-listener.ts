@@ -5,20 +5,13 @@ import { generateSecretKey, finalizeEvent } from "nostr-tools/pure";
 import { getConversationKey, encrypt } from "nostr-tools/nip44";
 import { simpleParser } from "mailparser";
 import type { Event, VerifiedEvent } from "nostr-tools/pure";
-import { config } from "./config.js";
+import { config, GIFT_WRAP_KIND, HEARTBEAT_INTERVAL_MS, HEARTBEAT_KIND, HEARTBEAT_PREFIX, MAIL_KIND, MAX_MISSED_HEARTBEATS } from "./config.js";
 import { lookupNip05Pubkey } from "./nip05.js";
 import { createPostfixTransport, injectIntoPostfix } from "./smtp-injector.js";
 import { fetchAndDecryptAttachment } from "./blossom-client.js";
 import { parseImetaTags } from "./attachment-utils.js";
 export type { ImetaAttachment } from "./attachment-utils.js";
 export { parseImetaTags } from "./attachment-utils.js";
-
-const MAIL_KIND = 1301;
-const GIFT_WRAP_KIND = 1059;
-const HEARTBEAT_KIND = 1;
-const HEARTBEAT_PREFIX = "nostr-bridge-heartbeat:";
-const HEARTBEAT_INTERVAL_MS = 60_000;
-const MAX_MISSED_HEARTBEATS = 3;
 
 async function getDmRelays(pool: SimplePool): Promise<string[]> {
   let events: Event[] = [];

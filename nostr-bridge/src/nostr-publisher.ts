@@ -3,6 +3,7 @@ import { createRumor, createSeal, createWrap } from "nostr-tools/nip59";
 import { deriveSecretKey } from "./key-derivation.js";
 import { uploadEncryptedAttachment } from "./blossom-client.js";
 import type { ParsedEmail } from "./email-parser.js";
+import { MAIL_KIND } from "./config.js";
 
 function publishToRelay(
   relayUrl: string,
@@ -73,7 +74,7 @@ export async function publishDM(
 
   const rumor = createRumor(
     {
-      kind: 14,
+      kind: MAIL_KIND,
       content,
       tags: [["p", recipientPubkey], ...imetaTags],
     },

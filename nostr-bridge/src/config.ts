@@ -40,3 +40,10 @@ export const config = {
     .map((s) => s.trim())
     .filter(Boolean),
 };
+
+export const MAIL_KIND = 1301;
+export const GIFT_WRAP_KIND = 1059;
+export const HEARTBEAT_KIND = 1;
+export const HEARTBEAT_PREFIX = "nostr-bridge-heartbeat:";
+export const HEARTBEAT_INTERVAL_MS = 60_000;
+export const MAX_MISSED_HEARTBEATS = 3;
