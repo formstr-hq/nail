@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // config.ts throws at module load if LOCAL_DOMAINS is unset, and parses
 // NOSTR_BRIDGE_NSEC into a real secp256k1 key eagerly (getPublicKey at
@@ -61,6 +61,12 @@ describe("handleMessage", () => {
   beforeEach(() => {
     mockedLookup.mockReset();
     mockedPublish.mockReset();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("550s when there is no recipient — Postfix bounces to the real sender", async () => {
@@ -86,15 +92,6 @@ describe("handleMessage", () => {
       handleMessage(RAW, "alice@mailstr.app", resolver),
     );
     expect(err.responseCode).toBe(451);
-  });
-
-  it("does not collapse a lookup error into the same code as not-found", async () => {
-    mockedLookup.mockResolvedValue({ status: "error", message: "boom" });
-    const resolver = makeUserResolver();
-    const err = await captureLmtpError(
-      handleMessage(RAW, "alice@mailstr.app", resolver),
-    );
-    expect(err.responseCode).not.toBe(550);
   });
 
   it("resolves normally when at least one relay accepts the publish", async () => {
