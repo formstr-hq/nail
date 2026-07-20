@@ -33,7 +33,8 @@ correspondents structurally impossible.
 | `landing/` | Browser (React, Vite) | Signup and name registration. Not in the mail path. |
 | `nostr-bridge/` | Node, sidecar to mailcow | Translates between SMTP and Nostr. The only trusted component. |
 | `e2e-nostr/` | Vitest | End-to-end suite against a mock relay and a real mailcow. |
-| formstr-backend | External (`api.formstr.app`) | Name registration; serves `mailstr.app/.well-known/nostr.json`. |
+| formstr API | External (`api.formstr.app`) | Name purchase and ownership lookup. NIP-98 authed. **Not in the mail path.** |
+| NIP-05 record | External (`mailstr.app/.well-known/nostr.json`) | Public name→pubkey map. **In the mail path.** |
 
 ```
   mailcow/Postfix ──LMTP──► nostr-bridge ──relays──► client
@@ -41,8 +42,33 @@ correspondents structurally impossible.
         └────────SMTP────────────┘◄────gift wrap───────┘
 ```
 
-The backend is **not** in the mail path. Both bridge and client read its
-NIP-05 record as a public, unauthenticated source. No mail flows through it.
+### Two backend surfaces — keep them distinct
+
+| | `api.formstr.app` | `mailstr.app/.well-known/nostr.json` |
+|---|---|---|
+| Auth | NIP-98 signed requests | none, public |
+| Callers | `client/`, `landing/` — browsers only | `client/`, `landing/`, **`nostr-bridge/`** |
+| Mail path | no | **yes — hard dependency** |
+
+Verified 2026-07-20: these are different hosts.
+`api.formstr.app/.well-known/nostr.json` returns **404**; the record is served
+from `mailstr.app` (Express behind Cloudflare, `vary: Origin`, so browser-usable).
+
+`api.formstr.app` has exactly three call sites, all account management:
+`POST /api/generate-invoice/mail` (landing, name purchase, plus a websocket for
+payment status), `GET /api/nip-05/get-nip05` (client, NIP-98 authed, lists
+owned names for the sender picker), and the base-URL default in each app's
+`config.ts` (`VITE_API_BASE_URL` overrides). **`nostr-bridge/` never calls it.**
+
+This is a property worth preserving: the bridge's entire authorization model
+(§5) rests on a *public* record, so it holds no credentials, needs no database,
+and has no privileged relationship with the backend. Moving authorization to
+the authed API would give the bridge a secret to store and an outage mode it
+cannot diagnose.
+
+Availability follows from this split: outbound mail stops if **`mailstr.app`**
+is down. If `api.formstr.app` is down, signup and the sender picker break but
+mail keeps flowing.
 
 ## 3. Identity and addressing
 
