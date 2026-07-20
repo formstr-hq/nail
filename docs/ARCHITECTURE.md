@@ -2,11 +2,11 @@
 
 Single source of truth for the mailstr client, landing page, and Nostr bridge.
 
-**Status: 2026-07-20.** This document describes a *target* design. The system as
-committed does not deliver mail in either direction — see
-[Known-broken inventory](#known-broken-inventory) for the evidence. Where the
-current code and this document disagree, this document is the intent and the
-code is wrong.
+**Status: 2026-07-21.** The design below is implemented. Every item in the
+[Known-broken inventory](#known-broken-inventory) has been fixed, plus two
+found during implementation. What that does and does not prove is set out
+under [Verification](#verification) — in short, the protocol is proven by
+tests, and end-to-end delivery against real mailboxes is **not yet run**.
 
 ---
 
@@ -414,6 +414,57 @@ Evidence gathered 2026-07-20 by executing the committed code, not by reading it.
 
 11. **Attachments are dropped inbound.** The bridge sends them as `imeta` tags;
     `receive.ts:44` reads only `parsed.attachments` from the RFC 2822 body.
+
+## Verification
+
+As of 2026-07-21. Stated precisely, because the failure this rebuild exists to
+correct was believing "published to a relay" meant "delivered".
+
+**Verified by automated tests** — `nostr-bridge` 64, `client` 15, `e2e-nostr`
+13 (the infrastructure-free subset); all three packages typecheck and the
+client bundles the shared protocol module for the browser.
+
+- Client and bridge interoperate: both build and consume wraps through the one
+  `protocol/` module, so the format mismatch cannot recur by construction.
+- The spoofing attack is rejected (`author-mismatch`), and authorization is
+  taken from `seal.pubkey`, never `rumor.pubkey`.
+- A sender may only use a `From` address whose NIP-05 record matches the
+  sealing key; every failure path, including lookup errors, fails closed.
+- One wrap carries N legacy recipients as `deliver` tags; the bridge emits one
+  message with N envelope recipients.
+- The bridge refuses to relay into its own domains.
+- Inbound mail keeps the original RFC 2822 bytes exactly, verified for
+  ISO-8859-1, UTF-8 and Shift-JIS.
+- SMTP status discipline: unregistered name → 550, lookup error → 451, no
+  relay accepted → 451 and never 250.
+- mailstr-to-mailstr resolves via NIP-05 and produces no bridge wrap.
+
+**Not yet exercised** — these need a deployed bridge and real mailboxes:
+
+1. A message from the client arriving in a real external mailbox with SPF and
+   DKIM aligned.
+2. A reply from that external mailbox arriving in the client, and being
+   replyable.
+3. The `e2e-nostr` inbound/outbound suites, which require a live mailcow.
+4. The deployed `_smtp@mailstr.app` pubkey being one whose key we hold.
+5. Attachments, which remain out of scope (§10).
+
+Until 1 and 2 are done, this system is **not proven to deliver mail**.
+
+### Fixed during implementation, beyond the original inventory
+
+- **The bridge's relay subscription used `since: now`.** NIP-59 randomises a
+  gift wrap's `created_at` up to two days into the past and relays filter on
+  that outer timestamp, so relays would have withheld essentially every wrap
+  addressed to the bridge. The e2e suite had been papering over this with its
+  own `created_at = now()` builder — the same duplicate implementation that hid
+  the format mismatch.
+- **Content was decoded as UTF-8**, destroying non-UTF-8 mail. See §4.
+- **The heartbeat watchdog was lost** in the outbound rewrite and has been
+  restored: a relay subscription can die silently, leaving the bridge accepting
+  no mail while appearing healthy.
+- **`docker-compose.bridge.yml` lacked `LOCAL_DOMAINS`**, which is now required
+  at boot, so the bridge would have crash-looped.
 
 ## Definition of done
 

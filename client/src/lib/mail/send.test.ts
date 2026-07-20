@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import type { Event } from 'nostr-tools'
 import { generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { keySigner, unwrapAndVerify, deliverTargets, messageStringToBytes } from '@protocol'
 import { buildWraps } from './send'
@@ -20,7 +21,7 @@ const base = {
   signer: keySigner(ALICE_SK),
 }
 
-const toBridge = (wraps: { tags: string[][] }[]) =>
+const toBridge = (wraps: Event[]) =>
   wraps.filter((w) => w.tags.some((t) => t[0] === 'p' && t[1] === BRIDGE_PK))
 
 beforeEach(() => {
