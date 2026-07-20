@@ -3,10 +3,16 @@
 Single source of truth for the mailstr client, landing page, and Nostr bridge.
 
 **Status: 2026-07-21.** The design below is implemented. Every item in the
-[Known-broken inventory](#known-broken-inventory) has been fixed, plus two
-found during implementation. What that does and does not prove is set out
-under [Verification](#verification) — in short, the protocol is proven by
-tests, and end-to-end delivery against real mailboxes is **not yet run**.
+[Known-broken inventory](#known-broken-inventory) has been fixed, plus several
+found during implementation. What that does and does not prove is set out under
+[Verification](#verification) — in short, the protocol is proven by tests, and
+end-to-end delivery against real mailboxes is **not yet run**.
+
+> **The deployed bridge still runs the old code**, so none of the outbound
+> authorization described here is in force in production. Until it is
+> redeployed, any account can send as any address on the local domain — fully
+> SPF/DKIM/DMARC-aligned. See
+> [Live-deployment gap](#live-deployment-gap-as-of-2026-07-21) for the stopgap.
 
 ---
 
@@ -70,6 +76,27 @@ Availability follows from this split: outbound mail stops if **`mailstr.app`**
 is down. If `api.formstr.app` is down, signup and the sender picker break but
 mail keeps flowing.
 
+#### Reaching the API in development
+
+`api.formstr.app` allows a fixed set of origins and answers any other with a
+**500**, not a CORS rejection (verified 2026-07-21: no `Origin` → 401,
+`https://mailstr.app` → 401, `http://localhost:5173` → 500). A browser on
+localhost therefore cannot call it directly, and the failure looks like a
+server error rather than the CORS problem it is.
+
+Dev builds so issue same-origin requests that Vite's `/api` proxy forwards
+upstream, stripping the `Origin` and `Referer` headers that trigger the 500.
+Production builds call the API directly from an allowlisted origin.
+
+That split forces one subtlety: **NIP-98 signs the URL the server sees, not the
+one the browser requested.** The `u` tag must match the upstream URL or the
+backend 401s in dev only. Hence two helpers — `apiUrl()` decides where to send,
+`apiAuthUrl()` decides what to sign.
+
+The proper fix belongs upstream: the backend should return a real CORS
+rejection instead of a 500, and allowlist localhost so this proxy is
+unnecessary.
+
 ## 3. Identity and addressing
 
 **Local domains** are the domains this deployment accepts mail for and serves
@@ -125,9 +152,20 @@ On receipt, in order:
 2. `seal.kind === 13`.
 3. **`rumor.pubkey === seal.pubkey`.** See [§5](#5-trust-model).
 4. `rumor.kind === 1301`.
-5. RFC 2822 `From:` is authoritative **only if `seal.pubkey` equals the
-   configured bridge pubkey**. For any other sealer, the sender is
-   `seal.pubkey` and the headers are decoration.
+5. RFC 2822 `From:` is authoritative **only where the claim is backed by
+   something**. Three cases qualify, and nothing else does:
+   - `seal.pubkey` is the configured bridge — the bridge already refused to
+     relay a `From` the sending key does not own (§5);
+   - `seal.pubkey` is the reader's own key — their own outgoing copy;
+   - the address's NIP-05 record resolves to `seal.pubkey` — the same proof
+     the bridge performs, done client-side.
+
+   For any other sealer the sender is `seal.pubkey` and the headers are
+   decoration. An unverified sender is displayed as the **npub**, labelled
+   with the kind-0 profile name when one exists. That name is self-asserted —
+   anyone may publish `name: "Your Bank"` — so it never replaces the npub,
+   only accompanies it. Substituting it outright would make spoofing
+   invisible; showing it alongside a key the reader can check does not.
 
 ### Envelope versus headers
 
@@ -184,6 +222,39 @@ the `From` address.
 `seal.pubkey` only.
 
 **The bridge is conditionally trusted by the client**, per verification rule 5.
+
+### The client's `From` check is a guard, not a boundary
+
+The client refuses to send from an address the signing key does not own,
+applying the same NIP-05-resolves-to-sender test the bridge does — kept
+identical on purpose, so the two cannot diverge into silent bounces or false
+confidence. `<npub>@<domain>` is proven locally from the key itself and needs
+no lookup.
+
+This is a UX guard. A modified client skips it in one line. The enforcement
+that matters is the bridge checking `seal.pubkey`, which an attacker cannot
+route around.
+
+### Why the open-relay default was worse than it looked
+
+`ALLOWED_DOMAINS` defaulting to empty skipped every sender check, and on a
+domain that publishes SPF, DKIM and DMARC the result is not merely spam — it
+is *authenticated* spam. Mail sent as `support@<local domain>` from the
+domain's own MX passes all three checks and lands in the inbox, carrying the
+domain's real reputation. That is a phishing platform aimed at the
+deployment's own users, which is strictly worse than an open relay that only
+damages the sending IP.
+
+Two properties made it latent rather than exploited: the old client never
+produced a kind-13 seal, so nothing it sent could be unwrapped by the bridge
+at all. Fixing the client is what made the pre-existing hole reachable — worth
+remembering as a shape, since correcting one side of a broken protocol can
+expose weaknesses the other side's brokenness was hiding.
+
+**Operational corollary:** authority names (`admin`, `support`, `postmaster`,
+`abuse`, `security`, `billing`, `noreply`) must be unregistrable in the
+backend. Once ownership is enforced, whoever registers `support@<domain>`
+becomes legitimately authorized to send as it.
 
 ### Why rule 3 exists
 
@@ -320,6 +391,35 @@ blip all present as an empty inbox.
 Rows 1 and 2 must never be collapsed. Both are "couldn't read it", but the
 first is normal and the second means something is broken.
 
+### Resumed remote-signer sessions
+
+A resumed NIP-46 session is a fourth silent failure, and it needs its own
+handling because the obvious health check does not work.
+
+`unlock()` reconstructs the bunker signer with the stored pubkey as
+`cachedUserPubkey`, so `getPublicKey()` answers from memory rather than the
+bunker. Probing it proves nothing — it compares the cached value with itself
+and can never fail. It catches a broken *extension*, but for a bunker it is
+dead code.
+
+`unlock()` also, deliberately, skips the NIP-46 `connect` request, because
+re-sending it prompts the user for approval on every cold start. But `connect`
+is what establishes the subscription that bunker responses arrive on. Without
+it the first `sendRequest` calls `setupSubscription()` and publishes without
+awaiting it, so the relay often has no live subscription when the bunker
+answers and the reply is dropped. `sendRequest` has no timeout of its own, so
+that request hangs until the app's own ceiling fires — the observed signature
+is several failures at exactly the ceiling followed by successes in ~1s.
+
+So resume issues one real round trip (`nip44Encrypt` to self), with one retry.
+The retry is the fix rather than a workaround: the first attempt is what warms
+the subscription, and losing it is expected. A session that fails both attempts
+is treated as dead and the user is returned to login, which is what they would
+otherwise achieve by logging out and back in.
+
+The proper fix belongs upstream — `unlock()` should await subscription setup
+before returning, so callers do not each have to warm it.
+
 ## 9. Shared protocol module
 
 Three implementations of this wire format exist today — `client/`,
@@ -438,6 +538,21 @@ client bundles the shared protocol module for the browser.
 - SMTP status discipline: unregistered name → 550, lookup error → 451, no
   relay accepted → 451 and never 250.
 - mailstr-to-mailstr resolves via NIP-05 and produces no bridge wrap.
+- The client refuses to send from an address the signing key does not own —
+  covering an unregistered authority name and another user's registered name.
+
+Verified by hand against live infrastructure, not by tests:
+
+- `mailstr.app` DNS is sound for outbound: `MX → mail.formstr.app`,
+  `v=spf1 mx ~all`, a `dkim._domainkey` RSA key, and DMARC `p=quarantine` with
+  relaxed alignment. A `From` inside the domain, sent from its own MX, aligns
+  on SPF, DKIM and DMARC.
+- `api.formstr.app` accepts our NIP-98 header (a signed request from an
+  unregistered key returns 404, not 401) and scopes results to the signing
+  key — the endpoint takes no npub parameter, so one account cannot read
+  another's addresses.
+- The dev proxy reaches the real API (401 without auth, rather than the 500 a
+  direct localhost call produces).
 
 **Not yet exercised** — these need a deployed bridge and real mailboxes:
 
@@ -465,6 +580,29 @@ Until 1 and 2 are done, this system is **not proven to deliver mail**.
   no mail while appearing healthy.
 - **`docker-compose.bridge.yml` lacked `LOCAL_DOMAINS`**, which is now required
   at boot, so the bridge would have crash-looped.
+- **The client called `localhost:5000`** for owned-address lookup, because that
+  was the dev default and `.env.local` is gitignored. Repointing it alone does
+  not work — see "Reaching the API in development" (§2).
+- **Resumed bunker sessions hung** on their first requests. See §8.
+- **Unverified senders rendered as raw hex pubkeys**, including the user's own
+  outgoing copies, because rule 5 recognised only the bridge. See §4 rule 5.
+
+### Live-deployment gap (as of 2026-07-21)
+
+The deployed bridge behind `_smtp@mailstr.app` (`23024bfd…`) still runs the
+**old** code: a query for its kind-0 and kind-10050 returns zero events, which
+the new code publishes at startup. Consequences while that remains true:
+
+- Nothing written here about outbound authorization is in force in production.
+  `ALLOWED_DOMAINS` is unset there, so the old code skips every sender check —
+  confirmed by sending as an unowned `hi@mailstr.app`, which was relayed.
+- Setting `ALLOWED_DOMAINS=<local domain>` on the old code is a valid stopgap:
+  it enables the domain allowlist and NIP-05 match, and blocks both an
+  unregistered name and another user's name. It compares the forgeable
+  `rumor.pubkey`, so it stops casual misuse but not a deliberate attacker.
+- The new client and the old bridge *do* interoperate, since the old bridge
+  always expected a correct three-layer wrap. That is precisely why the hole
+  became reachable.
 
 ## Definition of done
 
@@ -480,3 +618,11 @@ indistinguishable from success.
 5. A multi-recipient legacy send delivers one copy to each recipient.
 6. e2e tests import client and bridge code paths; the helper implementation is
    deleted.
+7. A send as an address the account does not own is refused — both an
+   unregistered authority name and another user's registered name.
+8. The deployed bridge logs its npub on boot, and `_smtp@<domain>` resolves to
+   that same key.
+
+Items 3, 4, 5, 6 and 7 are met. Items 1, 2 and 8 need a deployed bridge and
+real mailboxes, and are the whole of what stands between here and "this
+delivers mail".
