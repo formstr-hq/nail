@@ -141,6 +141,32 @@ One gift wrap goes to the bridge regardless of how many legacy recipients there
 are; their addresses are `deliver` tags. Recipients who received a direct Nostr
 copy never appear in a `deliver` tag, so they are not also emailed.
 
+### Content is a byte string
+
+`rumor.content` is the RFC 2822 message as a **byte string**: a JS string in
+which every code unit is one octet (0–255) of the original message. Each end
+converts at its boundary — bytes in on receive, bytes out on send.
+
+This is not incidental. Mail is bytes, not text: a message declares its own
+charset in `Content-Type`, and legacy senders still emit ISO-8859-1, Shift-JIS
+and other 8-bit encodings. Decoding those bytes as UTF-8 to carry them as text
+destroys them. Verified against the real parser:
+
+```
+utf8 decode          → "caf�"   replacement char, unrecoverable
+latin1 decode        → "cafÃ©"       bytes survive transport, but postal-mime
+                                     re-encodes string input to UTF-8 and mojibakes
+byte string → bytes  → "café"        correct
+```
+
+The second line is the trap: preserving the bytes in transit is not enough,
+because `postal-mime` given a *string* encodes it to UTF-8 before applying the
+declared charset. The parser must be handed a `Uint8Array`.
+
+The protocol module owns both conversions so all three consumers share one
+implementation. Round-trip is exact for ISO-8859-1, UTF-8 and Shift-JIS
+inbound, and byte-identical for client-composed outbound mail.
+
 ### Size ceiling
 
 NIP-44 v2 caps plaintext at **65535 bytes**. Base64 inflates attachments ~33%,
