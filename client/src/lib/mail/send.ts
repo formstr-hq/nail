@@ -1,4 +1,4 @@
-import { getPool, fetchDmRelays } from '@/lib/nostr/relays'
+import { fetchDmRelays, publishToRelays } from '@/lib/nostr/relays'
 import { buildMailRumor, giftWrap } from '@/lib/nostr/giftwrap'
 import { buildRfc2822 } from './rfc2822'
 import { resolveRecipient } from './resolve'
@@ -27,8 +27,8 @@ export async function sendMail(params: SendMailParams): Promise<void> {
   // Build the RFC 2822 email once (BCC stripped from headers before sending)
   const rfc2822 = buildRfc2822({
     from,
-    to: toResolved.map((r) => ({ address: r.address })),
-    cc: ccResolved.length ? ccResolved.map((r) => ({ address: r.address })) : undefined,
+    to: toResolved.map((r) => ({ address: r.headerAddress })),
+    cc: ccResolved.length ? ccResolved.map((r) => ({ address: r.headerAddress })) : undefined,
     subject,
     body,
     bodyHtml,
@@ -36,21 +36,30 @@ export async function sendMail(params: SendMailParams): Promise<void> {
     references,
   })
 
-  const pool = getPool()
+  // One gift-wrapped event per recipient, plus a copy to self that becomes the
+  // Sent entry. These are independent, so publish them concurrently rather
+  // than making the user wait for each relay round-trip in turn.
+  const undelivered: string[] = []
 
-  // Send a separate gift-wrapped event to each recipient
-  await Promise.all(
-    allResolved.map(async (recipient) => {
-      const rumor = buildMailRumor(senderPubkey, recipient.pubkey, rfc2822)
-      const wrapped = giftWrap(rumor, recipient.pubkey)
-      const relays = await fetchDmRelays(recipient.pubkey)
-      await Promise.all(relays.map((url) => pool.publish([url], wrapped)))
-    }),
-  )
+  const deliverTo = async (pubkey: string, label: string | null) => {
+    const rumor = buildMailRumor(senderPubkey, pubkey, rfc2822)
+    const wrapped = giftWrap(rumor, pubkey)
+    const relays = await fetchDmRelays(pubkey)
+    const { ok, failed } = await publishToRelays(relays, wrapped)
 
-  // Send a copy to self for Sent folder
-  const selfRumor = buildMailRumor(senderPubkey, senderPubkey, rfc2822)
-  const selfWrapped = giftWrap(selfRumor, senderPubkey)
-  const selfRelays = await fetchDmRelays(senderPubkey)
-  await Promise.all(selfRelays.map((url) => pool.publish([url], selfWrapped)))
+    // A recipient whose relays all refused the wrap has NOT received the mail.
+    // Surface that instead of reporting a send that went nowhere.
+    if (label && !ok.length) {
+      undelivered.push(`${label} (${failed[0]?.error ?? 'no relay accepted the message'})`)
+    }
+  }
+
+  await Promise.all([
+    ...allResolved.map((r) => deliverTo(r.pubkey, r.address)),
+    deliverTo(senderPubkey, null),
+  ])
+
+  if (undelivered.length) {
+    throw new Error(`Could not deliver to: ${undelivered.join('; ')}`)
+  }
 }

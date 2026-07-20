@@ -1,4 +1,5 @@
 import type { MailAddress } from '@/types/mail'
+import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
 
 export function buildRfc2822({
   from,
@@ -21,7 +22,7 @@ export function buildRfc2822({
   references?: string[]
   messageId?: string
 }): string {
-  const id = messageId ?? `<${crypto.randomUUID()}@mail.formstr.app>`
+  const id = messageId ?? `<${crypto.randomUUID()}@${BRIDGE_DOMAIN}>`
   const date = new Date().toUTCString()
 
   const formatAddress = (a: MailAddress) =>

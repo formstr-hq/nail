@@ -2,7 +2,7 @@
 // (e.g. stg.mailstr.app for staging); the well-known _smtp record must be
 // served there with a CORS-open Access-Control-Allow-Origin header.
 export const BRIDGE_DOMAIN =
-  import.meta.env.VITE_BRIDGE_DOMAIN ?? 'mail.formstr.app'
+  import.meta.env.VITE_BRIDGE_DOMAIN ?? 'mailstr.app'
 export const BRIDGE_NIP05_NAME = '_smtp'
 
 export const KIND_MAIL = 1301

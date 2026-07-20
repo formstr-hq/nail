@@ -45,7 +45,6 @@ export function giftWrap(
     created_at: randomTimestamp(),
     tags: [
       ['p', recipientPubkey],
-      ['k', String(KIND_MAIL)],
     ],
     content: sealed,
   }

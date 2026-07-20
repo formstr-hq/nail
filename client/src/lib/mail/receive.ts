@@ -15,15 +15,17 @@ export async function decodeGiftWrap(
   try {
     const parsed = await parseRfc2822(rumor.content)
 
-    const toAddresses = (parsed.to ?? []).map((a) => ({
-      name: a.name,
-      address: a.address ?? '',
-    }))
+    // A bare npub in a To:/CC: header is not a valid addr-spec, so the parser
+    // reports it as a display name with an empty address. Fall back to the
+    // name so mail sent before headers carried `<npub>@<domain>` still shows a
+    // recipient instead of a blank field.
+    const toDisplay = (a: { name?: string; address?: string }) => ({
+      name: a.address ? a.name : undefined,
+      address: a.address || a.name || '',
+    })
 
-    const ccAddresses = (parsed.cc ?? []).map((a) => ({
-      name: a.name,
-      address: a.address ?? '',
-    }))
+    const toAddresses = (parsed.to ?? []).map(toDisplay)
+    const ccAddresses = (parsed.cc ?? []).map(toDisplay)
 
     return {
       id: event.id,

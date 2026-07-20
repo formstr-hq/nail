@@ -1,3 +1,10 @@
+# Builds the mailstr.app mail client and, on container run, copies the static
+# dist to /output (bind-mount the directory your nginx serves).
+#
+# Build args (baked into the bundle by Vite):
+#   VITE_BRIDGE_DOMAIN  outbound bridge domain (default mailstr.app)
+#   CLIENT_BASE_PATH    where the mail UI is served from (default /mails/)
+
 FROM node:24-alpine AS builder
 
 WORKDIR /app
@@ -11,7 +18,9 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 ARG CLIENT_BASE_PATH=/mails/
-ENV CLIENT_BASE_PATH=${CLIENT_BASE_PATH}
+ARG VITE_BRIDGE_DOMAIN
+ENV CLIENT_BASE_PATH=${CLIENT_BASE_PATH} \
+    VITE_BRIDGE_DOMAIN=${VITE_BRIDGE_DOMAIN}
 RUN pnpm run build
 
 # ── Runtime stage: copy built assets to the mounted nginx directory on start ──
