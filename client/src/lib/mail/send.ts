@@ -1,9 +1,48 @@
+import { nip19 } from 'nostr-tools'
 import type { Event } from 'nostr-tools'
-import { buildMailRumor, sealAndWrap, bytesToMessageString, type ProtocolSigner } from '@protocol'
+import {
+  buildMailRumor,
+  sealAndWrap,
+  bytesToMessageString,
+  isNpub,
+  splitAddress,
+  type ProtocolSigner,
+} from '@protocol'
 import { fetchDmRelays, publishToRelays } from '@/lib/nostr/relays'
+import { probeNip05 } from '@/lib/nostr/nip05'
 import { buildRfc2822 } from './rfc2822'
 import { resolveRecipients, type ResolveContext } from './resolve'
 import type { MailAddress } from '@/types/mail'
+
+/**
+ * Does the signing key actually own the address it wants to send as?
+ *
+ * Deliberately the same test the bridge applies — NIP-05 record for the
+ * address must resolve to the sending key — so the client cannot accept a
+ * `From` the bridge will reject, or vice versa. Divergence here would either
+ * produce silent bounces or lull us into thinking the client is enforcing
+ * something it isn't.
+ *
+ * This is a UX guard, not the security boundary. The bridge enforces the same
+ * rule against `seal.pubkey`, which is the only version an attacker cannot
+ * route around; a modified client can skip this entirely.
+ */
+async function senderOwnsFromAddress(from: string, senderPubkey: string): Promise<boolean> {
+  const parts = splitAddress(from)
+  if (!parts) return false
+
+  // `<npub>@<domain>` is derived from the key itself, so ownership is provable
+  // locally — no lookup, and it works before any name has been registered.
+  if (isNpub(parts.localpart)) {
+    try {
+      return (nip19.decode(parts.localpart).data as string) === senderPubkey
+    } catch {
+      return false
+    }
+  }
+
+  return (await probeNip05(from)) === senderPubkey
+}
 
 export interface SendMailParams {
   from: MailAddress
@@ -33,6 +72,21 @@ export async function buildWraps(
   params: SendMailParams,
 ): Promise<{ wraps: Event[]; targets: string[]; errors: string[] }> {
   const { from, senderPubkey, to, cc = [], ctx, signer } = params
+
+  // Refuse before anything is published. Sending as an address you do not own
+  // would be rejected by the bridge anyway, but only after a round trip — and
+  // for Nostr-native recipients it would simply display as unverified, which
+  // is confusing rather than informative.
+  if (!(await senderOwnsFromAddress(from.address, senderPubkey))) {
+    return {
+      wraps: [],
+      targets: [],
+      errors: [
+        `You do not own "${from.address}", so it cannot be used as the From address. ` +
+          `Pick one of your own addresses in Settings.`,
+      ],
+    }
+  }
 
   const toOut = await resolveRecipients(to, ctx)
   const ccOut = await resolveRecipients(cc, ctx)

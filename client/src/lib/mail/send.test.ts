@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import type { Event } from 'nostr-tools'
+import { nip19 } from 'nostr-tools'
 import { generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { keySigner, unwrapAndVerify, deliverTargets, messageStringToBytes } from '@protocol'
 import { buildWraps } from './send'
@@ -12,8 +13,12 @@ const ALICE_PK = getPublicKey(ALICE_SK)
 
 const CTX = { localDomains: ['mailstr.app'], ownDomain: 'mailstr.app', bridgePubkey: BRIDGE_PK }
 
+const ALICE_NPUB = nip19.npubEncode(ALICE_PK)
+
 const base = {
-  from: { address: 'alice@mailstr.app' },
+  // Derived from the key, so ownership is provable without a lookup — keeps
+  // the bulk of these tests independent of the NIP-05 stub.
+  from: { address: `${ALICE_NPUB}@mailstr.app` },
   senderPubkey: ALICE_PK,
   subject: 'hi',
   body: 'hello',
@@ -86,6 +91,48 @@ describe('buildWraps', () => {
 
     const decoded = new TextDecoder().decode(messageStringToBytes(result.rumor.content))
     expect(decoded).toContain('café 日本')
+  })
+
+  // Any account could otherwise put support@mailstr.app in From. Sent from
+  // the real MX it passes SPF, DKIM and DMARC, so it lands in the recipient's
+  // inbox fully authenticated — using the domain's own reputation to phish.
+  it('refuses a From address the sending key does not own', async () => {
+    const { wraps, errors } = await buildWraps({
+      ...base,
+      from: { address: 'support@mailstr.app' }, // unregistered, not ours
+      to: ['b@example.org'],
+    })
+    expect(wraps).toEqual([])
+    expect(errors[0]).toContain('support@mailstr.app')
+  })
+
+  it('refuses another user\'s registered address', async () => {
+    const bobPk = getPublicKey(generateSecretKey())
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Response(JSON.stringify({ names: { bob: bobPk } }))),
+    )
+    const { wraps, errors } = await buildWraps({
+      ...base,
+      from: { address: 'bob@mailstr.app' },
+      to: ['b@example.org'],
+    })
+    expect(wraps).toEqual([])
+    expect(errors[0]).toContain('bob@mailstr.app')
+  })
+
+  it('accepts a named address whose NIP-05 record matches the sending key', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Response(JSON.stringify({ names: { alice: ALICE_PK } }))),
+    )
+    const { wraps, errors } = await buildWraps({
+      ...base,
+      from: { address: 'alice@mailstr.app' },
+      to: ['b@example.org'],
+    })
+    expect(errors).toEqual([])
+    expect(wraps.length).toBeGreaterThan(0)
   })
 
   it('surfaces resolution errors instead of sending', async () => {
