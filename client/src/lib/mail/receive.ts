@@ -1,5 +1,6 @@
 import type { Event } from 'nostr-tools'
 import { unwrapAndVerify, messageStringToBytes, type ProtocolSigner } from '@protocol'
+import { probeNip05 } from '@/lib/nostr/nip05'
 import { parseRfc2822 } from './rfc2822'
 import type { Email } from '@/types/mail'
 
@@ -10,6 +11,37 @@ export interface DecodeFailure {
 }
 
 export type DecodeResult = { email: Email } | { failure: DecodeFailure }
+
+/**
+ * May we display the RFC 2822 `From:` header as the sender?
+ *
+ * Headers are just text the sender chose, so believing them unconditionally
+ * would let anyone gift-wrap a message claiming `From: ceo@company.com`. Each
+ * branch below is a case where the claim is actually backed by something:
+ *
+ *  - the bridge sealed it, and the bridge refuses to relay a `From` the
+ *    sending key does not own (that check is the whole point of §5);
+ *  - we sealed it ourselves, so it is our own outgoing copy;
+ *  - the address's NIP-05 record resolves to the sealing key, which is the
+ *    same proof the bridge performs, done here directly.
+ *
+ * Anything else falls back to the sealing pubkey, which is the only identity
+ * we can actually verify.
+ */
+async function fromHeaderIsTrustworthy(params: {
+  fromAddress: string | undefined
+  sealPubkey: string
+  bridgePubkey: string | null
+  ownPubkey: string | null
+}): Promise<boolean> {
+  const { fromAddress, sealPubkey, bridgePubkey, ownPubkey } = params
+  if (!fromAddress) return false
+  if (bridgePubkey !== null && sealPubkey === bridgePubkey) return true
+  if (ownPubkey !== null && sealPubkey === ownPubkey) return true
+
+  // Cached and bounded; a miss or a timeout just means we show the pubkey.
+  return (await probeNip05(fromAddress)) === sealPubkey
+}
 
 /**
  * Decode one gift wrap into a displayable email.
@@ -24,6 +56,7 @@ export async function decodeGiftWrap(
   event: Event,
   signer: ProtocolSigner,
   bridgePubkey: string | null,
+  ownPubkey: string | null = null,
 ): Promise<DecodeResult> {
   // No staleness bound here: unlike the bridge, a mailbox legitimately shows
   // mail from months ago, and the replay concern (re-relaying a message) does
@@ -42,8 +75,13 @@ export async function decodeGiftWrap(
     // charset, which mojibakes every non-UTF-8 message.
     const parsed = await parseRfc2822(messageStringToBytes(rumor.content))
 
-    const bridgeSealed = bridgePubkey !== null && seal.pubkey === bridgePubkey
-    const fromAddress = bridgeSealed ? parsed.from?.address ?? seal.pubkey : seal.pubkey
+    const trustFrom = await fromHeaderIsTrustworthy({
+      fromAddress: parsed.from?.address,
+      sealPubkey: seal.pubkey,
+      bridgePubkey,
+      ownPubkey,
+    })
+    const fromAddress = trustFrom ? parsed.from!.address! : seal.pubkey
 
     const toDisplay = (a: { name?: string; address?: string }) => ({
       name: a.address ? a.name : undefined,
@@ -58,7 +96,7 @@ export async function decodeGiftWrap(
         messageId: parsed.messageId,
         inReplyTo: parsed.inReplyTo,
         references: parsed.references?.split(/\s+/).filter(Boolean),
-        from: { name: bridgeSealed ? parsed.from?.name : undefined, address: fromAddress },
+        from: { name: trustFrom ? parsed.from?.name : undefined, address: fromAddress },
         to: (parsed.to ?? []).map(toDisplay),
         cc: ccAddresses.length ? ccAddresses : undefined,
         subject: parsed.subject ?? '(no subject)',

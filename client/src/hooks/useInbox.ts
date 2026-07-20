@@ -32,7 +32,7 @@ export function useInbox(bridgePubkey: string | null) {
       while (alive && running < MAX_CONCURRENT_DECRYPTS && queue.length) {
         const event = queue.shift()!
         running += 1
-        void decodeGiftWrap(event, signer, bridgePubkey)
+        void decodeGiftWrap(event, signer, bridgePubkey, account!.pubkey)
           .then((outcome) => {
             if (!alive) return
             if ('email' in outcome) {
