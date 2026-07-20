@@ -1,6 +1,8 @@
 import WebSocket from "ws";
-import { useWebSocketImplementation } from "nostr-tools/pool";
+import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
 import { config } from "./config.js";
+import { keySigner } from "./protocol/key-signer.js";
+import { publishBridgeIdentity } from "./self-publish.js";
 import { createLmtpServer } from "./lmtp-server.js";
 import { UserResolver } from "./user-resolver.js";
 import { createPostfixTransport } from "./smtp-injector.js";
@@ -25,4 +27,15 @@ const postfixTransport = createPostfixTransport(config.postfixHost, config.postf
 startNostrListener(postfixTransport).catch((err) => {
   console.error("nostr-bridge: nostr listener failed to start:", err);
   process.exit(1);
+});
+
+// Announce where to reach this bridge. Failure here is not fatal — mail still
+// flows for anyone who already knows the pubkey — so it only warns.
+void publishBridgeIdentity(
+  new SimplePool(),
+  config.bridgeRelays,
+  keySigner(config.bridgePrivkey),
+  config.localDomains[0],
+).catch((err) => {
+  console.error("nostr-bridge: failed to publish bridge identity:", (err as Error).message);
 });

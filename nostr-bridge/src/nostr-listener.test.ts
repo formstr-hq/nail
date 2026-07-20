@@ -106,4 +106,97 @@ describe("handleWrap", () => {
     // And confirm it matches what the protocol module's own decoder produces.
     expect(messageStringToBytes(rumor.content)).toEqual(originalBytes);
   });
+
+  // Known-broken #7: the client used to send one wrap per legacy recipient to
+  // the same bridge pubkey, and the bridge read only To[0] — so recipient #1
+  // got N duplicate copies and #2..N got nothing. Routing now comes from the
+  // deliver tags, and one wrap becomes one message with N envelope recipients.
+  it("delivers one message to every deliver target, not one per recipient", async () => {
+    const alice = actor();
+    mockedLookup.mockResolvedValue(foundResult(alice.pk));
+
+    const rumor = buildMailRumor({
+      senderPubkey: alice.pk,
+      recipientPubkey: config.bridgePubkey,
+      rfc2822: "From: alice@mailstr.app\r\nTo: b@gmail.com\r\n\r\nhi",
+      deliverTo: ["b@gmail.com", "c@yahoo.com", "d@aol.com"],
+    });
+    const wrap = await sealAndWrap(rumor, config.bridgePubkey, alice.signer);
+
+    const transport = fakeTransport();
+    await handleWrap(fakePool(), ["wss://relay.example"], transport, wrap);
+
+    expect(transport.sendMail).toHaveBeenCalledTimes(1);
+    expect(transport.sendMail.mock.calls[0][0].envelope.to).toEqual([
+      "b@gmail.com",
+      "c@yahoo.com",
+      "d@aol.com",
+    ]);
+  });
+
+  // The bridge must not relay into its own domains: those mailboxes are
+  // reachable directly over Nostr, and delivering here would bypass the
+  // inbound path's rules entirely.
+  it("refuses deliver targets on a local domain", async () => {
+    const alice = actor();
+    mockedLookup.mockResolvedValue(foundResult(alice.pk));
+
+    const rumor = buildMailRumor({
+      senderPubkey: alice.pk,
+      recipientPubkey: config.bridgePubkey,
+      rfc2822: "From: alice@mailstr.app\r\nTo: eve@mailstr.app\r\n\r\nhi",
+      deliverTo: ["eve@mailstr.app"],
+    });
+    const wrap = await sealAndWrap(rumor, config.bridgePubkey, alice.signer);
+
+    const transport = fakeTransport();
+    await handleWrap(fakePool(), ["wss://relay.example"], transport, wrap);
+
+    expect(transport.sendMail).not.toHaveBeenCalled();
+  });
+
+  // The heartbeat is a liveness probe the bridge sends to itself. It must be
+  // consumed before authorization — it is not mail — and it must not reach
+  // Postfix or trigger a bounce.
+  it("consumes its own heartbeat without injecting mail", async () => {
+    const bridgeSigner = keySigner(config.bridgePrivkey);
+
+    const rumor = buildMailRumor({
+      senderPubkey: config.bridgePubkey,
+      recipientPubkey: config.bridgePubkey,
+      rfc2822: "Subject: heartbeat\r\n\r\nprobe-1",
+    });
+    rumor.tags.push(["heartbeat", "probe-1"]);
+    const wrap = await sealAndWrap(rumor, config.bridgePubkey, bridgeSigner);
+
+    const transport = fakeTransport();
+    await handleWrap(fakePool(), ["wss://relay.example"], transport, wrap);
+
+    expect(transport.sendMail).not.toHaveBeenCalled();
+    expect(mockedLookup).not.toHaveBeenCalled();
+  });
+
+  // Anyone can put a heartbeat tag on a rumor. Only one sealed by the bridge's
+  // own key may be treated as a heartbeat — otherwise a third party could keep
+  // a bridge with dead subscriptions looking alive indefinitely.
+  it("does not treat a stranger's heartbeat tag as its own", async () => {
+    const mallory = actor();
+    mockedLookup.mockResolvedValue({ status: "not-found" });
+
+    const rumor = buildMailRumor({
+      senderPubkey: mallory.pk,
+      recipientPubkey: config.bridgePubkey,
+      rfc2822: "From: mallory@mailstr.app\r\nTo: x@gmail.com\r\n\r\nhi",
+      deliverTo: ["x@gmail.com"],
+    });
+    rumor.tags.push(["heartbeat", "forged"]);
+    const wrap = await sealAndWrap(rumor, config.bridgePubkey, mallory.signer);
+
+    const transport = fakeTransport();
+    await handleWrap(fakePool(), ["wss://relay.example"], transport, wrap);
+
+    // Fell through to normal handling and was rejected on authorization.
+    expect(mockedLookup).toHaveBeenCalled();
+    expect(transport.sendMail).not.toHaveBeenCalled();
+  });
 });
