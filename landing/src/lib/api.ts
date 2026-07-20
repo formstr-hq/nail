@@ -1,12 +1,5 @@
 import { config } from "./config";
 
-export interface Mailbox {
-  id: number;
-  pubkey: string;
-  expirationDate?: string;
-  nip05Addresses: string[];
-}
-
 export interface MailInvoice {
   invoice: string;
   paymentHash: string;
@@ -18,11 +11,6 @@ async function getJson<T>(path: string): Promise<T | null> {
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
   return (await res.json()) as T;
-}
-
-/** The user's mailbox, or null if they haven't signed up yet. */
-export function getMailbox(pubkey: string): Promise<Mailbox | null> {
-  return getJson<Mailbox>(`/api/mails/mailbox/${pubkey}`);
 }
 
 /**
