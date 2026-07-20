@@ -242,4 +242,31 @@ describe("verification rules", () => {
     const result = await unwrapAndVerify(wrap, bob.signer);
     expect(result).toEqual({ ok: false, reason: "malformed-seal" });
   });
+
+  // Finding (residual): tags is present (Array.isArray passes) but an
+  // element is malformed. Sealed with the attacker's OWN key so
+  // rumor.pubkey === seal.pubkey and the author-match rule genuinely
+  // passes rather than being what rejects the input. If tags elements
+  // aren't validated, this reaches ok:true and `deliverTargets` crashes
+  // on `null[0]`.
+  it("rejects a rumor whose tags contain a malformed element", async () => {
+    const mallory = actor(), bridge = actor();
+
+    // getEventHash refuses to serialize a malformed-tags event (it runs the
+    // same shape check we're fixing), so the id can't come from it here —
+    // any string satisfies isValidRumorShape's `typeof id === "string"`.
+    const forged: any = {
+      id: "a".repeat(64),
+      kind: KIND_MAIL,
+      pubkey: mallory.pk,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [null],
+      content: "x",
+    };
+
+    const wrap = await sealAndWrap(forged, bridge.pk, mallory.signer);
+    const result = await unwrapAndVerify(wrap, bridge.signer);
+
+    expect(result).toEqual({ ok: false, reason: "malformed-rumor" });
+  });
 });

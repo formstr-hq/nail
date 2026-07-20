@@ -32,10 +32,11 @@ export function buildMailRumor(params: {
 
 /** Structural check for the six fields `Rumor` requires (types.ts). A rumor
  * that fails this can't be trusted downstream: `deliverTargets` assumes
- * `tags` is an array, and the staleness check assumes `created_at` is a
- * number — either missing turns into an uncaught crash or a silently
+ * `tags` is an array of string arrays, and the staleness check assumes
+ * `created_at` is a number — any of these being wrong turns into an
+ * uncaught crash (e.g. `null[0]` in `deliverTargets`) or a silently
  * bypassed replay check (`now - undefined` is `NaN`, and `NaN > maxAge` is
- * always false). */
+ * always false). Mirrors nostr-tools' own `validateEvent` tag check. */
 function isValidRumorShape(value: unknown): value is Rumor {
   if (typeof value !== "object" || value === null) return false;
   const r = value as Record<string, unknown>;
@@ -45,6 +46,7 @@ function isValidRumorShape(value: unknown): value is Rumor {
     typeof r.pubkey === "string" &&
     typeof r.created_at === "number" &&
     Array.isArray(r.tags) &&
+    r.tags.every((tag) => Array.isArray(tag) && tag.every((el) => typeof el === "string")) &&
     typeof r.content === "string"
   );
 }
@@ -122,7 +124,7 @@ export async function unwrapAndVerify(
     return { ok: false, reason: "malformed-seal" };
   }
 
-  if (typeof seal?.kind !== "number" || typeof seal?.pubkey !== "string") {
+  if (typeof seal.kind !== "number" || typeof seal.pubkey !== "string") {
     return { ok: false, reason: "malformed-seal" };
   }
   // Rules in spec order: (1) signature, (2) seal.kind, (3) author match,
