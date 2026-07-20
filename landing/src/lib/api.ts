@@ -25,12 +25,21 @@ export function getMailbox(pubkey: string): Promise<Mailbox | null> {
   return getJson<Mailbox>(`/api/mails/mailbox/${pubkey}`);
 }
 
-/** Pubkey owning a NIP-05 name, or null — null means the name is available. */
-export async function resolveNip05(nip05: string): Promise<string | null> {
-  const record = await getJson<{ pubkey: string }>(
-    `/api/nip-05/get-pubkey/${encodeURIComponent(nip05)}`,
+/**
+ * Pubkey owning a NIP-05 name, or null — null means the name is available.
+ * Queries the mail domain's /.well-known/nostr.json directly (NIP-05)
+ * instead of the backend, so availability checks cost the API nothing.
+ */
+export async function resolveNip05(name: string): Promise<string | null> {
+  const res = await fetch(
+    `https://${config.mailDomain}/.well-known/nostr.json?name=${encodeURIComponent(name)}`,
+    // NIP-05 forbids redirects on this endpoint.
+    { redirect: "error" },
   );
-  return record?.pubkey ?? null;
+  if (res.status === 404) return null; // no record → name is free
+  if (!res.ok) throw new Error(`NIP-05 lookup failed (${res.status})`);
+  const data = (await res.json()) as { names?: Record<string, string> };
+  return data.names?.[name] ?? null;
 }
 
 /** Current signup price in sats. */
