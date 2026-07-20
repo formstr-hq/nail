@@ -30,10 +30,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const initialSenderAddress = settings.senderAddress ?? ''
   const [senderAddress, setSenderAddress] = useState(initialSenderAddress)
   // Tracks which <select> option is active: a fixed option's own value, or
-  // CUSTOM_SENDER when the free-text input is in play. Computed once from
-  // the saved value at mount — if that value isn't one of the fixed options
-  // (own addresses may still be loading), it falls into Custom rather than
-  // being reset, per the "never regress a saved address" invariant.
+  // CUSTOM_SENDER when the free-text input is in play. Derived from the
+  // saved value each render (which in practice doesn't change while this
+  // modal is open) — if that value isn't one of the fixed options (own
+  // addresses may still be loading), it falls into Custom rather than being
+  // reset, per the "never regress a saved address" invariant.
   const [senderMode, setSenderMode] = useState<string>(() =>
     fixedSenderOptions.includes(initialSenderAddress) ? initialSenderAddress : CUSTOM_SENDER,
   )

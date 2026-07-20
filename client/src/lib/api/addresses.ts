@@ -93,7 +93,12 @@ export async function fetchOwnedAddresses(active: ActiveSigner): Promise<string[
     throw new Error(message)
   }
 
-  const body = await res.json()
+  let body: unknown = null
+  try {
+    body = await res.json()
+  } catch {
+    // empty or non-JSON success body — treat as "no addresses"
+  }
   // Deliberately unconditional (not gated behind a dev-only flag) so the
   // real response shape can be confirmed against production without a
   // redeploy.
