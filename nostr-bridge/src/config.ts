@@ -35,11 +35,29 @@ export const config = {
   postfixPort: Number(process.env.POSTFIX_PORT ?? 25),
   blossomServerUrl: process.env.BLOSSOM_SERVER_URL ?? "https://nostr.download",
   bridgeDomain: process.env.BRIDGE_DOMAIN ?? "",
-  allowedDomains: (process.env.ALLOWED_DOMAINS ?? "")
+  // Domains this deployment accepts mail for and serves NIP-05 records for.
+  // Outbound From addresses MUST be on one of these (§5); the bridge refuses
+  // to deliver TO them (§6B step 5) since they are reachable over Nostr.
+  localDomains: (process.env.LOCAL_DOMAINS ?? process.env.ALLOWED_DOMAINS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+
+  // Relays the bridge itself listens and publishes its own 10050/kind-0 on.
+  bridgeRelays: (process.env.BRIDGE_RELAYS ?? process.env.BOOTSTRAP_RELAYS ?? "wss://relay.damus.io,wss://relay.nostr.band")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
 };
+
+// Fail fast rather than silently running as an open relay: with no local
+// domains configured there is no address the bridge can verify ownership of,
+// so every outbound message would have to be rejected anyway (§5).
+if (config.localDomains.length === 0) {
+  throw new Error(
+    "Missing required env var: LOCAL_DOMAINS (comma-separated, e.g. mailstr.app)",
+  );
+}
 
 export const MAIL_KIND = 1301;
 export const GIFT_WRAP_KIND = 1059;
