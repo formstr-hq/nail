@@ -17,12 +17,25 @@ const AUTH_ERROR_MESSAGE = 'Session rejected — sign in again'
  * "fetch only when Settings is opened" — no extra gating needed here.
  *
  * Every render is keyed off `account?.pubkey`: whenever it changes (account
- * switch, or logout dropping it to null) the effect below resets state
- * before doing anything else, so a previous account's addresses/error can
- * never remain visible under a different (or no) account — even though the
- * module-scope cache itself is never explicitly cleared. Cache entries stay
- * correctly scoped per pubkey for the life of the tab; they just aren't
- * evicted on logout, which is a memory-growth non-issue, not a staleness one.
+ * switch, or logout dropping it to null) state is reset before this render
+ * commits, so a previous account's addresses/error can never remain visible
+ * under a different (or no) account — even though the module-scope cache
+ * itself is never explicitly cleared. Cache entries stay correctly scoped
+ * per pubkey for the life of the tab; they just aren't evicted on logout,
+ * which is a memory-growth non-issue, not a staleness one.
+ *
+ * The reset can't wait for a `useEffect`: the account store (see
+ * `store/account.ts`) updates via a plain zustand `set()`, which is
+ * synchronous, so a logout/switch can produce a render where `pubkey` has
+ * already changed but `addresses` (a separate `useState`) still holds the
+ * previous account's array — and that render can commit/paint before any
+ * effect runs. So the reset happens directly in the render body below,
+ * using the "adjusting state when a prop changes" pattern: track the last
+ * seen `pubkey` in state and, if it differs, call the reset setters
+ * immediately — React re-renders with the corrected state before painting,
+ * instead of painting the stale one first. The effect further down still
+ * does its own reset for the case where `pubkey` is unchanged but `active`
+ * drops to null (e.g. session invalidated without an account switch).
  */
 export function useOwnedAddresses() {
   const { account, active } = useAccountStore()
@@ -34,6 +47,20 @@ export function useOwnedAddresses() {
   const [loading, setLoading] = useState<boolean>(() => Boolean(pubkey && active && !cache.has(pubkey)))
   const [error, setError] = useState<string | null>(null)
   const [reloadNonce, setReloadNonce] = useState(0)
+
+  // Render-time reset: closes the gap where a synchronous account-store
+  // update (e.g. logout's `set({ account: null, active: null })`) changes
+  // `pubkey` mid-render while `addresses`/`error`/`loading` still reflect
+  // the previous account. Must use `useState` (not a ref) for the tracked
+  // previous key — writing a ref during render doesn't trigger the re-render
+  // needed to actually flush the reset before paint.
+  const [prevPubkey, setPrevPubkey] = useState(pubkey)
+  if (prevPubkey !== pubkey) {
+    setPrevPubkey(pubkey)
+    setAddresses(pubkey ? cache.get(pubkey) ?? [] : [])
+    setError(null)
+    setLoading(Boolean(pubkey && active && !cache.has(pubkey)))
+  }
 
   useEffect(() => {
     let alive = true
@@ -85,9 +112,10 @@ export function useOwnedAddresses() {
   }, [pubkey, active, reloadNonce])
 
   const reload = useCallback(() => {
+    if (loading) return // fetch for the current pubkey is already in flight
     if (pubkey) cache.delete(pubkey)
     setReloadNonce((n) => n + 1)
-  }, [pubkey])
+  }, [pubkey, loading])
 
   return { addresses, loading, error, reload }
 }
