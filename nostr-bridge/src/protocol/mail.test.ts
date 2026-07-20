@@ -198,4 +198,48 @@ describe("verification rules", () => {
     const result = await unwrapAndVerify(wrap, bob.signer);
     expect(result).toEqual({ ok: false, reason: "bad-seal-signature" });
   });
+
+  // Finding 1: a rumor missing tags/created_at/id, sealed with the
+  // attacker's own key so rumor.pubkey === seal.pubkey (author check
+  // passes legitimately). If the shape isn't fully validated, `now -
+  // undefined` is NaN, the staleness comparison silently never fires, and
+  // the caller gets ok:true with a rumor whose .tags is undefined — a
+  // guaranteed crash in deliverTargets().
+  it("rejects a rumor missing required fields even when self-authored", async () => {
+    const mallory = actor(), bridge = actor();
+
+    const forged: any = {
+      kind: KIND_MAIL,
+      pubkey: mallory.pk,
+      content: "x",
+      // tags, created_at, id deliberately omitted
+    };
+
+    const wrap = await sealAndWrap(forged, bridge.pk, mallory.signer);
+    const result = await unwrapAndVerify(wrap, bridge.signer);
+
+    expect(result).toEqual({ ok: false, reason: "malformed-rumor" });
+  });
+
+  // Finding 2: the outer decrypt genuinely succeeds (it's addressed to us)
+  // but the plaintext isn't JSON. That's a broken/hostile seal, not routine
+  // "not for us" traffic, and must be reported so callers don't silently
+  // swallow it.
+  it("reports a non-JSON seal plaintext as malformed-seal, not not-for-us", async () => {
+    const bob = actor();
+
+    const ek = generateSecretKey();
+    const wrap = finalizeEvent(
+      {
+        kind: KIND_GIFTWRAP,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [["p", bob.pk]],
+        content: encrypt("not json at all", getConversationKey(ek, bob.pk)),
+      },
+      ek,
+    );
+
+    const result = await unwrapAndVerify(wrap, bob.signer);
+    expect(result).toEqual({ ok: false, reason: "malformed-seal" });
+  });
 });

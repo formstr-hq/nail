@@ -27,7 +27,26 @@ export function buildMailRumor(params: {
     tags,
     content: params.rfc2822,
   };
-  return { ...rumor, id: getEventHash(rumor as never) };
+  return { ...rumor, id: getEventHash(rumor) };
+}
+
+/** Structural check for the six fields `Rumor` requires (types.ts). A rumor
+ * that fails this can't be trusted downstream: `deliverTargets` assumes
+ * `tags` is an array, and the staleness check assumes `created_at` is a
+ * number — either missing turns into an uncaught crash or a silently
+ * bypassed replay check (`now - undefined` is `NaN`, and `NaN > maxAge` is
+ * always false). */
+function isValidRumorShape(value: unknown): value is Rumor {
+  if (typeof value !== "object" || value === null) return false;
+  const r = value as Record<string, unknown>;
+  return (
+    typeof r.id === "string" &&
+    typeof r.kind === "number" &&
+    typeof r.pubkey === "string" &&
+    typeof r.created_at === "number" &&
+    Array.isArray(r.tags) &&
+    typeof r.content === "string"
+  );
 }
 
 /** The envelope for this hop — who the bridge must deliver to (§4). */
@@ -80,28 +99,45 @@ export async function unwrapAndVerify(
   const maxAge = opts.maxAgeSeconds ?? MAX_RUMOR_AGE_SECONDS;
   const now = opts.now ?? Math.floor(Date.now() / 1000);
 
-  // Failure here is routine: relays hand us every wrap p-tagged to us.
-  let seal: Event;
+  // Failure here is routine: relays hand us every wrap p-tagged to us, and
+  // most are not ours to decrypt.
+  let sealPlaintext: string;
   try {
-    seal = JSON.parse(await signer.nip44Decrypt(wrap.pubkey, wrap.content));
+    sealPlaintext = await signer.nip44Decrypt(wrap.pubkey, wrap.content);
   } catch {
     return { ok: false, reason: "not-for-us" };
+  }
+
+  // Decryption succeeded, so this wrap genuinely was addressed to us — a
+  // non-JSON or malformed result past this point is broken/hostile input,
+  // not routine traffic, and must be reported rather than swallowed.
+  let seal: Event;
+  try {
+    const parsed: unknown = JSON.parse(sealPlaintext);
+    if (typeof parsed !== "object" || parsed === null) {
+      return { ok: false, reason: "malformed-seal" };
+    }
+    seal = parsed as Event;
+  } catch {
+    return { ok: false, reason: "malformed-seal" };
   }
 
   if (typeof seal?.kind !== "number" || typeof seal?.pubkey !== "string") {
     return { ok: false, reason: "malformed-seal" };
   }
-  if (seal.kind !== KIND_SEAL) return { ok: false, reason: "wrong-seal-kind" };
+  // Rules in spec order: (1) signature, (2) seal.kind, (3) author match,
+  // (4) rumor.kind, (5) staleness.
   if (!verifyEvent(seal)) return { ok: false, reason: "bad-seal-signature" };
+  if (seal.kind !== KIND_SEAL) return { ok: false, reason: "wrong-seal-kind" };
 
   let rumor: Rumor;
   try {
-    rumor = JSON.parse(await signer.nip44Decrypt(seal.pubkey, seal.content));
+    const parsed: unknown = JSON.parse(await signer.nip44Decrypt(seal.pubkey, seal.content));
+    if (!isValidRumorShape(parsed)) {
+      return { ok: false, reason: "malformed-rumor" };
+    }
+    rumor = parsed;
   } catch {
-    return { ok: false, reason: "malformed-rumor" };
-  }
-
-  if (typeof rumor?.pubkey !== "string" || typeof rumor?.kind !== "number") {
     return { ok: false, reason: "malformed-rumor" };
   }
 
