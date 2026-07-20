@@ -10,8 +10,7 @@ useWebSocketImplementation(WebSocket);
 
 const userResolver = new UserResolver(
   config.bootstrapRelays,
-  config.defaultRelayUrl,
-  config.blossomServerUrl,
+  config.bridgeRelays,
   config.relayCacheMax,
   config.relayCacheTtlMs,
 );

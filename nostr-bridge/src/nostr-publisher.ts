@@ -1,15 +1,9 @@
 import WebSocket from "ws";
-import { createRumor, createSeal, createWrap } from "nostr-tools/nip59";
-import { deriveSecretKey } from "./key-derivation.js";
-import { uploadEncryptedAttachment } from "./blossom-client.js";
-import type { ParsedEmail } from "./email-parser.js";
-import { MAIL_KIND } from "./config.js";
+import type { Event } from "nostr-tools";
+import { buildMailRumor, sealAndWrap } from "./protocol/mail.js";
+import type { ProtocolSigner } from "./protocol/types.js";
 
-function publishToRelay(
-  relayUrl: string,
-  event: { id: string },
-  timeoutMs = 4000,
-): Promise<boolean> {
+function publishToRelay(relayUrl: string, event: Event, timeoutMs = 4000): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (result: boolean) => {
@@ -29,63 +23,44 @@ function publishToRelay(
         const data = JSON.parse(raw.toString());
         if (data[0] === "OK" && data[1] === event.id) finish(Boolean(data[2]));
       } catch {
-        // ignore malformed relay messages
+        // ignore malformed relay frames
       }
     });
     ws.on("error", (error) => {
-      console.error("Relay error", error);
+      console.error(`nostr-bridge: relay ${relayUrl} error:`, (error as Error).message);
       finish(false);
     });
   });
 }
 
-export async function publishDM(
-  masterSecret: Uint8Array,
+/**
+ * Wrap an inbound email for a recipient. The rumor content is the ORIGINAL
+ * message, unmodified — headers are the identity and threading model (§1), so
+ * reconstructing the message from parsed fields destroys both.
+ */
+export async function buildInboundWrap(
+  raw: string,
   recipientPubkey: string,
-  email: ParsedEmail,
-  writeRelays: string[],
-  blossomServerUrl: string,
-): Promise<boolean> {
-  const senderSecretKey = deriveSecretKey(masterSecret, recipientPubkey);
+  signer: ProtocolSigner,
+): Promise<Event> {
+  const rumor = buildMailRumor({
+    senderPubkey: await signer.getPublicKey(),
+    recipientPubkey,
+    rfc2822: raw,
+  });
+  return sealAndWrap(rumor, recipientPubkey, signer);
+}
 
-  const imetaTags: string[][] = [];
-  for (const attachment of email.attachments) {
-    const uploaded = await uploadEncryptedAttachment(
-      attachment.content,
-      senderSecretKey,
-      blossomServerUrl,
-    );
-    imetaTags.push([
-      "imeta",
-      `url ${uploaded.url}`,
-      "m application/octet-stream",
-      `x ${uploaded.sha256}`,
-      `size ${attachment.content.length}`,
-      `filename ${attachment.filename}`,
-      `decryption-key ${uploaded.encryptionKey}`,
-      `decryption-nonce ${uploaded.decryptionNonce}`,
-      "encryption-algorithm aes-256-gcm",
-    ]);
-  }
-
-  const content = email.subject
-    ? `Subject: ${email.subject}\n\n${email.text}`
-    : email.text;
-
-  const rumor = createRumor(
-    {
-      kind: MAIL_KIND,
-      content,
-      tags: [["p", recipientPubkey], ...imetaTags],
-    },
-    senderSecretKey,
-  );
-
-  const seal = createSeal(rumor, senderSecretKey, recipientPubkey);
-  const wrap = createWrap(seal, recipientPubkey);
-
+/** Returns true if at least one relay accepted the event. */
+export async function publishMail(params: {
+  raw: string;
+  recipientPubkey: string;
+  signer: ProtocolSigner;
+  relays: string[];
+}): Promise<boolean> {
+  const wrap = await buildInboundWrap(params.raw, params.recipientPubkey, params.signer);
   const results = await Promise.all(
-    writeRelays.map((relay) => publishToRelay(relay, wrap)),
+    params.relays.map((relay) => publishToRelay(relay, wrap)),
   );
   return results.some(Boolean);
 }
