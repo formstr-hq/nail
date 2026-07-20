@@ -64,7 +64,13 @@ export function buildRfc2822({
   return lines.join('\r\n')
 }
 
-export async function parseRfc2822(raw: string) {
+/**
+ * Takes bytes, not a string, and deliberately so: given a string, postal-mime
+ * encodes it to UTF-8 before applying the charset the message declares, so an
+ * ISO-8859-1 or Shift-JIS body comes back as mojibake. Handing it the original
+ * octets lets it decode per the declared charset. See §4 of ARCHITECTURE.md.
+ */
+export async function parseRfc2822(raw: Uint8Array) {
   // postal-mime works in browser and Node
   const { default: PostalMime } = await import('postal-mime')
   const parser = new PostalMime()

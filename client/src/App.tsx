@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { useInbox } from '@/hooks/useInbox'
+import { useResolveContext } from '@/hooks/useResolveContext'
 import { LoginPage } from '@/components/LoginPage'
 import { Sidebar } from '@/components/Sidebar'
 import { EmailList } from '@/components/EmailList'
@@ -14,7 +15,8 @@ function MailApp() {
   const [showSettings, setShowSettings] = useState(false)
   const { account, active } = useAccountStore()
   const { load } = useSettingsStore()
-  useInbox()
+  const ctx = useResolveContext()
+  useInbox(ctx.bridgePubkey)
 
   useEffect(() => {
     if (!account || !active) return
@@ -30,7 +32,7 @@ function MailApp() {
         </div>
         <EmailView />
       </div>
-      {composing && <ComposeModal onClose={() => setComposing(false)} />}
+      {composing && <ComposeModal onClose={() => setComposing(false)} ctx={ctx} />}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   )

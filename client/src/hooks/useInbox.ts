@@ -3,11 +3,11 @@ import { useAccountStore } from '@/store/account'
 import { useMailStore } from '@/store/mail'
 import { getPool, fetchDmRelays } from '@/lib/nostr/relays'
 import { decodeGiftWrap } from '@/lib/mail/receive'
-import { signerFromActive } from '@/lib/nostr/signer'
+import { protocolSigner } from '@/lib/nostr/protocol-signer'
 import { KIND_GIFTWRAP } from '@/lib/nostr/constants'
 import type { Event, Filter } from 'nostr-tools'
 
-export function useInbox() {
+export function useInbox(bridgePubkey: string | null) {
   const { account, active } = useAccountStore()
   const addEmail = useMailStore((s) => s.addEmail)
 
@@ -16,7 +16,7 @@ export function useInbox() {
 
     let alive = true
     const pool = getPool()
-    const signer = signerFromActive(active)
+    const signer = protocolSigner(active)
 
     // Decrypting a gift wrap costs one signer call, and with a NIP-46 bunker
     // that is a full relay round-trip. The subscription has no `since`, so a
@@ -32,17 +32,21 @@ export function useInbox() {
       while (alive && running < MAX_CONCURRENT_DECRYPTS && queue.length) {
         const event = queue.shift()!
         running += 1
-        void decodeGiftWrap(event, signer)
-          .then((email) => {
+        void decodeGiftWrap(event, signer, bridgePubkey)
+          .then((outcome) => {
             if (!alive) return
-            if (email) addEmail(email)
-            else {
-              undecodable += 1
-              console.warn(
-                `[inbox] could not decode gift wrap ${event.id.slice(0, 8)} ` +
-                  `(${undecodable} so far) — wrong kind, or the signer refused/timed out`,
-              )
+            if ('email' in outcome) {
+              addEmail(outcome.email)
+              return
             }
+            // Routine: relays hand us every wrap p-tagged to us, and most are
+            // other people's mail we cannot read. Only the rest is a signal.
+            if (outcome.failure.routine) return
+            undecodable += 1
+            console.warn(
+              `[inbox] rejected wrap ${event.id.slice(0, 8)}: ${outcome.failure.reason} ` +
+                `(${undecodable} so far)`,
+            )
           })
           .finally(() => {
             running -= 1
@@ -78,5 +82,5 @@ export function useInbox() {
       alive = false
       subPromise.then((sub) => sub?.close())
     }
-  }, [account, active, addEmail])
+  }, [account, active, addEmail, bridgePubkey])
 }

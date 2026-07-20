@@ -1,71 +1,109 @@
-import { resolveNip05, resolveBridgePubkey, isNpub, isHexPubkey, isLegacyEmail } from '@/lib/nostr/nip05'
-import { npubToPubkey, pubkeyToNpub } from '@/lib/nostr/giftwrap'
-import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
+import { nip19 } from 'nostr-tools'
+import { isNpub, isHexPubkey, splitAddress } from '@protocol'
+import { probeNip05 } from '@/lib/nostr/nip05'
 
-export type RecipientType = 'nostr' | 'bridge'
+export interface ResolveContext {
+  /** Domains this deployment serves NIP-05 records for. */
+  localDomains: string[]
+  /** The signed-in user's own mail domain, used for header addresses. */
+  ownDomain: string
+  bridgePubkey: string | null
+}
 
-export interface ResolvedRecipient {
-  type: RecipientType
-  pubkey: string        // hex pubkey to gift-wrap to
-  address: string       // original address string, as the user typed it
-  headerAddress: string // valid RFC 2822 addr-spec for To:/CC: headers
+export interface ResolveOutcome {
+  /** Reachable directly over Nostr — one gift wrap each. */
+  nostr: Array<{ pubkey: string; headerAddress: string }>
+  /** Legacy addresses — ALL of these ride in ONE wrap to the bridge. */
+  legacy: string[]
+  errors: string[]
 }
 
 /**
- * A bare npub or hex pubkey is not a valid RFC 2822 addr-spec, and a parser
- * reading `To: npub1…` back treats the whole thing as a display *name* with an
- * empty address — which is why such recipients rendered blank. Write the
- * documented bridge form `<npub>@<BRIDGE_DOMAIN>` into headers instead.
+ * A bare npub is not a valid RFC 2822 addr-spec: a parser reading
+ * `To: npub1…` treats the whole string as a display *name* with an empty
+ * address, which renders as a blank recipient. Write `<npub>@<domain>`.
  */
-function nostrHeaderAddress(pubkey: string): string {
-  return `${pubkeyToNpub(pubkey)}@${BRIDGE_DOMAIN}`
+function nostrHeaderAddress(pubkey: string, domain: string): string {
+  return `${nip19.npubEncode(pubkey)}@${domain}`
 }
 
-export async function resolveRecipient(address: string): Promise<ResolvedRecipient> {
-  // 1. Direct npub
-  if (isNpub(address)) {
-    const pubkey = npubToPubkey(address)
-    return { type: 'nostr', pubkey, address, headerAddress: nostrHeaderAddress(pubkey) }
-  }
+/**
+ * Classify each recipient as directly reachable over Nostr or as legacy email
+ * that must go through the bridge.
+ *
+ * Note what falls out of the NIP-05 probe: a registered mailstr address
+ * resolves to a pubkey and goes direct, so mailstr-to-mailstr mail never
+ * touches the bridge at all. The bridge exists only for legacy domains.
+ */
+export async function resolveRecipients(
+  addresses: string[],
+  ctx: ResolveContext,
+): Promise<ResolveOutcome> {
+  const out: ResolveOutcome = { nostr: [], legacy: [], errors: [] }
 
-  // 2. Hex pubkey
-  if (isHexPubkey(address)) {
-    return { type: 'nostr', pubkey: address, address, headerAddress: nostrHeaderAddress(address) }
-  }
+  await Promise.all(
+    addresses.map(async (address) => {
+      const trimmed = address.trim()
 
-  // 3. NIP-05 or legacy email
-  if (address.includes('@')) {
-    const [localPart, domain] = address.split('@')
+      if (isNpub(trimmed)) {
+        const pubkey = nip19.decode(trimmed).data as string
+        out.nostr.push({ pubkey, headerAddress: nostrHeaderAddress(pubkey, ctx.ownDomain) })
+        return
+      }
 
-    // `<npub>@<domain>` — the form we write into headers for Nostr-native
-    // recipients. Resolve it straight back to the pubkey; without this a reply
-    // would fall through to the bridge branch below and be relayed as legacy
-    // email instead of going direct.
-    if (isNpub(localPart)) {
-      const pubkey = npubToPubkey(localPart)
-      return { type: 'nostr', pubkey, address, headerAddress: nostrHeaderAddress(pubkey) }
-    }
+      if (isHexPubkey(trimmed)) {
+        out.nostr.push({
+          pubkey: trimmed,
+          headerAddress: nostrHeaderAddress(trimmed, ctx.ownDomain),
+        })
+        return
+      }
 
-    // Try NIP-05 first (even for addresses that look like legacy emails)
-    const nip05Pubkey = await resolveNip05(address)
-    if (nip05Pubkey) {
-      return { type: 'nostr', pubkey: nip05Pubkey, address, headerAddress: address }
-    }
+      const parts = splitAddress(trimmed)
+      if (!parts) {
+        out.errors.push(`Cannot resolve recipient: ${trimmed}`)
+        return
+      }
 
-    // If domain is the bridge domain, treat as bridge-routed Nostr
-    if (domain === BRIDGE_DOMAIN) {
-      const bridgePubkey = await resolveBridgePubkey()
-      if (!bridgePubkey) throw new Error('Could not resolve bridge pubkey')
-      return { type: 'bridge', pubkey: bridgePubkey, address, headerAddress: address }
-    }
+      // `<npub>@<domain>` is the header form we write for Nostr-native
+      // recipients. Resolve it straight back to the pubkey — without this a
+      // reply would fall through to the bridge and be relayed as legacy mail.
+      const rawLocal = trimmed.slice(0, trimmed.indexOf('@'))
+      if (isNpub(rawLocal)) {
+        try {
+          out.nostr.push({
+            pubkey: nip19.decode(rawLocal).data as string,
+            headerAddress: trimmed,
+          })
+          return
+        } catch {
+          out.errors.push(`Cannot resolve recipient: ${trimmed}`)
+          return
+        }
+      }
 
-    // Legacy email — route to bridge
-    if (isLegacyEmail(address)) {
-      const bridgePubkey = await resolveBridgePubkey()
-      if (!bridgePubkey) throw new Error('Could not resolve bridge pubkey')
-      return { type: 'bridge', pubkey: bridgePubkey, address, headerAddress: address }
-    }
-  }
+      const pubkey = await probeNip05(trimmed)
+      if (pubkey) {
+        out.nostr.push({ pubkey, headerAddress: trimmed })
+        return
+      }
 
-  throw new Error(`Cannot resolve recipient: ${address}`)
+      // A local domain with no NIP-05 record is a mailbox that does not exist.
+      // Handing it to the bridge would only earn a slow Postfix bounce for
+      // something we already know cannot be delivered.
+      if (ctx.localDomains.includes(parts.domain)) {
+        out.errors.push(`No such mailbox: ${trimmed}`)
+        return
+      }
+
+      if (!ctx.bridgePubkey) {
+        out.errors.push(`No bridge configured — cannot send to ${trimmed}`)
+        return
+      }
+
+      out.legacy.push(trimmed)
+    }),
+  )
+
+  return out
 }

@@ -2,15 +2,18 @@ import { useState } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { sendMail } from '@/lib/mail/send'
+import { protocolSigner } from '@/lib/nostr/protocol-signer'
 import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
+import type { ResolveContext } from '@/lib/mail/resolve'
 
 interface ComposeModalProps {
   onClose: () => void
+  ctx: ResolveContext
   replyTo?: { to: string; subject: string; messageId?: string; references?: string[] }
 }
 
-export function ComposeModal({ onClose, replyTo }: ComposeModalProps) {
-  const { account } = useAccountStore()
+export function ComposeModal({ onClose, ctx, replyTo }: ComposeModalProps) {
+  const { account, active } = useAccountStore()
   const { settings } = useSettingsStore()
   const [to, setTo] = useState(replyTo?.to ?? '')
   const [subject, setSubject] = useState(replyTo ? `Re: ${replyTo.subject}` : '')
@@ -22,7 +25,7 @@ export function ComposeModal({ onClose, replyTo }: ComposeModalProps) {
   const fromAddress = settings.senderAddress || defaultAddress
 
   async function handleSend() {
-    if (!account || !to.trim() || !subject.trim()) return
+    if (!account || !active || !to.trim() || !subject.trim()) return
     setSending(true)
     setError('')
     try {
@@ -34,6 +37,8 @@ export function ComposeModal({ onClose, replyTo }: ComposeModalProps) {
         body,
         inReplyTo: replyTo?.messageId,
         references: replyTo?.references,
+        ctx,
+        signer: protocolSigner(active),
       })
       onClose()
     } catch (e) {
