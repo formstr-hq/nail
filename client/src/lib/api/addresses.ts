@@ -1,6 +1,6 @@
 import type { ActiveSigner } from '@formstr/signer'
 import { withSignerTimeout } from '../nostr/signer'
-import { apiUrl } from './config'
+import { apiUrl, apiAuthUrl } from './config'
 import { buildNip98Header, type Nip98Signer } from './nip98'
 
 /**
@@ -67,12 +67,16 @@ export function normalizeOwnedAddresses(body: unknown): string[] {
  * NIP-46 bunkers otherwise hang forever).
  */
 export async function fetchOwnedAddresses(active: ActiveSigner): Promise<string[]> {
-  const url = apiUrl('/api/nip-05/get-nip05')
+  const path = '/api/nip-05/get-nip05'
 
   const boundSigner: Nip98Signer = {
     signEvent: (event) => withSignerTimeout('signEvent', () => active.signEvent(event)),
   }
-  const authHeader = await buildNip98Header(boundSigner, url, 'GET')
+  // Sign the canonical URL, not the one we fetch: behind the dev proxy those
+  // differ, and NIP-98's `u` tag must match what the server receives.
+  const authHeader = await buildNip98Header(boundSigner, apiAuthUrl(path), 'GET')
+
+  const url = apiUrl(path)
 
   const res = await fetch(url, { headers: { Authorization: authHeader } })
 
