@@ -1,6 +1,8 @@
 import type { Event } from 'nostr-tools'
 import { unwrapAndVerify, messageStringToBytes, type ProtocolSigner } from '@protocol'
+import { nip19 } from 'nostr-tools'
 import { probeNip05 } from '@/lib/nostr/nip05'
+import { fetchProfileName } from '@/lib/nostr/profile'
 import { parseRfc2822 } from './rfc2822'
 import type { Email } from '@/types/mail'
 
@@ -81,7 +83,17 @@ export async function decodeGiftWrap(
       bridgePubkey,
       ownPubkey,
     })
-    const fromAddress = trustFrom ? parsed.from!.address! : seal.pubkey
+
+    // Unverified senders are identified by their key, not by a header we
+    // cannot check. Show the npub rather than raw hex, and label it with the
+    // kind-0 name if the sender publishes one — self-asserted, so the npub
+    // stays visible next to it rather than being replaced by it.
+    const from = trustFrom
+      ? { name: parsed.from?.name, address: parsed.from!.address! }
+      : {
+          name: (await fetchProfileName(seal.pubkey)) ?? undefined,
+          address: nip19.npubEncode(seal.pubkey),
+        }
 
     const toDisplay = (a: { name?: string; address?: string }) => ({
       name: a.address ? a.name : undefined,
@@ -96,7 +108,7 @@ export async function decodeGiftWrap(
         messageId: parsed.messageId,
         inReplyTo: parsed.inReplyTo,
         references: parsed.references?.split(/\s+/).filter(Boolean),
-        from: { name: trustFrom ? parsed.from?.name : undefined, address: fromAddress },
+        from,
         to: (parsed.to ?? []).map(toDisplay),
         cc: ccAddresses.length ? ccAddresses : undefined,
         subject: parsed.subject ?? '(no subject)',
