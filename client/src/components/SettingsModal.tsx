@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { useOwnedAddresses } from '@/hooks/useOwnedAddresses'
@@ -37,6 +37,24 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [senderMode, setSenderMode] = useState<string>(() =>
     fixedSenderOptions.includes(initialSenderAddress) ? initialSenderAddress : CUSTOM_SENDER,
   )
+
+  // `addresses` loads asynchronously — on first open, the mount-time
+  // initializer above almost always sees `addresses === []` and falls back
+  // to Custom even when the saved address is one of the user's own. Once the
+  // fetch resolves, re-classify — but only if the user hasn't touched the
+  // picker since mount (still on Custom with the original saved value),
+  // so an in-progress edit is never clobbered.
+  useEffect(() => {
+    if (
+      senderMode === CUSTOM_SENDER &&
+      senderAddress === initialSenderAddress &&
+      fixedSenderOptions.includes(senderAddress)
+    ) {
+      setSenderMode(senderAddress)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addresses, bridgeAddress])
+
   const [signature, setSignature] = useState(settings.signature ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -150,12 +168,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               onChange={(e) => handleSenderModeChange(e.target.value)}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             >
-              {addresses.map((addr) => (
+              {fixedSenderOptions.map((addr) => (
                 <option key={addr} value={addr}>
                   {addr}
                 </option>
               ))}
-              {bridgeAddress && <option value={bridgeAddress}>{bridgeAddress}</option>}
               <option value={CUSTOM_SENDER}>Custom…</option>
             </select>
             {senderMode === CUSTOM_SENDER && (
