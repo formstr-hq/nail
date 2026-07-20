@@ -3,8 +3,11 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "outDir": "dist",
-    "rootDir": "src",
+    // Tests are run by vitest, never emitted, and they deliberately import
+    // nostr-bridge sources (notably the shared protocol module) so they
+    // exercise the same code the apps ship. An outDir/rootDir pair would
+    // reject those cross-package imports for no benefit.
+    "noEmit": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,

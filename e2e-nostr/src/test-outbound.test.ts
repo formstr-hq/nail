@@ -5,7 +5,13 @@ import { generateSecretKey } from "nostr-tools/pure";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import { createMockRelay } from "nostr-mock-relay";
-import { buildMailGiftWrap, publishToRelay } from "./nostr-helper.js";
+import { publishToRelay } from "./nostr-helper.js";
+import {
+  buildMailRumor,
+  sealAndWrap,
+  keySigner,
+  bytesToMessageString,
+} from "@nostr-bridge/protocol/index.js";
 import { uploadEncryptedTestAttachment } from "./blossom-helper.js";
 import { env } from "./env.js";
 
@@ -91,9 +97,23 @@ async function buildRfc2822(opts: nodemailer.SendMailOptions): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
-async function publishMailEvent(rfc2822: string): Promise<void> {
-  const senderPrivkey = generateSecretKey();
-  const wrap = buildMailGiftWrap(rfc2822, senderPrivkey, env.bridgePubkey);
+async function publishMailEvent(
+  rfc2822: string,
+  deliverTo: string[] = [env.mailcowUser],
+  extraTags: string[][] = [],
+): Promise<void> {
+  // Built with the same protocol module the client uses, so this suite can no
+  // longer pass against a client that cannot talk to the bridge.
+  const signer = keySigner(generateSecretKey());
+  const rumor = buildMailRumor({
+    senderPubkey: await signer.getPublicKey(),
+    recipientPubkey: env.bridgePubkey,
+    // Routing comes from deliver tags now; the bridge never reads To:.
+    deliverTo,
+    rfc2822: bytesToMessageString(new TextEncoder().encode(rfc2822)),
+  });
+  rumor.tags.push(...extraTags);
+  const wrap = await sealAndWrap(rumor, env.bridgePubkey, signer);
   const ok = await publishToRelay(relayUrl, wrap);
   expect(ok).toBe(true);
 }
@@ -153,10 +173,7 @@ describe("outbound Nostr DM → email", () => {
         text: `Test body ${marker}`,
       });
 
-      const senderPrivkey = generateSecretKey();
-      const wrap = buildMailGiftWrap(rfc2822, senderPrivkey, env.bridgePubkey, imetaTags);
-      const ok = await publishToRelay(relayUrl, wrap);
-      expect(ok).toBe(true);
+      await publishMailEvent(rfc2822, [env.mailcowUser], imetaTags);
 
       const delivered = await findAndDeleteMessage(marker, env.deliveryTimeoutMs);
       expect(delivered).not.toBeNull();
