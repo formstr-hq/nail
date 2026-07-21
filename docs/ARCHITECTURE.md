@@ -209,8 +209,11 @@ inbound, and byte-identical for client-composed outbound mail.
 
 NIP-44 v2 caps plaintext at **65535 bytes**. Base64 inflates attachments ~33%,
 so inline MIME attachments fail above roughly **40 KB of file**. Attachments
-therefore require Blossom offload with `imeta` tags. **Out of scope for this
-pass** — see [§10](#10-out-of-scope).
+therefore require Blossom offload with `imeta` tags, which makes offload the
+common case for real files rather than an edge case.
+
+The client reads both forms. Writing them is deferred — see
+[§10](#10-out-of-scope).
 
 ## 5. Trust model
 
@@ -440,11 +443,20 @@ with `nostr-tools` as the sole dependency. The bridge's existing
 
 ## 10. Out of scope
 
-- **Attachments.** Outbound has no compose UI and no Blossom upload; inbound
-  `imeta` tags are dropped by the client. This pass gets text and HTML mail
-  working end to end. Inbound attachments surface as
-  "N attachments (not yet supported)" rather than vanishing silently. The
-  §4 size ceiling is the constraint any later design must address.
+- **Sending attachments.** There is no compose attach UI and no client-side
+  Blossom upload. Deferred until the `formstr-drive` SDK lands, which will own
+  the upload path rather than the client reimplementing
+  `nostr-bridge/src/blossom-client.ts`.
+
+  Whatever does it must address the §4 size ceiling: NIP-44 caps plaintext at
+  65535 bytes, so anything past roughly 40 KB has to be offloaded rather than
+  inlined. A file over that limit currently fails inside NIP-44 with an opaque
+  error, so the send path needs an explicit size guard before it accepts one.
+
+  **Receiving attachments works.** The client merges inline MIME parts with
+  Blossom-hosted files referenced by `imeta`, fetching and AES-GCM-decrypting
+  the latter on demand. Downloads are per-file and opt-in, because contacting
+  the host reveals the reader's IP to whoever sent the message.
 - **Send-as-external-identity.** The bridge fails closed on `From`. Mailing-list
   style `From` rewriting is a separate feature needing its own abuse review.
 - **Batching signer calls.** See §11.
@@ -512,8 +524,11 @@ Evidence gathered 2026-07-20 by executing the committed code, not by reading it.
     the client's own code. The suite passes against a real mailcow while the
     real client cannot talk to the bridge.
 
-11. **Attachments are dropped inbound.** The bridge sends them as `imeta` tags;
-    `receive.ts:44` reads only `parsed.attachments` from the RFC 2822 body.
+11. ~~**Attachments are dropped inbound.**~~ *Fixed.* The bridge sends them as
+    `imeta` tags; `receive.ts` read only `parsed.attachments` from the RFC 2822
+    body. It now merges both sources, and `parseImetaTags` moved into the
+    protocol module so both sides parse the tag from one implementation.
+    Outbound remains out of scope — see [§10](#10-out-of-scope).
 
 ## Verification
 
@@ -562,7 +577,11 @@ Verified by hand against live infrastructure, not by tests:
    replyable.
 3. The `e2e-nostr` inbound/outbound suites, which require a live mailcow.
 4. The deployed `_smtp@mailstr.app` pubkey being one whose key we hold.
-5. Attachments, which remain out of scope (§10).
+5. Sending attachments, which remains out of scope pending `formstr-drive`
+   (§10). Receiving them is implemented and unit-tested, but has not been
+   exercised against a real Blossom server from a browser — a server that
+   sends no `Access-Control-Allow-Origin` will fail every download regardless
+   of the client being correct.
 
 Until 1 and 2 are done, this system is **not proven to deliver mail**.
 
