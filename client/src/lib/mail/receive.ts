@@ -1,10 +1,22 @@
 import type { Event } from 'nostr-tools'
-import { unwrapAndVerify, messageStringToBytes, type ProtocolSigner } from '@protocol'
+import {
+  unwrapAndVerify,
+  messageStringToBytes,
+  parseImetaTags,
+  type ProtocolSigner,
+} from '@protocol'
 import { nip19 } from 'nostr-tools'
 import { probeNip05 } from '@/lib/nostr/nip05'
 import { fetchProfileName } from '@/lib/nostr/profile'
 import { parseRfc2822 } from './rfc2822'
-import type { Email } from '@/types/mail'
+import type { Attachment, Email, SenderProof } from '@/types/mail'
+
+/** The shape postal-mime hands back; imported structurally to avoid a dep. */
+type ParsedAttachment = {
+  filename?: string | null
+  mimeType?: string
+  content: ArrayBuffer | Uint8Array | string
+}
 
 export interface DecodeFailure {
   reason: string
@@ -15,7 +27,7 @@ export interface DecodeFailure {
 export type DecodeResult = { email: Email } | { failure: DecodeFailure }
 
 /**
- * May we display the RFC 2822 `From:` header as the sender?
+ * May we display the RFC 2822 `From:` header as the sender, and on what basis?
  *
  * Headers are just text the sender chose, so believing them unconditionally
  * would let anyone gift-wrap a message claiming `From: ceo@company.com`. Each
@@ -29,20 +41,67 @@ export type DecodeResult = { email: Email } | { failure: DecodeFailure }
  *
  * Anything else falls back to the sealing pubkey, which is the only identity
  * we can actually verify.
+ *
+ * Returns which check succeeded rather than a bare boolean: the mailbox shows
+ * the basis to the reader, and "the bridge vouched for this" is a different
+ * claim from "this address's NIP-05 resolves to the sealing key".
  */
-async function fromHeaderIsTrustworthy(params: {
+async function establishSenderProof(params: {
   fromAddress: string | undefined
   sealPubkey: string
   bridgePubkey: string | null
   ownPubkey: string | null
-}): Promise<boolean> {
+}): Promise<SenderProof> {
   const { fromAddress, sealPubkey, bridgePubkey, ownPubkey } = params
-  if (!fromAddress) return false
-  if (bridgePubkey !== null && sealPubkey === bridgePubkey) return true
-  if (ownPubkey !== null && sealPubkey === ownPubkey) return true
+  if (!fromAddress) return 'none'
+  if (bridgePubkey !== null && sealPubkey === bridgePubkey) return 'bridge-seal'
+  if (ownPubkey !== null && sealPubkey === ownPubkey) return 'own-seal'
 
   // Cached and bounded; a miss or a timeout just means we show the pubkey.
-  return (await probeNip05(fromAddress)) === sealPubkey
+  return (await probeNip05(fromAddress)) === sealPubkey ? 'nip05' : 'none'
+}
+
+/**
+ * MIME parts carried in the message body itself.
+ *
+ * postal-mime types `content` as a union, so normalise to bytes here rather
+ * than leaving every consumer to guess which shape it got. A string only
+ * appears when the parser was asked for an encoding we do not request, so it
+ * is decoded as UTF-8 rather than dropped.
+ */
+function inlineAttachments(parsed: ParsedAttachment[] | undefined): Attachment[] {
+  return (parsed ?? []).map((a) => {
+    const data =
+      typeof a.content === 'string'
+        ? new TextEncoder().encode(a.content)
+        : new Uint8Array(a.content instanceof Uint8Array ? a.content : new Uint8Array(a.content))
+    return {
+      filename: a.filename ?? 'attachment',
+      contentType: a.mimeType ?? 'application/octet-stream',
+      size: data.byteLength,
+      data,
+    }
+  })
+}
+
+/**
+ * Attachments too large to inline, offloaded to Blossom and referenced by an
+ * `imeta` tag on the rumor.
+ *
+ * The §4 size ceiling (NIP-44 caps plaintext at 65535 bytes) means anything
+ * beyond roughly 40 KB has to travel this way, so these are the common case
+ * for real attachments rather than an edge case. Size is unknown until the
+ * blob is fetched — left undefined instead of reported as zero.
+ */
+function hostedAttachments(tags: string[][]): Attachment[] {
+  return parseImetaTags(tags).map((a) => ({
+    filename: a.filename,
+    contentType: a.mimeType,
+    size: undefined,
+    blossomUrl: a.url,
+    blossomKey: a.encryptionKey,
+    blossomNonce: a.decryptionNonce,
+  }))
 }
 
 /**
@@ -77,7 +136,7 @@ export async function decodeGiftWrap(
     // charset, which mojibakes every non-UTF-8 message.
     const parsed = await parseRfc2822(messageStringToBytes(rumor.content))
 
-    const trustFrom = await fromHeaderIsTrustworthy({
+    const senderProof = await establishSenderProof({
       fromAddress: parsed.from?.address,
       sealPubkey: seal.pubkey,
       bridgePubkey,
@@ -88,7 +147,8 @@ export async function decodeGiftWrap(
     // cannot check. Show the npub rather than raw hex, and label it with the
     // kind-0 name if the sender publishes one — self-asserted, so the npub
     // stays visible next to it rather than being replaced by it.
-    const from = trustFrom
+    const from =
+      senderProof !== 'none'
       ? { name: parsed.from?.name, address: parsed.from!.address! }
       : {
           name: (await fetchProfileName(seal.pubkey)) ?? undefined,
@@ -117,14 +177,13 @@ export async function decodeGiftWrap(
         // Attachments are out of scope for this pass. Surface that they exist
         // rather than dropping them silently, so a user is never unaware that
         // a message carried one.
-        attachments: (parsed.attachments ?? []).map((a) => ({
-          filename: a.filename ?? 'attachment',
-          contentType: a.mimeType ?? 'application/octet-stream',
-          size: 0,
-          data: undefined,
-        })),
+        attachments: [
+          ...inlineAttachments(parsed.attachments),
+          ...hostedAttachments(rumor.tags),
+        ],
         timestamp: rumor.created_at,
         senderPubkey: seal.pubkey,
+        senderProof,
         read: false,
         labelEventIds: [],
         labels: [],

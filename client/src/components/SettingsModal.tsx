@@ -1,20 +1,52 @@
 import { useEffect, useState } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
+import { useThemeStore, type ThemePreference } from '@/store/theme'
 import { useOwnedAddresses } from '@/hooks/useOwnedAddresses'
 import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
+import { Button, IconButton } from '@/components/ui/Button'
+import { XIcon, AlertIcon } from '@/components/ui/icons'
 
 // Sentinel select value for "type your own address" — kept distinct from any
 // real address string so it can never collide with an owned/bridge option.
 const CUSTOM_SENDER = '__custom__'
 
+const THEMES: { id: ThemePreference; label: string }[] = [
+  { id: 'light', label: 'Light' },
+  { id: 'dark', label: 'Dark' },
+  { id: 'system', label: 'System' },
+]
+
 interface SettingsModalProps {
   onClose: () => void
 }
 
+/** A labelled block with a one-line explanation. Used for every setting. */
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string
+  hint?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="eyebrow">{label}</div>
+      {hint && <p className="text-[11.5px] leading-relaxed text-muted-foreground">{hint}</p>}
+      {children}
+    </div>
+  )
+}
+
+const inputClass =
+  'h-9 w-full rounded-md border border-input bg-background px-3 text-[13px] text-foreground placeholder:text-subtle focus:outline-none'
+
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const { account, active } = useAccountStore()
   const { settings, save } = useSettingsStore()
+  const { preference, setPreference } = useThemeStore()
   const {
     addresses,
     loading: addressesLoading,
@@ -59,16 +91,16 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [signature, setSignature] = useState(settings.signature ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [copied, setCopied] = useState(false)
 
   const placeholder = `you@${BRIDGE_DOMAIN}`
 
-  async function copyNpub() {
-    if (!account) return
-    await navigator.clipboard.writeText(account.npub)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
 
   function handleSenderModeChange(value: string) {
     setSenderMode(value)
@@ -83,91 +115,84 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     setSaving(true)
     setError('')
     try {
-      await save({ ...settings, senderAddress: senderAddress || undefined, signature: signature || undefined }, account.pubkey, active)
+      await save(
+        { ...settings, senderAddress: senderAddress || undefined, signature: signature || undefined },
+        account.pubkey,
+        active,
+      )
       onClose()
     } catch (e) {
-      setError(String(e))
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-md rounded-lg border border-border bg-card shadow-xl">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <span className="text-sm font-medium">Settings</span>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-lg leading-none">&times;</button>
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/30 p-0 md:items-center md:p-6"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose()
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        className="flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:max-w-md md:rounded-xl"
+      >
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+          <span className="eyebrow flex-1">Settings</span>
+          <IconButton title="Close settings" onClick={onClose}>
+            <XIcon className="h-4 w-4" />
+          </IconButton>
         </div>
 
-        <div className="p-4 space-y-4">
+        <div className="flex flex-col gap-5 overflow-y-auto px-4 py-4">
           {account && (
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Your npub</label>
-              <p className="text-xs text-muted-foreground">
-                Your public Nostr identity. Share it to receive mail directly.
-              </p>
-              <div className="flex items-center gap-2">
-                <code className="flex-1 min-w-0 truncate rounded-md border border-input bg-muted px-3 py-2 text-xs font-mono">
-                  {account.npub}
-                </code>
-                <button
-                  onClick={copyNpub}
-                  className="shrink-0 px-3 py-2 text-xs rounded-md border border-input hover:bg-accent transition-colors"
-                >
-                  {copied ? 'Copied' : 'Copy'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {account && (
-            <div className="space-y-1">
-              <label className="text-sm font-medium">Your addresses</label>
-              <p className="text-xs text-muted-foreground">
-                Mailstr.app addresses linked to your account.
-              </p>
+            <Field label="Your addresses" hint={`Addresses linked to your account on ${BRIDGE_DOMAIN}.`}>
               {addressesLoading && (
-                <p className="text-xs text-muted-foreground">Loading…</p>
+                <p className="text-[11.5px] text-subtle">Loading your addresses…</p>
               )}
               {!addressesLoading && addressesError && (
-                <div className="flex items-center gap-2">
-                  <p className="flex-1 text-xs text-destructive">{addressesError}</p>
-                  <button
-                    onClick={reloadAddresses}
-                    className="shrink-0 px-3 py-2 text-xs rounded-md border border-input hover:bg-accent transition-colors"
-                  >
-                    Retry
-                  </button>
+                <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
+                  <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-destructive" />
+                  <p className="flex-1 text-[11.5px] leading-relaxed text-destructive">
+                    {addressesError}
+                  </p>
+                  <Button size="sm" onClick={reloadAddresses} className="flex-none">
+                    Try again
+                  </Button>
                 </div>
               )}
               {!addressesLoading && !addressesError && addresses.length === 0 && (
-                <p className="text-xs text-muted-foreground">No addresses yet</p>
+                <p className="text-[11.5px] text-subtle">
+                  No addresses yet. Your npub address below always works.
+                </p>
               )}
               {!addressesLoading && !addressesError && addresses.length > 0 && (
-                <div className="space-y-1">
+                <div className="flex flex-col gap-1">
                   {addresses.map((addr) => (
                     <code
                       key={addr}
-                      className="block w-full min-w-0 truncate rounded-md border border-input bg-muted px-3 py-2 text-xs font-mono"
+                      className="block w-full min-w-0 truncate rounded-md border border-input bg-muted px-3 py-2 font-mono text-[11px]"
                     >
                       {addr}
                     </code>
                   ))}
                 </div>
               )}
-            </div>
+            </Field>
           )}
 
-          <div className="space-y-1">
-            <label className="text-sm font-medium">Sender address</label>
-            <p className="text-xs text-muted-foreground">
-              Your bridge email address. Shown as the From: address when sending.
-            </p>
+          <Field
+            label="Sender address"
+            hint="Shown as the From address on mail you send."
+          >
             <select
               value={senderMode}
               onChange={(e) => handleSenderModeChange(e.target.value)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className={inputClass}
             >
               {fixedSenderOptions.map((addr) => (
                 <option key={addr} value={addr}>
@@ -181,40 +206,68 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 value={senderAddress}
                 onChange={(e) => setSenderAddress(e.target.value)}
                 placeholder={placeholder}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                className={inputClass}
               />
             )}
-          </div>
+          </Field>
 
-          <div className="space-y-1">
-            <label className="text-sm font-medium">Email signature</label>
+          <Field
+            label="Signature"
+            hint="Added to the bottom of new messages, where you can still edit it before sending."
+          >
             <textarea
               value={signature}
               onChange={(e) => setSignature(e.target.value)}
-              placeholder="-- &#10;Sent via Mail by Form*"
+              placeholder="Sent with Mail by Form*"
               rows={3}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+              className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-subtle focus:outline-none"
             />
-          </div>
+          </Field>
 
-          <p className="text-xs text-muted-foreground">
-            Settings are encrypted and synced to your relays (Kind 30078).
+          <Field label="Theme">
+            <div
+              role="radiogroup"
+              aria-label="Theme"
+              className="flex gap-1 rounded-md border border-input bg-background p-1"
+            >
+              {THEMES.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={preference === t.id}
+                  onClick={() => setPreference(t.id)}
+                  className={[
+                    'flex-1 rounded-sm px-2 py-1.5 text-[12px] font-medium transition-colors duration-[120ms]',
+                    preference === t.id
+                      ? 'bg-accent text-foreground'
+                      : 'text-muted-foreground hover:text-foreground',
+                  ].join(' ')}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </Field>
+
+          <p className="border-t border-border pt-4 text-[11px] leading-relaxed text-subtle">
+            Your address, signature and sender settings are encrypted and synced to your relays
+            as a kind 30078 event. Theme is kept on this device only.
           </p>
         </div>
 
-        {error && <p className="px-4 pb-2 text-xs text-destructive">{error}</p>}
+        {error && (
+          <div className="flex items-start gap-2 border-t border-border bg-destructive/10 px-4 py-2">
+            <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-destructive" />
+            <p className="text-[11.5px] leading-relaxed text-destructive">{error}</p>
+          </div>
+        )}
 
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-border">
-          <button onClick={onClose} className="px-4 py-1.5 text-sm rounded-md border border-input hover:bg-accent transition-colors">
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </button>
+        <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Save changes'}
+          </Button>
         </div>
       </div>
     </div>

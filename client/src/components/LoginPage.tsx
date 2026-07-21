@@ -5,6 +5,8 @@ import { nostrSigner } from '@/lib/nostr/signer'
 import { getPool } from '@/lib/nostr/relays'
 import { DEFAULT_RELAYS } from '@/lib/nostr/constants'
 import { useAccountStore } from '@/store/account'
+import { Button } from '@/components/ui/Button'
+import { BrandGlyph } from '@/components/ui/icons'
 
 /*
  * The login-UI helpers below (TAB_COPY, tuneLoginUi, methodListNav,
@@ -185,33 +187,35 @@ function UnlockForm({ onUseAnother }: { onUseAnother: () => void }) {
   }
 
   return (
-    <form onSubmit={handleUnlock} className="space-y-3">
-      <p className="text-sm text-muted-foreground text-center truncate">
-        {account?.npub.slice(0, 20)}…
-      </p>
+    <form onSubmit={handleUnlock} className="flex flex-col gap-3">
+      <div className="text-center">
+        <div className="eyebrow">Locked</div>
+        <p
+          className="truncate pt-1 font-mono text-[11px] text-subtle"
+          title={account?.npub}
+        >
+          {account?.npub}
+        </p>
+      </div>
       <input
         type="password"
         autoFocus
         placeholder="Passphrase"
         value={passphrase}
         onChange={(e) => setPassphrase(e.target.value)}
-        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        className="h-9 w-full rounded-md border border-input bg-background px-3 text-[13px] text-foreground placeholder:text-subtle focus:outline-none"
       />
-      <button
-        type="submit"
-        disabled={!passphrase || busy}
-        className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-      >
+      <Button type="submit" variant="primary" disabled={!passphrase || busy} className="w-full">
         {busy ? 'Unlocking…' : 'Unlock'}
-      </button>
+      </Button>
       <button
         type="button"
         onClick={onUseAnother}
-        className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors"
+        className="text-[11.5px] text-muted-foreground transition-colors hover:text-foreground"
       >
         Use a different account
       </button>
-      {error && <p className="text-sm text-destructive text-center">{error}</p>}
+      {error && <p className="text-center text-[12px] text-destructive">{error}</p>}
     </form>
   )
 }
@@ -219,16 +223,14 @@ function UnlockForm({ onUseAnother }: { onUseAnother: () => void }) {
 /** Locked non-ncryptsec session that couldn't silently resume. */
 function ResumeFailed({ onUseAnother }: { onUseAnother: () => void }) {
   return (
-    <div className="space-y-3 text-center">
-      <p className="text-sm text-muted-foreground">
-        Your session couldn't be resumed.
+    <div className="flex flex-col gap-3 text-center">
+      <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+        Your signer didn't answer, so this session couldn't be resumed. Signing in again will
+        reconnect it.
       </p>
-      <button
-        onClick={onUseAnother}
-        className="w-full rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-      >
+      <Button variant="primary" onClick={onUseAnother} className="w-full">
         Sign in again
-      </button>
+      </Button>
     </div>
   )
 }
@@ -274,26 +276,37 @@ export function LoginPage() {
   // the ncryptsec), which "use a different account" must never do.
   const [useAnother, setUseAnother] = useState(false)
 
+  const resuming = Boolean(account) && !useAnother
+
+  // The signer package renders its own full-viewport modal, carrying the brand
+  // header that tuneLoginUi injects. Wrapping that in a second header would
+  // put one behind the overlay where nobody ever sees it, so the page chrome
+  // below belongs only to the unlock and resume paths, which are ours.
+  if (!resuming) {
+    return (
+      <div className="bg-graph min-h-[100dvh] bg-background">
+        <SignerLogin />
+      </div>
+    )
+  }
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="w-full max-w-sm space-y-6 p-8">
-        <div className="text-center space-y-1">
-          <h1 className="text-2xl font-semibold tracking-tight">Mail by Form*</h1>
-          <p className="text-sm text-muted-foreground">Nostr-native email</p>
+    <div className="bg-graph flex min-h-[100dvh] items-center justify-center bg-background px-4">
+      <div className="flex w-full max-w-sm flex-col gap-6 py-10">
+        <div className="flex flex-col items-center gap-2 text-center">
+          <BrandGlyph size={38} />
+          <h1 className="text-xl font-semibold tracking-tight">Mail by Form*</h1>
+          <p className="text-[12.5px] text-muted-foreground">Email that travels over Nostr</p>
         </div>
 
-        {account && !useAnother ? (
-          account.method === 'ncryptsec' ? (
-            <UnlockForm onUseAnother={() => setUseAnother(true)} />
-          ) : (
-            <ResumeFailed onUseAnother={() => setUseAnother(true)} />
-          )
+        {account!.method === 'ncryptsec' ? (
+          <UnlockForm onUseAnother={() => setUseAnother(true)} />
         ) : (
-          <SignerLogin />
+          <ResumeFailed onUseAnother={() => setUseAnother(true)} />
         )}
 
-        <p className="text-xs text-center text-muted-foreground">
-          Your private key never leaves your signer.
+        <p className="text-center text-[11px] leading-relaxed text-subtle">
+          Your private key stays in your signer. This app never sees it.
         </p>
       </div>
     </div>
