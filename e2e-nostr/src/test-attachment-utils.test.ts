@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseImetaTags } from "@nostr-bridge/attachment-utils.js";
+import { parseImetaTags } from "@nostr-bridge/protocol/attachments.js";
 
 describe("parseImetaTags", () => {
   it("parses a well-formed encrypted imeta tag", () => {
