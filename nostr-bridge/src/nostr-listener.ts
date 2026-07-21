@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools";
-import { config } from "./config.js";
+import { config, HEARTBEAT_INTERVAL_MS, MAX_MISSED_HEARTBEATS } from "./config.js";
 import { keySigner } from "./protocol/key-signer.js";
 import { unwrapAndVerify, deliverTargets, buildMailRumor, sealAndWrap } from "./protocol/mail.js";
 import { messageStringToBytes } from "./protocol/bytes.js";
@@ -20,8 +20,6 @@ const bridgeSigner = keySigner(config.bridgePrivkey);
  */
 const WRAP_LOOKBACK_SECONDS = 2 * 24 * 60 * 60 + 3600;
 
-const HEARTBEAT_INTERVAL_MS = 60_000;
-const MAX_MISSED_HEARTBEATS = 3;
 
 /** Bounded set of rumor ids already processed — the replay guard's fast path. */
 const processed = new Set<string>();

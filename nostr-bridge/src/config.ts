@@ -59,8 +59,14 @@ if (config.localDomains.length === 0) {
   );
 }
 
-export const MAIL_KIND = 1301;
-export const GIFT_WRAP_KIND = 1059;
+// Wire-format kinds are re-exported from the protocol module rather than
+// redeclared. They are part of the format the bridge and the client must agree
+// on, and the protocol module exists so exactly one definition of that format
+// ships to both. Two literals here would be free to drift apart silently.
+export { KIND_MAIL as MAIL_KIND, KIND_GIFTWRAP as GIFT_WRAP_KIND } from "./protocol/constants.js";
+
+// Bridge-local operational tuning. No protocol equivalent: nothing outside
+// this process observes the heartbeat cadence.
 export const HEARTBEAT_KIND = 1;
 export const HEARTBEAT_PREFIX = "nostr-bridge-heartbeat:";
 export const HEARTBEAT_INTERVAL_MS = 60_000;
