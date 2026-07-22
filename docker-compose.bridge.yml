@@ -34,8 +34,9 @@ services:
     environment:
       - NOSTR_BRIDGE_NSEC=${NOSTR_BRIDGE_NSEC}
       - BRIDGE_DOMAIN=${BRIDGE_DOMAIN:-nostr-forward.local}
+      - LOCAL_DOMAINS=${LOCAL_DOMAINS:-nostr-forward.local}
       - BOOTSTRAP_RELAYS=ws://nostr-mock-relay:4600
-      - DEFAULT_RELAY_URL=ws://nostr-mock-relay:4600
+      - BRIDGE_RELAYS=ws://nostr-mock-relay:4600
       - NIP05_BASE_URL=http://host.docker.internal:4500
       - POSTFIX_HOST=host.docker.internal
       - POSTFIX_PORT=25

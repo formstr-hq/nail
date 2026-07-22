@@ -35,14 +35,38 @@ export const config = {
   postfixPort: Number(process.env.POSTFIX_PORT ?? 25),
   blossomServerUrl: process.env.BLOSSOM_SERVER_URL ?? "https://nostr.download",
   bridgeDomain: process.env.BRIDGE_DOMAIN ?? "",
-  allowedDomains: (process.env.ALLOWED_DOMAINS ?? "")
+  // Domains this deployment accepts mail for and serves NIP-05 records for.
+  // Outbound From addresses MUST be on one of these (§5); the bridge refuses
+  // to deliver TO them (§6B step 5) since they are reachable over Nostr.
+  localDomains: (process.env.LOCAL_DOMAINS ?? process.env.ALLOWED_DOMAINS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+
+  // Relays the bridge itself listens and publishes its own 10050/kind-0 on.
+  bridgeRelays: (process.env.BRIDGE_RELAYS ?? process.env.BOOTSTRAP_RELAYS ?? "wss://relay.damus.io,wss://relay.nostr.band")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
 };
 
-export const MAIL_KIND = 1301;
-export const GIFT_WRAP_KIND = 1059;
+// Fail fast rather than silently running as an open relay: with no local
+// domains configured there is no address the bridge can verify ownership of,
+// so every outbound message would have to be rejected anyway (§5).
+if (config.localDomains.length === 0) {
+  throw new Error(
+    "Missing required env var: LOCAL_DOMAINS (comma-separated, e.g. mailstr.app)",
+  );
+}
+
+// Wire-format kinds are re-exported from the protocol module rather than
+// redeclared. They are part of the format the bridge and the client must agree
+// on, and the protocol module exists so exactly one definition of that format
+// ships to both. Two literals here would be free to drift apart silently.
+export { KIND_MAIL as MAIL_KIND, KIND_GIFTWRAP as GIFT_WRAP_KIND } from "./protocol/constants.js";
+
+// Bridge-local operational tuning. No protocol equivalent: nothing outside
+// this process observes the heartbeat cadence.
 export const HEARTBEAT_KIND = 1;
 export const HEARTBEAT_PREFIX = "nostr-bridge-heartbeat:";
 export const HEARTBEAT_INTERVAL_MS = 60_000;

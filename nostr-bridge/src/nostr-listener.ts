@@ -1,273 +1,234 @@
 import { randomUUID } from "node:crypto";
 import { SimplePool } from "nostr-tools/pool";
-import { unwrapEvent, createRumor, createSeal, createWrap } from "nostr-tools/nip59";
-import { generateSecretKey, finalizeEvent } from "nostr-tools/pure";
-import { getConversationKey, encrypt } from "nostr-tools/nip44";
-import { simpleParser } from "mailparser";
-import type { Event, VerifiedEvent } from "nostr-tools/pure";
-import { config, GIFT_WRAP_KIND, HEARTBEAT_INTERVAL_MS, HEARTBEAT_KIND, HEARTBEAT_PREFIX, MAIL_KIND, MAX_MISSED_HEARTBEATS } from "./config.js";
-import { lookupNip05Pubkey } from "./nip05.js";
+import type { Event } from "nostr-tools";
+import { config, HEARTBEAT_INTERVAL_MS, MAX_MISSED_HEARTBEATS } from "./config.js";
+import { keySigner } from "./protocol/key-signer.js";
+import { unwrapAndVerify, deliverTargets, buildMailRumor, sealAndWrap } from "./protocol/mail.js";
+import { messageStringToBytes } from "./protocol/bytes.js";
+import { KIND_GIFTWRAP, MAX_RUMOR_AGE_SECONDS } from "./protocol/constants.js";
+import { authorizeSender, selectDeliverTargets } from "./outbound.js";
 import { createPostfixTransport, injectIntoPostfix } from "./smtp-injector.js";
-import { fetchAndDecryptAttachment } from "./blossom-client.js";
-import { parseImetaTags } from "./attachment-utils.js";
-export type { ImetaAttachment } from "./attachment-utils.js";
-export { parseImetaTags } from "./attachment-utils.js";
 
-async function getDmRelays(pool: SimplePool): Promise<string[]> {
-  let events: Event[] = [];
-  try {
-    events = await pool.querySync(
-      config.bootstrapRelays,
-      { kinds: [10050], authors: [config.bridgePubkey] },
-      { maxWait: 4000 },
-    );
-  } catch {
-    // fall through to default
-  }
+const bridgeSigner = keySigner(config.bridgePrivkey);
 
-  const latest = events.sort((a, b) => b.created_at - a.created_at)[0];
-  if (!latest) {
-    console.log("nostr-bridge: no kind 10050 found for bridge pubkey, using bootstrap relays for DM listening");
-    return config.bootstrapRelays;
-  }
+/**
+ * NIP-59 randomises a gift wrap's created_at up to two days into the past so
+ * timing analysis fails. Relays filter on that outer timestamp, so a `since`
+ * of "now" would make them withhold essentially every wrap addressed to us.
+ * Look back past the whole randomisation window instead; the replay guard
+ * below still bounds acceptance by the rumor's true timestamp.
+ */
+const WRAP_LOOKBACK_SECONDS = 2 * 24 * 60 * 60 + 3600;
 
-  const relays = latest.tags.filter((t) => t[0] === "relay" && t[1]).map((t) => t[1]);
-  return relays.length > 0 ? relays : config.bootstrapRelays;
+
+/** Bounded set of rumor ids already processed — the replay guard's fast path. */
+const processed = new Set<string>();
+const PROCESSED_MAX = 50_000;
+
+/** Heartbeat ids this process has seen echo back off the relays. */
+const confirmedHeartbeats = new Set<string>();
+
+function remember(id: string): boolean {
+  if (processed.has(id)) return false;
+  if (processed.size >= PROCESSED_MAX) processed.clear();
+  processed.add(id);
+  return true;
 }
 
-// Build a heartbeat gift wrap with created_at = now() so the relay's `since` filter
-// doesn't discard it (NIP-59's createWrap normally randomises created_at up to 2 days back).
-function buildHeartbeatWrap(id: string): VerifiedEvent {
-  const rumor = createRumor(
-    { kind: HEARTBEAT_KIND, content: `${HEARTBEAT_PREFIX}${id}`, tags: [] },
-    config.bridgePrivkey,
+async function sendBounce(
+  pool: SimplePool,
+  relays: string[],
+  recipientPubkey: string,
+  reason: string,
+): Promise<void> {
+  const body = [
+    `From: postmaster@${config.localDomains[0]}`,
+    `To: <${recipientPubkey}>`,
+    `Date: ${new Date().toUTCString()}`,
+    `Subject: Mail delivery failed`,
+    `MIME-Version: 1.0`,
+    `Content-Type: text/plain; charset=utf-8`,
+    ``,
+    `Your message could not be delivered.`,
+    ``,
+    `Reason: ${reason}`,
+  ].join("\r\n");
+
+  try {
+    const rumor = buildMailRumor({
+      senderPubkey: await bridgeSigner.getPublicKey(),
+      recipientPubkey,
+      rfc2822: body,
+    });
+    const wrap = await sealAndWrap(rumor, recipientPubkey, bridgeSigner);
+    await Promise.allSettled(pool.publish(relays, wrap));
+  } catch (err) {
+    console.error("nostr-bridge: failed to send bounce:", (err as Error).message);
+  }
+}
+
+// Exported (module scope, not a closure) so it can be tested directly against
+// a stubbed pool/transport, the same pattern lmtp-server.ts uses for
+// handleMessage.
+export async function handleWrap(
+  pool: SimplePool,
+  relays: string[],
+  transport: ReturnType<typeof createPostfixTransport>,
+  event: Event,
+): Promise<void> {
+  const result = await unwrapAndVerify(event, bridgeSigner, {
+    maxAgeSeconds: MAX_RUMOR_AGE_SECONDS,
+  });
+
+  if (!result.ok) {
+    // "not-for-us" is routine — relays hand us every wrap p-tagged to us.
+    // Everything else means something is broken or hostile: log it (§8).
+    if (result.reason !== "not-for-us") {
+      console.warn(`nostr-bridge: rejected wrap ${event.id.slice(0, 8)}: ${result.reason}`);
+    }
+    return;
+  }
+
+  const { seal, rumor } = result;
+
+  // A heartbeat we published to ourselves, echoed back off the relays. Consume
+  // it before authorization: it is a liveness probe, not mail. Requiring the
+  // bridge's own key to have sealed it stops anyone else from forging one and
+  // keeping a dead bridge looking alive.
+  const heartbeat = rumor.tags.find((t) => t[0] === "heartbeat" && t[1])?.[1];
+  if (heartbeat && seal.pubkey === config.bridgePubkey) {
+    confirmedHeartbeats.add(heartbeat);
+    return;
+  }
+
+  if (!remember(rumor.id)) {
+    console.warn(`nostr-bridge: duplicate rumor ${rumor.id.slice(0, 8)}, dropping`);
+    return;
+  }
+
+  const fromMatch = /^From:\s*(.*)$/im.exec(rumor.content);
+  const fromHeader = fromMatch?.[1]?.trim() ?? "";
+  const angle = /<([^>]+)>/.exec(fromHeader);
+  const fromAddress = (angle?.[1] ?? fromHeader).trim();
+
+  const auth = await authorizeSender({
+    from: fromAddress,
+    sealPubkey: seal.pubkey,
+    localDomains: config.localDomains,
+    nip05BaseUrl: config.nip05BaseUrl,
+  });
+
+  if (!auth.ok) {
+    console.warn(`nostr-bridge: unauthorized send from ${seal.pubkey.slice(0, 8)}: ${auth.reason}`);
+    await sendBounce(pool, relays, seal.pubkey, auth.reason);
+    return;
+  }
+
+  const { deliver, rejected } = selectDeliverTargets(
+    deliverTargets(rumor),
+    config.localDomains,
   );
-  const seal = createSeal(rumor, config.bridgePrivkey, config.bridgePubkey);
-  const randomKey = generateSecretKey();
-  return finalizeEvent(
-    {
-      kind: GIFT_WRAP_KIND,
-      content: encrypt(JSON.stringify(seal), getConversationKey(randomKey, config.bridgePubkey)),
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [["p", config.bridgePubkey]],
-    },
-    randomKey,
-  );
+
+  if (rejected.length) {
+    console.warn(`nostr-bridge: refused deliver targets: ${rejected.join(", ")}`);
+  }
+  if (deliver.length === 0) {
+    console.warn(`nostr-bridge: rumor ${rumor.id.slice(0, 8)} has no deliverable targets`);
+    await sendBounce(pool, relays, seal.pubkey, "No deliverable recipients");
+    return;
+  }
+
+  try {
+    // One message, N envelope recipients. Routing comes from the deliver
+    // tags, never from the To: header — the header is what recipients see,
+    // the envelope is who this hop delivers to (§4).
+    //
+    // rumor.content is the byte-string form (§4 "Content is a byte string"):
+    // convert back to real bytes here, at the outbound boundary, rather than
+    // handing nodemailer the byte string directly — nodemailer would encode
+    // a string `raw` as UTF-8 and corrupt any non-UTF-8 message.
+    await injectIntoPostfix(transport, {
+      envelope: { from: auth.address, to: deliver },
+      raw: Buffer.from(messageStringToBytes(rumor.content)),
+    });
+    console.log(`nostr-bridge: relayed from ${auth.address} to ${deliver.join(", ")}`);
+  } catch (err) {
+    console.error("nostr-bridge: Postfix injection failed:", (err as Error).message);
+    await sendBounce(pool, relays, seal.pubkey, "Downstream mail server unavailable");
+  }
+}
+
+/**
+ * Publish a gift wrap to ourselves and check that the previous one came back.
+ *
+ * A relay subscription can die silently — the socket stays open, no error is
+ * raised, and no events ever arrive again. For a mail bridge that failure is
+ * invisible: it looks perfectly healthy while accepting no outbound mail at
+ * all. Exiting lets the supervisor (`restart: unless-stopped`) restart us.
+ *
+ * The probe deliberately travels the full seal/wrap/relay/unwrap path rather
+ * than pinging the socket, so it also catches a broken crypto or relay-accept
+ * path, not just a dead connection.
+ */
+export function startHeartbeat(pool: SimplePool, relays: string[]): NodeJS.Timeout {
+  let pending: string | null = null;
+  let missed = 0;
+
+  return setInterval(() => {
+    void (async () => {
+      if (pending !== null) {
+        if (confirmedHeartbeats.delete(pending)) {
+          missed = 0;
+        } else {
+          missed += 1;
+          console.warn(`nostr-bridge: heartbeat unconfirmed (${missed}/${MAX_MISSED_HEARTBEATS})`);
+          if (missed >= MAX_MISSED_HEARTBEATS) {
+            console.error("nostr-bridge: relay subscription appears dead, exiting for restart");
+            process.exit(1);
+          }
+        }
+      }
+
+      const id = randomUUID();
+      pending = id;
+
+      try {
+        const pubkey = await bridgeSigner.getPublicKey();
+        const rumor = buildMailRumor({
+          senderPubkey: pubkey,
+          recipientPubkey: pubkey,
+          rfc2822: `Subject: heartbeat\r\n\r\n${id}`,
+        });
+        rumor.tags.push(["heartbeat", id]);
+        const wrap = await sealAndWrap(rumor, pubkey, bridgeSigner);
+        void Promise.allSettled(pool.publish(relays, wrap));
+      } catch (err) {
+        console.error("nostr-bridge: failed to send heartbeat:", (err as Error).message);
+      }
+    })();
+  }, HEARTBEAT_INTERVAL_MS);
 }
 
 export async function startNostrListener(
-  postfixTransport: ReturnType<typeof createPostfixTransport>,
+  transport: ReturnType<typeof createPostfixTransport>,
 ): Promise<void> {
   const pool = new SimplePool({ enableReconnect: true });
-  const dmRelays = await getDmRelays(pool);
+  const relays = config.bridgeRelays;
 
-  console.log(`nostr-bridge: listening for mail/DMs on ${dmRelays.join(", ")}`);
+  console.log(`nostr-bridge: listening on ${relays.join(", ")}`);
+  console.log(`nostr-bridge: serving domains ${config.localDomains.join(", ")}`);
 
-  if (config.allowedDomains.length === 0) {
-    console.warn(
-      "nostr-bridge: ALLOWED_DOMAINS not set — all inbound mail accepted without NIP-05 verification",
-    );
-  } else {
-    console.log(`nostr-bridge: NIP-05 verification enabled for domains: ${config.allowedDomains.join(", ")}`);
-  }
-
-  const seen = new Set<string>();
-  const since = Math.floor(Date.now() / 1000);
-
-  // --- heartbeat state ---
-  let consecutiveMissed = 0;
-  let pendingHeartbeatId: string | null = null;
-  const confirmedHeartbeats = new Set<string>();
-
-  async function sendVerificationError(
-    senderPubkey: string,
-    fromAddress: string,
-    reason: string,
-  ): Promise<void> {
-    const date = new Date().toUTCString();
-    const errorContent = [
-      `From: noreply@${config.bridgeDomain}`,
-      `To: bounce@${config.bridgeDomain}`,
-      `Date: ${date}`,
-      `Subject: Mail delivery failed: sender verification error`,
-      `MIME-Version: 1.0`,
-      `Content-Type: text/plain; charset=utf-8`,
-      ``,
-      `Your message could not be delivered.`,
-      ``,
-      `Sender:  ${fromAddress}`,
-      `Reason:  ${reason}`,
-      ``,
-      `Ensure your Nostr address (NIP-05) is correctly configured for ${fromAddress}.`,
-    ].join("\r\n");
-
-    try {
-      const rumor = createRumor(
-        { kind: MAIL_KIND, content: errorContent, tags: [["p", senderPubkey]] },
-        config.bridgePrivkey,
-      );
-      const seal = createSeal(rumor, config.bridgePrivkey, senderPubkey);
-      const wrap = createWrap(seal, senderPubkey);
-      await Promise.allSettled(pool.publish(dmRelays, wrap as Event));
-      console.log(`nostr-bridge: sent verification error to ${senderPubkey.slice(0, 8)}…`);
-    } catch (err) {
-      console.error("nostr-bridge: failed to send verification error:", (err as Error).message);
-    }
-  }
-
-  // Dispatches a decrypted (or plain) inner event to the right handler.
-  async function dispatch(kind: number, content: string, tags: string[][], senderPubkey: string): Promise<void> {
-    if (kind === HEARTBEAT_KIND && content.startsWith(HEARTBEAT_PREFIX)) {
-      const id = content.slice(HEARTBEAT_PREFIX.length);
-      confirmedHeartbeats.add(id);
-      console.log(`nostr-bridge: heartbeat confirmed (${id.slice(0, 8)}…)`);
-      return;
-    }
-    if (kind === MAIL_KIND) {
-      await sendMail(content, tags, postfixTransport, senderPubkey, sendVerificationError);
-    }
-  }
-
-  // Single subscription for both encrypted gift wraps and plain kind 1301 events.
   pool.subscribeMany(
-    dmRelays,
-    { kinds: [GIFT_WRAP_KIND, MAIL_KIND], "#p": [config.bridgePubkey], since },
+    relays,
     {
-      onevent: (event) => {
-        if (seen.has(event.id)) return;
-        if (seen.size >= 10_000) seen.clear();
-        seen.add(event.id);
-
-        if (event.kind === GIFT_WRAP_KIND) {
-          let rumor;
-          try {
-            rumor = unwrapEvent(event as Parameters<typeof unwrapEvent>[0], config.bridgePrivkey);
-          } catch {
-            return;
-          }
-          void dispatch(rumor.kind, rumor.content, rumor.tags, rumor.pubkey);
-        } else {
-          // Unencrypted kind 1301 — process content directly.
-          void dispatch(event.kind, event.content, event.tags, event.pubkey);
-        }
-      },
+      kinds: [KIND_GIFTWRAP],
+      "#p": [config.bridgePubkey],
+      since: Math.floor(Date.now() / 1000) - WRAP_LOOKBACK_SECONDS,
+    },
+    {
+      onevent: (event) => void handleWrap(pool, relays, transport, event),
     },
   );
 
-  // --- heartbeat: publish a NIP-59 self-DM each interval and verify it echoes back ---
-  async function sendHeartbeat(): Promise<void> {
-    if (pendingHeartbeatId !== null) {
-      if (confirmedHeartbeats.delete(pendingHeartbeatId)) {
-        consecutiveMissed = 0;
-      } else {
-        consecutiveMissed++;
-        console.warn(`nostr-bridge: heartbeat not confirmed (${consecutiveMissed}/${MAX_MISSED_HEARTBEATS})`);
-        if (consecutiveMissed >= MAX_MISSED_HEARTBEATS) {
-          console.error("nostr-bridge: 3 consecutive heartbeats missed, shutting down for restart");
-          process.exit(1);
-        }
-      }
-    }
-
-    const id = randomUUID();
-    pendingHeartbeatId = id;
-
-    try {
-      const wrap = buildHeartbeatWrap(id);
-      void Promise.allSettled(pool.publish(dmRelays, wrap as Event));
-      console.log(`nostr-bridge: heartbeat sent (${id.slice(0, 8)}…)`);
-    } catch (err) {
-      console.error("nostr-bridge: failed to send heartbeat:", (err as Error).message);
-    }
-  }
-
-  setInterval(() => void sendHeartbeat(), HEARTBEAT_INTERVAL_MS);
-}
-
-export async function sendMail(
-  content: string,
-  tags: string[][],
-  transport: ReturnType<typeof createPostfixTransport>,
-  senderPubkey: string,
-  notifyError: (senderPubkey: string, fromAddress: string, reason: string) => Promise<void>,
-): Promise<void> {
-  try {
-    const parsed = await simpleParser(content);
-    const toField = Array.isArray(parsed.to) ? parsed.to[0] : parsed.to;
-    const toAddress = toField?.value[0]?.address;
-    const fromAddress = parsed.from?.value[0]?.address ?? `bridge@${config.bridgeDomain}`;
-
-    if (!toAddress) {
-      console.error("nostr-bridge: kind 1301 missing To header, dropping");
-      return;
-    }
-
-    if (config.allowedDomains.length > 0) {
-      const atIdx = fromAddress.indexOf("@");
-      const domain = atIdx > 0 ? fromAddress.slice(atIdx + 1) : "";
-
-      if (!domain || !config.allowedDomains.includes(domain)) {
-        console.warn(`nostr-bridge: rejected mail from ${fromAddress}: domain not in allowed list`);
-        await notifyError(senderPubkey, fromAddress, `Domain "${domain || fromAddress}" is not permitted`);
-        return;
-      }
-
-      const resolvedPubkey = await lookupNip05Pubkey(fromAddress);
-      if (!resolvedPubkey) {
-        console.warn(`nostr-bridge: rejected mail from ${fromAddress}: NIP-05 lookup failed`);
-        await notifyError(senderPubkey, fromAddress, `NIP-05 verification failed for ${fromAddress}`);
-        return;
-      }
-
-      if (resolvedPubkey !== senderPubkey) {
-        console.warn(`nostr-bridge: rejected mail from ${fromAddress}: pubkey mismatch`);
-        await notifyError(senderPubkey, fromAddress, `NIP-05 pubkey mismatch for ${fromAddress}`);
-        return;
-      }
-
-      console.log(`nostr-bridge: NIP-05 verified ${fromAddress} → ${senderPubkey.slice(0, 8)}…`);
-    }
-
-    const imetaAttachments = parseImetaTags(tags);
-    if (imetaAttachments.length === 0) {
-      await injectIntoPostfix(transport, {
-        envelope: { from: fromAddress, to: toAddress },
-        raw: content,
-      });
-      console.log(`nostr-bridge: injected mail from ${fromAddress} to ${toAddress}`);
-      return;
-    }
-
-    const attachments: Array<{ filename: string; content: Buffer; contentType: string }> = [];
-    for (const meta of imetaAttachments) {
-      try {
-        let data: Buffer;
-        if (meta.encryptionKey !== undefined && meta.decryptionNonce !== undefined) {
-          data = await fetchAndDecryptAttachment(meta.url, meta.encryptionKey, meta.decryptionNonce);
-        } else {
-          const res = await fetch(meta.url);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          data = Buffer.from(await res.arrayBuffer());
-        }
-        attachments.push({ filename: meta.filename, content: data, contentType: meta.mimeType });
-      } catch (err) {
-        console.error(`nostr-bridge: failed to fetch attachment "${meta.filename}":`, (err as Error).message);
-      }
-    }
-
-    await injectIntoPostfix(transport, {
-      envelope: { from: fromAddress, to: toAddress },
-      from: fromAddress,
-      to: toAddress,
-      subject: parsed.subject,
-      text: parsed.text ?? undefined,
-      html: parsed.html !== false ? parsed.html : undefined,
-      attachments,
-    });
-    console.log(
-      `nostr-bridge: injected mail from ${fromAddress} to ${toAddress} with ${attachments.length}/${imetaAttachments.length} attachment(s)`,
-    );
-  } catch (err) {
-    console.error("nostr-bridge: failed to inject mail:", (err as Error).message);
-  }
+  startHeartbeat(pool, relays);
 }

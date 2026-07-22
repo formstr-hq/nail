@@ -14,9 +14,12 @@ services:
 
   client-deploy:
     build:
-      context: client
+      # Repo root, so the shared nostr-bridge protocol module is in context.
+      context: .
+      dockerfile: client/Dockerfile
       args:
         CLIENT_BASE_PATH: ${CLIENT_BASE_PATH:-/mails/}
+        VITE_BRIDGE_DOMAIN: ${VITE_BRIDGE_DOMAIN:-mailstr.app}
     container_name: mailstr-client-deploy
     env_file: .env
     volumes:

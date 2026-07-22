@@ -2,48 +2,92 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Formstr brand: ink #0b0b0c, paper #f7f5ef, primary #ff5c00,
-   primary-light #ff8a00, amber #ffb020 */
+/* ------------------------------------------------------------------ */
+/* Graph Paper — the client speaking the landing page's visual language: */
+/* ink on paper, hairline rules, a faint engineering grid, and orange    */
+/* spent only where it reports state.                                    */
+/*                                                                       */
+/* Formstr brand: ink #0b0b0c, paper #f7f5ef, primary #ff5c00,           */
+/* primary-light #ff8a00, amber #ffb020.                                 */
+/*                                                                       */
+/* Values stay as space-separated HSL triplets rather than hex so        */
+/* Tailwind's `/<alpha-value>` modifiers (bg-primary/90) keep working.    */
+/* ------------------------------------------------------------------ */
 @layer base {
   :root {
     --background: 45 33% 95%;
     --foreground: 240 4% 5%;
     --card: 0 0% 100%;
     --card-foreground: 240 4% 5%;
-    --border: 45 12% 85%;
-    --input: 45 12% 82%;
+    --border: 46 24% 86%;
+    --input: 46 24% 82%;
     --ring: 22 100% 50%;
     --primary: 22 100% 50%;
     --primary-foreground: 0 0% 100%;
     --secondary: 45 25% 91%;
     --secondary-foreground: 240 4% 5%;
     --muted: 45 25% 91%;
-    --muted-foreground: 240 4% 40%;
-    --accent: 26 100% 94%;
+    --muted-foreground: 44 8% 27%;
+    --accent: 25 79% 92%;
     --accent-foreground: 22 90% 30%;
-    --destructive: 0 84.2% 60.2%;
+    --destructive: 0 72% 42%;
     --destructive-foreground: 210 20% 98%;
-    --radius: 0.625rem;
+    --radius: 0.375rem;
+
+    /* Three panes, three grounds — nav recedes, list sits between, the
+       reading pane is the sheet you actually write on. */
+    --surface-nav: 45 32% 93%;
+    --surface-list: 48 38% 97%;
+    --surface-read: 0 0% 100%;
+
+    /* Faintest ink — timestamps, npubs, provenance. Distinct from
+       --muted-foreground, which still has to pass contrast as body text. */
+    --subtle: 41 6% 51%;
+
+    /* Trust is its own axis, deliberately not the accent: orange already
+       means "state changed", and a proved sender must not read as a
+       notification. Only the proved case is coloured — an unproved sender
+       is the common case and gets plain neutral text, not an alarm. */
+    --trust: 152 39% 30%;
+    --trust-muted: 136 26% 92%;
+
+    /* Ruling on the reading pane. Alpha-baked rather than tokenised —
+       it is a texture, not a colour anything else refers to. Kept low enough
+       that 13px body text sits on it without the lines competing. */
+    --grid-line: rgb(11 11 12 / 0.06);
   }
 
   .dark {
     --background: 240 4% 5%;
-    --foreground: 45 33% 95%;
-    --card: 240 4% 8%;
-    --card-foreground: 45 33% 95%;
-    --border: 240 4% 16%;
-    --input: 240 4% 16%;
-    --ring: 32 100% 50%;
-    --primary: 32 100% 50%;
-    --primary-foreground: 240 4% 5%;
-    --secondary: 240 4% 12%;
-    --secondary-foreground: 45 33% 95%;
-    --muted: 240 4% 12%;
-    --muted-foreground: 240 5% 65%;
-    --accent: 240 4% 14%;
-    --accent-foreground: 39 100% 56%;
-    --destructive: 0 62.8% 45%;
-    --destructive-foreground: 210 20% 98%;
+    --foreground: 39 35% 92%;
+    --card: 30 6% 7%;
+    --card-foreground: 39 35% 92%;
+    --border: 34 10% 14%;
+    --input: 34 10% 18%;
+    --ring: 22 100% 59%;
+    --primary: 22 100% 59%;
+    --primary-foreground: 24 40% 6%;
+    --secondary: 30 6% 11%;
+    --secondary-foreground: 39 35% 92%;
+    --muted: 30 6% 11%;
+    --muted-foreground: 37 12% 61%;
+    --accent: 30 29% 11%;
+    --accent-foreground: 39 100% 62%;
+    --destructive: 0 65% 62%;
+    --destructive-foreground: 24 40% 6%;
+
+    /* Warm dark, not neutral: the grounds keep a trace of the paper's
+       yellow so orange sits in the same family rather than on top of it. */
+    --surface-nav: 0 0% 3%;
+    --surface-list: 0 3% 6%;
+    --surface-read: 30 6% 7%;
+
+    --subtle: 35 8% 44%;
+
+    --trust: 146 33% 62%;
+    --trust-muted: 150 29% 12%;
+
+    --grid-line: rgb(255 255 255 / 0.045);
   }
 }
 
@@ -53,9 +97,40 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family:
+      'Inter Variable',
+      Inter,
+      system-ui,
+      -apple-system,
+      sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Every interactive element gets the same visible ring. Set once here so
+     no component can forget it, and scoped to :focus-visible so a mouse
+     click never draws one. */
+  :where(a, button, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+    border-radius: calc(var(--radius) - 2px);
+  }
+}
+
+@layer components {
+  /* The engineering grid — the one piece of ornament in the design, and
+     the reason it is called Graph Paper. Only the reading pane wears it. */
+  .bg-graph {
+    background-image:
+      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  /* Mono, uppercase, wide-tracked: the structural register. Used for
+     labels that name a region or a fact, never for prose. */
+  .eyebrow {
+    @apply font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-subtle;
   }
 }
 
