@@ -24,6 +24,12 @@ COPY client/ ./
 # from the /app working directory, matching the vite + tsconfig aliases.
 COPY nostr-bridge/src/protocol/ /nostr-bridge/src/protocol/
 
+# The protocol sources import nostr-tools (and their .test.ts files import
+# vitest). Because they sit at /nostr-bridge — a sibling of /app — TypeScript's
+# upward node_modules lookup never reaches /app/node_modules. Point it there so
+# these already-installed client deps resolve during `tsc -b`.
+RUN ln -s /app/node_modules /nostr-bridge/node_modules
+
 ARG CLIENT_BASE_PATH=/mails/
 ARG VITE_BRIDGE_DOMAIN
 ENV CLIENT_BASE_PATH=${CLIENT_BASE_PATH} \
