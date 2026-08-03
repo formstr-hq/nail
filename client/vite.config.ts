@@ -31,6 +31,11 @@ export default defineConfig({
     },
   },
   resolve: {
+    // The protocol sources live in ../nostr-bridge, which has no node_modules
+    // of its own, so bare imports like `nostr-tools/pure` in those files can't
+    // resolve from their own directory. Dedupe forces Vite to resolve these
+    // from the client root, where they're installed.
+    dedupe: ["nostr-tools"],
     alias: {
       "@": path.resolve(__dirname, "./src"),
       // The wire protocol lives in nostr-bridge and is shared verbatim with

@@ -72,7 +72,15 @@ export function Sidebar({ onCompose, onSettings, status }: SidebarProps) {
   const profile = useProfile(account?.pubkey)
   const [copied, setCopied] = useState(false)
 
-  const unread = Object.values(emails).filter((e) => !e.read && !e.labels.includes('trash')).length
+  // The badge sits on the Inbox row, so it must count Inbox mail specifically —
+  // the same predicate EmailList uses for the inbox folder. A global count also
+  // tallies the self-copy every send wraps to us (which files under Sent),
+  // showing an Inbox badge for a message the Inbox list never renders.
+  const myPubkey = account?.pubkey
+  const unread = Object.values(emails).filter((e) => {
+    const unlabeled = !e.labels.some((l) => ['trash', 'archive', 'spam'].includes(l))
+    return unlabeled && e.senderPubkey !== myPubkey && !e.read
+  }).length
 
   async function copyNpub() {
     if (!account) return

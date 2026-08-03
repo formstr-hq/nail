@@ -1,6 +1,11 @@
 import { splitAddress } from '@protocol'
 
 const PROBE_TIMEOUT_MS = 1500
+// The bridge's own `_smtp` record is on the critical send path and, unlike a
+// recipient probe, times out fail-closed (no bridge = cannot send at all). The
+// hosted mailstr.app well-known answers in ~1–2s cold, so the recipient budget
+// would routinely lose that race and cache a spurious negative for the session.
+export const BRIDGE_PROBE_TIMEOUT_MS = 4000
 const NEGATIVE_TTL_MS = 24 * 60 * 60_000
 const POSITIVE_TTL_MS = 7 * 24 * 60 * 60_000
 
@@ -46,7 +51,10 @@ export function clearProbeCache(): void {
  * routing purposes, so they share a return value — but only negatives get the
  * short TTL, so a transient network blip cannot mark a domain legacy forever.
  */
-export async function probeNip05(address: string): Promise<string | null> {
+export async function probeNip05(
+  address: string,
+  timeoutMs: number = PROBE_TIMEOUT_MS,
+): Promise<string | null> {
   const parts = splitAddress(address)
   if (!parts) return null
 
@@ -64,7 +72,7 @@ export async function probeNip05(address: string): Promise<string | null> {
     try {
       const res = await fetch(
         `https://${parts.domain}/.well-known/nostr.json?name=${encodeURIComponent(parts.localpart)}`,
-        { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) },
+        { signal: AbortSignal.timeout(timeoutMs) },
       )
       if (!res.ok) return null
       const json = (await res.json()) as { names?: Record<string, string> }

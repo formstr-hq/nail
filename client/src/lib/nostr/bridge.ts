@@ -1,6 +1,6 @@
 import { nip19 } from 'nostr-tools'
 import { isNpub, isHexPubkey, splitAddress } from '@protocol'
-import { probeNip05 } from './nip05'
+import { probeNip05, BRIDGE_PROBE_TIMEOUT_MS } from './nip05'
 import { BRIDGE_DOMAIN, BRIDGE_NIP05_NAME } from './constants'
 import type { ResolveContext } from '@/lib/mail/resolve'
 
@@ -32,10 +32,10 @@ export async function resolveBridge(
       }
     }
     const target = splitAddress(input) ? input : `${BRIDGE_NIP05_NAME}@${input}`
-    return probeNip05(target)
+    return probeNip05(target, BRIDGE_PROBE_TIMEOUT_MS)
   }
 
-  return probeNip05(`${BRIDGE_NIP05_NAME}@${ownDomain}`)
+  return probeNip05(`${BRIDGE_NIP05_NAME}@${ownDomain}`, BRIDGE_PROBE_TIMEOUT_MS)
 }
 
 /**
