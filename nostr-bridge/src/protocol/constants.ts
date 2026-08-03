@@ -4,6 +4,9 @@ export const KIND_GIFTWRAP = 1059;
 export const KIND_DM_RELAYS = 10050;
 export const KIND_PROFILE = 0;
 
+/** NIP-42 client authentication event. */
+export const KIND_CLIENT_AUTH = 22242;
+
 /** Rumors older than this are rejected as replays (§6B step 7). */
 export const MAX_RUMOR_AGE_SECONDS = 300;
 
