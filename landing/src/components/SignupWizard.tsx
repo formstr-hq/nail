@@ -148,7 +148,6 @@ import { config } from "../lib/config";
 import {
   apiUrl,
   generateMailInvoice,
-  getMailbox,
   getMailPrice,
   resolveNip05,
   type MailInvoice,
@@ -185,19 +184,8 @@ export default function SignupWizard({
   const [error, setError] = useState<string | null>(null);
   const loginRef = useRef<HTMLDivElement>(null);
 
-  // Once we know who the user is: existing mailbox → straight to the app.
-  const proceedAs = useCallback(async (pk: string) => {
+  const proceedAs = useCallback((pk: string) => {
     setPubkey(pk);
-    try {
-      const mailbox = await getMailbox(pk);
-      if (mailbox) {
-        redirectToMails();
-        return;
-      }
-    } catch {
-      // backend unreachable for the check — let signup continue; the
-      // invoice request will surface a real error if something is wrong
-    }
     setStep("name");
   }, []);
 

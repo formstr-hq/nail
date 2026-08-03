@@ -19,8 +19,10 @@
     "noUncheckedSideEffectImports": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@protocol": ["../nostr-bridge/src/protocol/index.ts"],
+      "@protocol/*": ["../nostr-bridge/src/protocol/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src", "../nostr-bridge/src/protocol"]
 }

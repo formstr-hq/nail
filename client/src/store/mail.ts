@@ -6,10 +6,12 @@ interface MailState {
   seenIds: Set<string>
   selectedId: string | null
   folder: EmailFolder
+  query: string
   addEmail: (email: Email) => void
   markRead: (id: string) => void
   setFolder: (folder: EmailFolder) => void
   setSelected: (id: string | null) => void
+  setQuery: (query: string) => void
 }
 
 export const useMailStore = create<MailState>()((set, get) => ({
@@ -17,6 +19,7 @@ export const useMailStore = create<MailState>()((set, get) => ({
   seenIds: new Set(),
   selectedId: null,
   folder: 'inbox',
+  query: '',
 
   addEmail: (email) => {
     if (get().seenIds.has(email.id)) return
@@ -33,6 +36,10 @@ export const useMailStore = create<MailState>()((set, get) => ({
         : s.emails,
     })),
 
-  setFolder: (folder) => set({ folder, selectedId: null }),
+  // Switching folders clears the search too: a query typed against Inbox
+  // almost never means the same thing in Trash, and carrying it over silently
+  // hides mail the user just asked to see.
+  setFolder: (folder) => set({ folder, selectedId: null, query: '' }),
   setSelected: (id) => set({ selectedId: id }),
+  setQuery: (query) => set({ query }),
 }))

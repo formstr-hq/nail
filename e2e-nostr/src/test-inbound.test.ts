@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
 import nodemailer from "nodemailer";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
-import { unwrapEvent } from "nostr-tools/nip59";
+import { unwrapAndVerify, keySigner, messageStringToBytes } from "@nostr-bridge/protocol/index.js";
 import { createMockRelay } from "nostr-mock-relay";
 import { registerNip05, startNip05Server, stopNip05Server } from "./mocks.js";
 import { waitForGiftWrap } from "./nostr-helper.js";
@@ -60,10 +60,11 @@ describe("inbound email → Nostr DM", () => {
       });
 
       const wrap = await waitForGiftWrap(relayUrl, pubkey, env.deliveryTimeoutMs);
-      const rumor = unwrapEvent(
-        wrap as Parameters<typeof unwrapEvent>[0],
-        privkey,
-      );
+      const result = await unwrapAndVerify(wrap, keySigner(privkey), {
+        maxAgeSeconds: Infinity,
+      });
+      if (!result.ok) throw new Error(`unwrap failed: ${result.reason}`);
+      const rumor = result.rumor;
       expect(rumor.content).toContain(marker);
     },
     env.deliveryTimeoutMs + 10_000,
@@ -94,10 +95,11 @@ describe("inbound email → Nostr DM", () => {
       });
 
       const wrap = await waitForGiftWrap(relayUrl, pubkey, env.deliveryTimeoutMs);
-      const rumor = unwrapEvent(
-        wrap as Parameters<typeof unwrapEvent>[0],
-        privkey,
-      );
+      const result = await unwrapAndVerify(wrap, keySigner(privkey), {
+        maxAgeSeconds: Infinity,
+      });
+      if (!result.ok) throw new Error(`unwrap failed: ${result.reason}`);
+      const rumor = result.rumor;
       console.log(marker, JSON.stringify(rumor));
       expect(rumor.content).toContain(marker);
 

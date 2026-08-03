@@ -1,7 +1,6 @@
 import { lazy, Suspense, useState } from "react";
-import { ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { config } from "../lib/config";
-import { getMailbox, resolveNip05 } from "../lib/api";
 import { parseIdentityInput } from "../lib/nostr";
 
 // The wizard drags in the signer + QR libraries — keep them out of the
@@ -10,18 +9,18 @@ const SignupWizard = lazy(() => import("./SignupWizard"));
 
 /**
  * The hero's single input: npub, hex pubkey, name, or name@mailstr.app.
- * Existing users get sent straight to the mail app; everyone else lands
- * in the signup wizard.
+ * It hands off to the signup wizard, pre-filling the name when one was
+ * typed; the wizard runs the NIP-05 availability check and shows the
+ * status there.
  */
 export default function SignupSection() {
   const [input, setInput] = useState("");
-  const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [wizard, setWizard] = useState<{ open: boolean; name?: string }>({
     open: false,
   });
 
-  const check = async (e: React.FormEvent) => {
+  const check = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -32,37 +31,8 @@ export default function SignupSection() {
       );
       return;
     }
-    // Empty input → straight into the wizard; they'll pick a name there.
-    if (!parsed) {
-      setWizard({ open: true });
-      return;
-    }
-
-    setChecking(true);
-    try {
-      let pubkey: string | null = null;
-      let desiredName: string | undefined;
-
-      if (parsed.kind === "pubkey") {
-        pubkey = parsed.pubkey;
-      } else {
-        pubkey = await resolveNip05(parsed.name);
-        if (!pubkey) desiredName = parsed.name; // name is free — pre-fill it
-      }
-
-      if (pubkey) {
-        const mailbox = await getMailbox(pubkey);
-        if (mailbox) {
-          window.location.href = config.mailsUrl;
-          return;
-        }
-      }
-      setWizard({ open: true, name: desiredName });
-    } catch {
-      setError("Couldn't reach the server — try again in a moment.");
-    } finally {
-      setChecking(false);
-    }
+    // Pre-fill the wizard with the typed name; pubkey/empty just opens it.
+    setWizard({ open: true, name: parsed?.kind === "name" ? parsed.name : undefined });
   };
 
   return (
@@ -78,21 +48,14 @@ export default function SignupSection() {
           />
           <button
             type="submit"
-            disabled={checking}
-            className="inline-flex items-center gap-2 bg-primary px-5 text-sm font-semibold text-white transition-colors enabled:hover:bg-primary-light disabled:opacity-60"
+            className="inline-flex items-center gap-2 bg-primary px-5 text-sm font-semibold text-white transition-colors hover:bg-primary-light"
           >
-            {checking ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <>
-                Claim yours <ArrowRight size={16} />
-              </>
-            )}
+            Claim yours <ArrowRight size={16} />
           </button>
         </div>
         <p className="mt-2 text-sm text-gray-500">
-          Already signed up? Enter your npub or {`name@${config.mailDomain}`}{" "}
-          and we'll take you to your inbox.
+          Pick a name to see if {`name@${config.mailDomain}`} is available, or
+          bring your own npub.
         </p>
         {error && <p className="mt-2 text-sm font-medium text-red-600">{error}</p>}
       </form>

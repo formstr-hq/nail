@@ -1,8 +1,5 @@
 import WebSocket from "ws";
-import { createRumor, createSeal } from "nostr-tools/nip59";
-import { generateSecretKey, finalizeEvent } from "nostr-tools/pure";
-import { getConversationKey, encrypt } from "nostr-tools/nip44";
-import type { Event, VerifiedEvent } from "nostr-tools/pure";
+import type { Event } from "nostr-tools/pure";
 
 /**
  * Opens a WebSocket subscription on the relay and resolves with the first
@@ -49,39 +46,6 @@ export function waitForGiftWrap(
       reject(err);
     });
   });
-}
-
-const GIFT_WRAP_KIND = 1059;
-const MAIL_KIND = 1301;
-
-/**
- * Wraps an RFC 2822 email string as a NIP-17 gift-wrapped kind 1301 event.
- *
- * Uses created_at = now() on the outer gift wrap so the bridge's `since`-filtered
- * subscription receives it reliably (NIP-59's createWrap normally randomises
- * created_at up to 2 days back, which strict relays would filter out).
- */
-export function buildMailGiftWrap(
-  rfc2822: string,
-  senderPrivkey: Uint8Array,
-  recipientPubkey: string,
-  extraTags: string[][] = [],
-): VerifiedEvent {
-  const rumor = createRumor(
-    { kind: MAIL_KIND, content: rfc2822, tags: [["p", recipientPubkey], ...extraTags] },
-    senderPrivkey,
-  );
-  const seal = createSeal(rumor, senderPrivkey, recipientPubkey);
-  const randomKey = generateSecretKey();
-  return finalizeEvent(
-    {
-      kind: GIFT_WRAP_KIND,
-      content: encrypt(JSON.stringify(seal), getConversationKey(randomKey, recipientPubkey)),
-      created_at: Math.floor(Date.now() / 1000),
-      tags: [["p", recipientPubkey]],
-    },
-    randomKey,
-  );
 }
 
 /** Publishes a single event to a relay and resolves true when the relay ACKs it. */

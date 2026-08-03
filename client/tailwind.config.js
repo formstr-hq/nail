@@ -34,6 +34,26 @@ export default {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
+        // The three pane grounds, so a component never hardcodes which
+        // shade of paper it sits on.
+        surface: {
+          nav: 'hsl(var(--surface-nav))',
+          list: 'hsl(var(--surface-list))',
+          read: 'hsl(var(--surface-read))',
+        },
+        // Faintest legible ink: timestamps, npubs, provenance.
+        subtle: 'hsl(var(--subtle))',
+        // Sender proof. Its own axis, deliberately not the accent.
+        trust: {
+          DEFAULT: 'hsl(var(--trust))',
+          muted: 'hsl(var(--trust-muted))',
+        },
+      },
+      fontFamily: {
+        sans: ['Inter Variable', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        // IBM Plex Mono was drawn for technical documentation, which is
+        // exactly the register npubs, relay URLs and provenance sit in.
+        mono: ['IBM Plex Mono', 'ui-monospace', 'SF Mono', 'Menlo', 'monospace'],
       },
       borderRadius: {
         lg: 'var(--radius)',
