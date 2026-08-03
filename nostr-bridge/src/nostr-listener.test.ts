@@ -155,31 +155,10 @@ describe("handleWrap", () => {
     expect(transport.sendMail).not.toHaveBeenCalled();
   });
 
-  // The heartbeat is a liveness probe the bridge sends to itself. It must be
-  // consumed before authorization — it is not mail — and it must not reach
-  // Postfix or trigger a bounce.
-  it("consumes its own heartbeat without injecting mail", async () => {
-    const bridgeSigner = keySigner(config.bridgePrivkey);
-
-    const rumor = buildMailRumor({
-      senderPubkey: config.bridgePubkey,
-      recipientPubkey: config.bridgePubkey,
-      rfc2822: "Subject: heartbeat\r\n\r\nprobe-1",
-    });
-    rumor.tags.push(["heartbeat", "probe-1"]);
-    const wrap = await sealAndWrap(rumor, config.bridgePubkey, bridgeSigner);
-
-    const transport = fakeTransport();
-    await handleWrap(fakePool(), ["wss://relay.example"], transport, wrap);
-
-    expect(transport.sendMail).not.toHaveBeenCalled();
-    expect(mockedLookup).not.toHaveBeenCalled();
-  });
-
-  // Anyone can put a heartbeat tag on a rumor. Only one sealed by the bridge's
-  // own key may be treated as a heartbeat — otherwise a third party could keep
-  // a bridge with dead subscriptions looking alive indefinitely.
-  it("does not treat a stranger's heartbeat tag as its own", async () => {
+  // A rumor sealed by a stranger but p-tagged to the bridge is not mail from an
+  // authorized sender: it must fall through to normal handling and be rejected
+  // on authorization, never injected into Postfix.
+  it("rejects a stranger's rumor on authorization", async () => {
     const mallory = actor();
     mockedLookup.mockResolvedValue({ status: "not-found" });
 
@@ -189,13 +168,11 @@ describe("handleWrap", () => {
       rfc2822: "From: mallory@mailstr.app\r\nTo: x@gmail.com\r\n\r\nhi",
       deliverTo: ["x@gmail.com"],
     });
-    rumor.tags.push(["heartbeat", "forged"]);
     const wrap = await sealAndWrap(rumor, config.bridgePubkey, mallory.signer);
 
     const transport = fakeTransport();
     await handleWrap(fakePool(), ["wss://relay.example"], transport, wrap);
 
-    // Fell through to normal handling and was rejected on authorization.
     expect(mockedLookup).toHaveBeenCalled();
     expect(transport.sendMail).not.toHaveBeenCalled();
   });
