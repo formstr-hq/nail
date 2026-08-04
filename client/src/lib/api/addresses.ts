@@ -1,5 +1,6 @@
 import type { ActiveSigner } from '@formstr/signer'
 import { withSignerTimeout } from '../nostr/signer'
+import { BRIDGE_DOMAIN } from '../nostr/constants'
 import { apiUrl, apiAuthUrl } from './config'
 import { buildNip98Header, type Nip98Signer } from './nip98'
 
@@ -30,15 +31,27 @@ export class Nip98AuthError extends Error {
  *   - { nip05Addresses: string[] }
  *   - an array of objects each with a `nip05` or `name` field
  *
+ * A NIP-05 record's `name` is only the localpart (`abhay`), so any entry
+ * without an `@` is qualified with BRIDGE_DOMAIN before it leaves here.
+ * Every downstream consumer — the Settings sender picker, and the
+ * `senderOwnsFromAddress` check in send.ts, which calls `splitAddress` and
+ * needs a domain — depends on getting a full `localpart@domain` address; a
+ * bare name silently fails the ownership guard at send time.
+ *
  * Kept separate from the fetch logic so it's a plain, pure function —
  * straightforward to unit test in isolation if/when this repo grows a test
  * runner (see report: none exists in client/ today).
  */
 export function normalizeOwnedAddresses(body: unknown): string[] {
-  if (typeof body === 'string') return [body]
+  const qualify = (addr: string): string =>
+    addr.includes('@') ? addr : `${addr}@${BRIDGE_DOMAIN}`
+
+  if (typeof body === 'string') return [qualify(body)]
+
+  let raw: string[] = []
 
   if (Array.isArray(body)) {
-    return body.flatMap((entry): string[] => {
+    raw = body.flatMap((entry): string[] => {
       if (typeof entry === 'string') return [entry]
       if (entry && typeof entry === 'object') {
         const obj = entry as Record<string, unknown>
@@ -47,17 +60,15 @@ export function normalizeOwnedAddresses(body: unknown): string[] {
       }
       return []
     })
-  }
-
-  if (body && typeof body === 'object') {
+  } else if (body && typeof body === 'object') {
     const obj = body as Record<string, unknown>
-    if (typeof obj.nip05 === 'string') return [obj.nip05]
-    if (Array.isArray(obj.nip05Addresses)) {
-      return obj.nip05Addresses.filter((v): v is string => typeof v === 'string')
+    if (typeof obj.nip05 === 'string') raw = [obj.nip05]
+    else if (Array.isArray(obj.nip05Addresses)) {
+      raw = obj.nip05Addresses.filter((v): v is string => typeof v === 'string')
     }
   }
 
-  return []
+  return raw.map(qualify)
 }
 
 /**

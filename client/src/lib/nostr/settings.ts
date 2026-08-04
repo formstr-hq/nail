@@ -2,7 +2,7 @@ import type { Event } from 'nostr-tools'
 import type { ActiveSigner } from '@formstr/signer'
 import { getPool, fetchDmRelays, publishToRelays } from './relays'
 import { withSignerTimeout } from './signer'
-import { KIND_SETTINGS } from './constants'
+import { BRIDGE_DOMAIN, KIND_SETTINGS } from './constants'
 
 const SETTINGS_D_TAG = 'mail-settings'
 
@@ -98,7 +98,18 @@ export async function loadSettings(
     const plaintext = await stage('load/signer.nip44Decrypt', () =>
       withSignerTimeout('nip44Decrypt', () => active.nip44Decrypt(pubkey, latest.content)),
     )
-    return JSON.parse(plaintext) as MailSettings
+    const settings = JSON.parse(plaintext) as MailSettings
+
+    // Heal a senderAddress persisted as a bare localpart (an early build let
+    // the Settings picker save just `abhay` instead of `abhay@mailstr.app`).
+    // Left bare, it fails the `splitAddress`-based ownership check in send.ts
+    // and blocks sending entirely. The only domain names are registered on is
+    // BRIDGE_DOMAIN, so that's the correct qualification.
+    if (settings.senderAddress && !settings.senderAddress.includes('@')) {
+      settings.senderAddress = `${settings.senderAddress}@${BRIDGE_DOMAIN}`
+    }
+
+    return settings
   } catch (e) {
     // Was silently swallowed, which makes a stored-but-undecryptable settings
     // event look identical to never having saved: both render an empty form.
