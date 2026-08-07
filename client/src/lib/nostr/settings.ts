@@ -1,6 +1,7 @@
 import type { Event } from 'nostr-tools'
 import type { ActiveSigner } from '@formstr/signer'
-import { getPool, fetchDmRelays, publishToRelays } from './relays'
+import { fetchDmRelays } from './relays'
+import { getLocalRelay, queryLocal } from './localRelay'
 import { withSignerTimeout } from './signer'
 import { BRIDGE_DOMAIN, KIND_SETTINGS } from './constants'
 
@@ -61,14 +62,21 @@ export async function saveSettings(
     ),
   )
 
+  // Settings live on the user's DM relays (that's where loadSettings reads them),
+  // so hint the worker toward them; the durable outbox re-delivers to any that
+  // don't accept immediately.
   const relays = await stage('fetchDmRelays', () => fetchDmRelays(pubkey))
   console.info('[settings] publishing to', relays)
 
-  const { ok, failed } = await stage('publish', () => publishToRelays(relays, event))
-  console.info('[settings] accepted by', ok, 'refused by', failed)
+  const outcomes = await stage('publish', () =>
+    getLocalRelay().publish(event, { relays }),
+  )
+  const accepted = outcomes.filter((o) => o.status === 'accepted').map((o) => o.relay)
+  console.info('[settings] accepted by', accepted)
 
-  if (!ok.length) {
-    throw new Error(`Could not save settings: ${failed[0]?.error ?? 'no relay accepted the event'}`)
+  if (!accepted.length) {
+    const reason = outcomes.find((o) => o.message)?.message ?? 'no relay accepted the event'
+    throw new Error(`Could not save settings: ${reason}`)
   }
 }
 
@@ -76,15 +84,12 @@ export async function loadSettings(
   pubkey: string,
   active: ActiveSigner,
 ): Promise<MailSettings | null> {
-  const pool = getPool()
   const relays = await stage('load/fetchDmRelays', () => fetchDmRelays(pubkey))
 
-  const events = await stage('load/querySync', () =>
-    pool.querySync(
+  const events = await stage('load/query', () =>
+    queryLocal([{ kinds: [KIND_SETTINGS], authors: [pubkey], '#d': [SETTINGS_D_TAG] }], {
       relays,
-      { kinds: [KIND_SETTINGS], authors: [pubkey], '#d': [SETTINGS_D_TAG] },
-      {},
-    ),
+    }),
   )
 
   if (!events.length) {

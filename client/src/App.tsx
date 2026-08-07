@@ -19,6 +19,7 @@ import { IconButton } from '@/components/ui/Button'
 function MailApp() {
   // `null` means no compose window; a Draft (possibly empty) means one is open.
   const [compose, setCompose] = useState<Draft | null>(null)
+  const [composeMinimized, setComposeMinimized] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [navOpen, setNavOpen] = useState(false)
 
@@ -43,10 +44,22 @@ function MailApp() {
 
   function openCompose(draft: Draft) {
     setCompose(draft)
+    setComposeMinimized(false)
     setNavOpen(false)
   }
 
+  function closeCompose() {
+    setCompose(null)
+    setComposeMinimized(false)
+  }
+
+  // "Write" restores an already-open composer (possibly minimized) rather than
+  // discarding its draft for a blank one; only start fresh when none is open.
   const blank: Draft = { to: '', subject: '', body: '' }
+  function startCompose() {
+    if (compose) setComposeMinimized(false)
+    else openCompose(blank)
+  }
 
   return (
     <div className="flex h-[100dvh] flex-col bg-background text-foreground">
@@ -58,7 +71,7 @@ function MailApp() {
         </IconButton>
         <BrandGlyph size={18} />
         <span className="flex-1 text-sm font-semibold tracking-tight">Mail</span>
-        <IconButton title="Write a message" onClick={() => openCompose(blank)}>
+        <IconButton title="Write a message" onClick={startCompose}>
           <PenIcon className="h-4 w-4" />
         </IconButton>
       </header>
@@ -66,7 +79,7 @@ function MailApp() {
       <div className="flex min-h-0 flex-1">
         <div className="hidden w-56 flex-none md:block">
           <Sidebar
-            onCompose={() => openCompose(blank)}
+            onCompose={startCompose}
             onSettings={() => setShowSettings(true)}
             status={status}
           />
@@ -82,7 +95,7 @@ function MailApp() {
             />
             <div className="relative w-60 max-w-[80vw] shadow-2xl">
               <Sidebar
-                onCompose={() => openCompose(blank)}
+                onCompose={startCompose}
                 onSettings={() => {
                   setShowSettings(true)
                   setNavOpen(false)
@@ -114,7 +127,13 @@ function MailApp() {
       </div>
 
       {compose && (
-        <ComposeModal onClose={() => setCompose(null)} ctx={ctx} draft={compose} />
+        <ComposeModal
+          onClose={closeCompose}
+          ctx={ctx}
+          draft={compose}
+          minimized={composeMinimized}
+          setMinimized={setComposeMinimized}
+        />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>

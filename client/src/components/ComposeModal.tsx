@@ -13,6 +13,10 @@ interface ComposeModalProps {
   onClose: () => void
   ctx: ResolveContext
   draft?: Draft
+  // Minimized state is owned by the parent so the "Write" action can restore an
+  // already-open composer instead of silently replacing its draft.
+  minimized: boolean
+  setMinimized: (minimized: boolean) => void
 }
 
 /**
@@ -24,7 +28,7 @@ function signatureBlock(signature: string | undefined): string {
   return trimmed ? `\n\n-- \n${trimmed}` : ''
 }
 
-export function ComposeModal({ onClose, ctx, draft }: ComposeModalProps) {
+export function ComposeModal({ onClose, ctx, draft, minimized, setMinimized }: ComposeModalProps) {
   const { account, active } = useAccountStore()
   const { settings } = useSettingsStore()
 
@@ -36,13 +40,19 @@ export function ComposeModal({ onClose, ctx, draft }: ComposeModalProps) {
   const [body, setBody] = useState(
     () => `${signatureBlock(settings.signature)}${draft?.body ?? ''}`,
   )
+  // The prefilled baseline the body is measured against for dirtiness. Held in
+  // a ref, not recomputed each render: the signature setting loads async, and
+  // recomputing would let a late-arriving signature shift the baseline out from
+  // under an untouched body — which is what made the composer read as dirty and
+  // sent Close to the discard prompt instead of closing.
+  const initialBodyRef = useRef(body)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
-  const [minimized, setMinimized] = useState(false)
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
 
   const toRef = useRef<HTMLInputElement>(null)
   const bodyRef = useRef<HTMLTextAreaElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const defaultAddress = account ? `${account.npub}@${BRIDGE_DOMAIN}` : ''
   const fromAddress = settings.senderAddress || defaultAddress
@@ -53,10 +63,22 @@ export function ComposeModal({ onClose, ctx, draft }: ComposeModalProps) {
     else toRef.current?.focus()
   }, [draft?.to])
 
+  // The signature loads after mount, so fold it into the body once it arrives —
+  // but only while the body still matches the baseline, so this never clobbers
+  // text the user has typed. Moving the baseline in lockstep keeps `isDirty`
+  // honest.
+  useEffect(() => {
+    const nextInitial = `${signatureBlock(settings.signature)}${draft?.body ?? ''}`
+    if (nextInitial === initialBodyRef.current) return
+    if (body === initialBodyRef.current) setBody(nextInitial)
+    initialBodyRef.current = nextInitial
+  }, [settings.signature, draft?.body, body])
+
   // Anything the user typed beyond what was prefilled.
-  const initialBody = `${signatureBlock(settings.signature)}${draft?.body ?? ''}`
   const isDirty =
-    to !== (draft?.to ?? '') || subject !== (draft?.subject ?? '') || body !== initialBody
+    to !== (draft?.to ?? '') ||
+    subject !== (draft?.subject ?? '') ||
+    body !== initialBodyRef.current
 
   function requestClose() {
     if (isDirty && !sending) setConfirmingDiscard(true)
@@ -75,6 +97,21 @@ export function ComposeModal({ onClose, ctx, draft }: ComposeModalProps) {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   })
+
+  // On desktop the composer is a docked panel that leaves the rest of the app
+  // usable, so clicking away should tuck it out of the way rather than nag —
+  // a draft is never lost, just minimized. On phones the panel is a full sheet
+  // whose backdrop is the way out, so that path (below) still closes.
+  useEffect(() => {
+    if (minimized) return
+    function onPointerDown(e: MouseEvent) {
+      if (!window.matchMedia('(min-width: 768px)').matches) return
+      if (panelRef.current?.contains(e.target as Node)) return
+      setMinimized(true)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    return () => document.removeEventListener('mousedown', onPointerDown)
+  }, [minimized])
 
   async function handleSend() {
     if (!account || !active || !to.trim() || !subject.trim()) return
@@ -124,18 +161,22 @@ export function ComposeModal({ onClose, ctx, draft }: ComposeModalProps) {
 
   return (
     <div
-      // Full-screen on phones, a docked panel from md up. The backdrop is only
-      // interactive on small screens, where it is the way out of the sheet.
-      className="fixed inset-0 z-50 flex flex-col justify-end bg-foreground/20 md:items-end md:bg-transparent md:p-6"
+      // Full-screen sheet on phones; a docked panel from md up. On desktop the
+      // wrapper lets clicks through (`md:pointer-events-none`) so the rest of
+      // the app stays usable while composing — the outside-click-to-minimize
+      // effect above handles tucking the panel away. On phones the backdrop is
+      // solid and is the way out of the sheet.
+      className="pointer-events-auto fixed inset-0 z-50 flex flex-col justify-end bg-foreground/20 md:pointer-events-none md:items-end md:bg-transparent md:p-6"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) requestClose()
       }}
     >
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label="New message"
-        className="flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:h-[32rem] md:max-w-xl md:rounded-xl"
+        className="pointer-events-auto flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:h-[32rem] md:max-w-xl md:rounded-xl"
       >
         <div className="flex items-center gap-1 border-b border-border px-3 py-2">
           <span className="eyebrow flex-1">{draft?.inReplyTo ? 'Reply' : 'New message'}</span>

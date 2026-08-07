@@ -8,7 +8,8 @@ import {
   splitAddress,
   type ProtocolSigner,
 } from '@protocol'
-import { fetchDmRelays, publishToRelays } from '@/lib/nostr/relays'
+import { fetchDmRelays } from '@/lib/nostr/relays'
+import { getLocalRelay } from '@/lib/nostr/localRelay'
 import { probeNip05 } from '@/lib/nostr/nip05'
 import { buildRfc2822 } from './rfc2822'
 import { resolveRecipients, type ResolveContext } from './resolve'
@@ -147,17 +148,25 @@ export async function sendMail(params: SendMailParams): Promise<void> {
   const { wraps, targets, errors } = await buildWraps(params)
   if (errors.length) throw new Error(errors.join('; '))
 
+  const relay = getLocalRelay()
   const undelivered: string[] = []
 
   await Promise.all(
     wraps.map(async (wrap, i) => {
       const pubkey = targets[i]
+      // Resolve the recipient's NIP-17 DM inbox (kind 10050) and hand it to the
+      // worker as an explicit target — it can't discover an arbitrary pubkey's
+      // inbox on its own. The worker stores the wrap, publishes it, and keeps
+      // re-delivering to any relay that didn't accept (durable outbox), so a
+      // transient relay outage no longer silently drops the message.
       const relays = await fetchDmRelays(pubkey)
-      const { ok, failed } = await publishToRelays(relays, wrap)
+      const outcomes = await relay.publish(wrap, { relays })
+      const accepted = outcomes.some((o) => o.status === 'accepted')
       // A failed self-copy costs the Sent entry, not the delivery — don't
       // report the message as undelivered because of it.
-      if (pubkey !== params.senderPubkey && !ok.length) {
-        undelivered.push(`${pubkey.slice(0, 8)}… (${failed[0]?.error ?? 'no relay accepted it'})`)
+      if (pubkey !== params.senderPubkey && !accepted) {
+        const reason = outcomes.find((o) => o.message)?.message ?? 'no relay accepted it'
+        undelivered.push(`${pubkey.slice(0, 8)}… (${reason})`)
       }
     }),
   )

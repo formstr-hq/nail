@@ -1,6 +1,5 @@
 import { KIND_PROFILE } from '@protocol'
-import { getPool } from './relays'
-import { DEFAULT_RELAYS } from './constants'
+import { queryLocal } from './localRelay'
 
 const PROFILE_TTL_MS = 30 * 60_000
 const QUERY_MAX_WAIT_MS = 2500
@@ -67,10 +66,9 @@ export async function fetchProfile(pubkey: string): Promise<Profile> {
 
   const query = (async (): Promise<Profile> => {
     try {
-      const events = await getPool().querySync(
-        DEFAULT_RELAYS,
-        { kinds: [KIND_PROFILE], authors: [pubkey], limit: 1 },
-        { maxWait: QUERY_MAX_WAIT_MS },
+      const events = await queryLocal(
+        [{ kinds: [KIND_PROFILE], authors: [pubkey], limit: 1 }],
+        { timeoutMs: QUERY_MAX_WAIT_MS },
       )
       // Kind 0 is replaceable and several relays answer, so take the newest
       // rather than whichever replied first.

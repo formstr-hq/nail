@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMailStore } from '@/store/mail'
+import { useThemeStore, resolveTheme } from '@/store/theme'
 import type { Email } from '@/types/mail'
 import { replyDraft, replyAllDraft, forwardDraft, type Draft } from '@/lib/mail/draft'
 import { SenderProofTrace } from '@/components/ui/SenderProof'
@@ -18,14 +19,22 @@ import { ReplyIcon, ReplyAllIcon, ForwardIcon, InboxIcon, BackIcon } from '@/com
  * This is a `<meta>` policy inside the frame rather than a sandbox flag
  * because sandboxing cannot express "no network, but do render the markup".
  */
-function framed(html: string, allowRemote: boolean): string {
+function framed(html: string, allowRemote: boolean, dark: boolean): string {
   const imgSrc = allowRemote ? "img-src data: https: http:" : "img-src data:"
   const policy = `default-src 'none'; ${imgSrc}; style-src 'unsafe-inline'; font-src data:`
-  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="referrer" content="no-referrer"><style>
-    html{color-scheme:light}
-    body{margin:0;padding:0;font:13.5px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0b0b0c;background:transparent;word-break:break-word}
+  // Follow the app's theme. Background stays transparent so it inherits the
+  // reading pane and messages that set their own colours are left alone; only
+  // the defaults (text, links, native controls) track light/dark.
+  const fg = dark ? '#e6e6e6' : '#0b0b0c'
+  const link = dark ? '#ff9d5c' : '#c24a00'
+  // `<base target="_blank">` sends every link to a new tab instead of replacing
+  // the frame's own document; the sandbox flags below are what let that popup
+  // actually open and land as a normal (un-sandboxed) page.
+  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="referrer" content="no-referrer"><base target="_blank"><style>
+    html{color-scheme:${dark ? 'dark' : 'light'}}
+    body{margin:0;padding:0;font:13.5px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:${fg};background:transparent;word-break:break-word}
     img{max-width:100%;height:auto}
-    a{color:#c24a00}
+    a{color:${link}}
   </style></head><body>${html}</body></html>`
 }
 
@@ -36,15 +45,38 @@ function hasRemoteContent(html: string): boolean {
 
 function MessageBody({ email }: { email: Email }) {
   const [allowRemote, setAllowRemote] = useState(false)
+  const preference = useThemeStore((s) => s.preference)
+  const dark = resolveTheme(preference) === 'dark'
+  const observerRef = useRef<ResizeObserver | null>(null)
 
   const blocked = useMemo(
     () => Boolean(email.bodyHtml) && hasRemoteContent(email.bodyHtml!) && !allowRemote,
     [email.bodyHtml, allowRemote],
   )
 
-  // Remounts the frame when the policy changes, so relaxing it actually
-  // reloads the images rather than leaving the blocked render in place.
-  const frameKey = `${email.id}:${allowRemote}`
+  // Remounts the frame when the policy or theme changes, so relaxing the CSP
+  // reloads the images and a theme switch re-renders in the new palette rather
+  // than leaving the old render in place.
+  const frameKey = `${email.id}:${allowRemote}:${dark ? 'd' : 'l'}`
+
+  // Size the frame to its own content so the message scrolls with the reading
+  // pane instead of trapping a second scrollbar inside a fixed-height box. This
+  // reads the framed document directly (allow-same-origin), and a ResizeObserver
+  // keeps it in step as images and late layout settle after load.
+  function fitToContent(e: React.SyntheticEvent<HTMLIFrameElement>) {
+    const iframe = e.currentTarget
+    const doc = iframe.contentDocument
+    if (!doc) return
+    const fit = () => {
+      iframe.style.height = `${doc.documentElement.scrollHeight}px`
+    }
+    fit()
+    observerRef.current?.disconnect()
+    observerRef.current = new ResizeObserver(fit)
+    observerRef.current.observe(doc.documentElement)
+  }
+
+  useEffect(() => () => observerRef.current?.disconnect(), [])
 
   if (!email.bodyHtml) {
     return (
@@ -69,10 +101,16 @@ function MessageBody({ email }: { email: Email }) {
       )}
       <iframe
         key={frameKey}
-        srcDoc={framed(email.bodyHtml, allowRemote)}
-        sandbox=""
+        srcDoc={framed(email.bodyHtml, allowRemote, dark)}
+        // Scripts stay off (no `allow-scripts`) and the CSP blocks them too, so
+        // same-origin can't be turned against us — it only lets us measure the
+        // document for auto-height. Popups let `target="_blank"` links open, and
+        // escaping the sandbox lets them land as ordinary pages.
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
         referrerPolicy="no-referrer"
-        className="min-h-96 w-full border-0 bg-transparent"
+        onLoad={fitToContent}
+        scrolling="no"
+        className="w-full border-0 bg-transparent"
         title={`Message: ${email.subject}`}
       />
     </div>

@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useMailStore } from '@/store/mail'
-import { getPool, fetchDmRelays } from '@/lib/nostr/relays'
+import { getLocalRelay, syncAccountRelays } from '@/lib/nostr/localRelay'
 import { decodeGiftWrap } from '@/lib/mail/receive'
 import { protocolSigner } from '@/lib/nostr/protocol-signer'
-import { KIND_GIFTWRAP } from '@/lib/nostr/constants'
+import { KIND_GIFTWRAP, DEFAULT_RELAYS } from '@/lib/nostr/constants'
 import type { Event, Filter } from 'nostr-tools'
 
 /**
@@ -34,7 +34,7 @@ export function useInbox(bridgePubkey: string | null) {
     let alive = true
     setStatus({ phase: 'connecting', decoding: 0 })
 
-    const pool = getPool()
+    const relay = getLocalRelay()
     const signer = protocolSigner(active)
 
     // Decrypting a gift wrap costs one signer call, and with a NIP-46 bunker
@@ -83,16 +83,22 @@ export function useInbox(bridgePubkey: string | null) {
       reportDecoding()
     }
 
-    async function subscribe() {
-      const relays = await fetchDmRelays(account!.pubkey)
+    let cleanup: (() => void) | undefined
+    try {
+      // Reactively track this account's read (10002) and DM inbox (10050) relays;
+      // the worker reopens the kind-1059 stream on the DM relays as they arrive.
+      // No brittle one-shot lookup blocking the critical path.
+      const relaysHandle = syncAccountRelays(account.pubkey)
 
       const filter: Filter = {
         kinds: [KIND_GIFTWRAP],
-        '#p': [account!.pubkey],
+        '#p': [account.pubkey],
       } as Filter
 
-      const sub = pool.subscribeMany(relays, filter, {
-        onevent: (event: Event) => {
+      // Cache replays first (persisted wraps, offline-safe), then the worker
+      // syncs upstream and streams the live tail through the same callback.
+      const sub = relay.observe([filter], {
+        onEvent: (event: Event) => {
           if (!alive) return
           // Skip anything already decoded — otherwise every reload pays the
           // signer round-trip again for mail we have already read.
@@ -102,15 +108,15 @@ export function useInbox(bridgePubkey: string | null) {
         },
       })
 
-      if (alive) setStatus({ phase: 'live', relays, decoding: queue.length + running })
-      return sub
-    }
-
-    const subPromise = subscribe().catch((err: unknown) => {
+      cleanup = () => {
+        relaysHandle.unobserve()
+        sub.unobserve()
+      }
+      if (alive) {
+        setStatus({ phase: 'live', relays: DEFAULT_RELAYS, decoding: queue.length + running })
+      }
+    } catch (err) {
       console.error(err)
-      // fetchDmRelays falls back to defaults rather than throwing, so landing
-      // here means the relay list lookup itself failed — a dead pool or an
-      // offline browser. Say so instead of rendering a plausible empty inbox.
       if (alive) {
         setStatus({
           phase: 'error',
@@ -118,12 +124,11 @@ export function useInbox(bridgePubkey: string | null) {
           decoding: 0,
         })
       }
-      return undefined
-    })
+    }
 
     return () => {
       alive = false
-      subPromise.then((sub) => sub?.close())
+      cleanup?.()
     }
   }, [account, active, addEmail, bridgePubkey, attempt])
 

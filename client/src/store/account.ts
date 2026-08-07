@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { ActiveSigner, StoredAccount } from '@formstr/signer'
 import { nostrSigner, withSignerTimeout } from '@/lib/nostr/signer'
-import { getPool } from '@/lib/nostr/relays'
+import { getSignerPool } from '@/lib/nostr/signerPool'
 
 interface AccountState {
   account: StoredAccount | null
@@ -75,7 +75,7 @@ export const useAccountStore = create<AccountState>()((set, get) => ({
     try {
       // Silent resume for extension / NIP-46 sessions. ncryptsec accounts
       // stay locked by design — LoginPage drives the passphrase prompt.
-      active = await nostrSigner.unlock({ pool: getPool() })
+      active = await nostrSigner.unlock({ pool: getSignerPool() })
       // unlock() reconstructs the signer from stored state without checking
       // it still works (uninstalled extension, extension switched to another
       // account, extension without nip44). Probe before trusting it, or the

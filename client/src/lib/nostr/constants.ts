@@ -8,6 +8,7 @@ export const BRIDGE_NIP05_NAME = '_smtp'
 export const KIND_MAIL = 1301
 export const KIND_GIFTWRAP = 1059
 export const KIND_DM_RELAYS = 10050
+export const KIND_NIP65_RELAYS = 10002
 export const KIND_LABEL = 1985
 export const KIND_SETTINGS = 30078
 

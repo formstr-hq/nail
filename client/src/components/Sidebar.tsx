@@ -32,9 +32,9 @@ interface SidebarProps {
 /**
  * Relay health, stated only as far as it is known.
  *
- * `publishToRelays` documents that nostr-tools resolves optimistically, so
- * "connected" would be a stronger claim than the pool can support. This says
- * how many relays are being listened to, which is a fact.
+ * A relay socket resolving is not proof of a live, accepting connection, so
+ * "connected" would be a stronger claim than we can support. This says how many
+ * relays are being listened to, which is a fact.
  */
 function RelayState({ status }: { status: InboxStatus }) {
   if (status.phase === 'error') {

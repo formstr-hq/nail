@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { renderLoginHtml, attachLoginListeners } from '@formstr/signer/ui'
 import '@formstr/signer/styles.css'
 import { nostrSigner } from '@/lib/nostr/signer'
-import { getPool } from '@/lib/nostr/relays'
+import { getSignerPool } from '@/lib/nostr/signerPool'
 import { DEFAULT_RELAYS } from '@/lib/nostr/constants'
 import { useAccountStore } from '@/store/account'
 import { Button } from '@/components/ui/Button'
@@ -247,7 +247,7 @@ function SignerLogin() {
     el.innerHTML = renderLoginHtml()
     tuneLoginUi(el)
     const binding = attachLoginListeners(el, nostrSigner, {
-      pool: getPool(),
+      pool: getSignerPool(),
       onLogin: () => refresh(),
       onError: (err) => setError(err.message),
     })

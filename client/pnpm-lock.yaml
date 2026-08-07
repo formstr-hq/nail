@@ -14,6 +14,9 @@ importers:
       '@fontsource/ibm-plex-mono':
         specifier: ^5.3.0
         version: 5.3.0
+      '@formstr/local-relay':
+        specifier: link:../../common-packages/packages/local-relay
+        version: link:../../common-packages/packages/local-relay
       '@formstr/signer':
         specifier: ^0.2.2
         version: 0.2.2(typescript@5.7.3)
