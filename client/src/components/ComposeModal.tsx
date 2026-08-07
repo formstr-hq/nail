@@ -89,7 +89,7 @@ export function ComposeModal({
   )
   const suggestions = useMemo(
     () =>
-      recipientFocused
+      recipientFocused && recipientToken.length >= 3
         ? searchContacts(contacts, recipientToken).filter((c) => !alreadyAdded.has(c.key))
         : [],
     [recipientFocused, contacts, recipientToken, alreadyAdded],
