@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { sendMail } from '@/lib/mail/send'
@@ -6,6 +6,8 @@ import { protocolSigner } from '@/lib/nostr/protocol-signer'
 import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
 import type { ResolveContext } from '@/lib/mail/resolve'
 import type { Draft } from '@/lib/mail/draft'
+import { useContacts } from '@/hooks/useContacts'
+import { searchContacts } from '@/lib/mail/contacts'
 import { Button, IconButton } from '@/components/ui/Button'
 import { XIcon, MinimizeIcon, ExpandIcon, AlertIcon } from '@/components/ui/icons'
 
@@ -13,10 +15,20 @@ interface ComposeModalProps {
   onClose: () => void
   ctx: ResolveContext
   draft?: Draft
+  /** The user's own addresses, so the recipient picker never suggests them. */
+  selfAddresses: string[]
   // Minimized state is owned by the parent so the "Write" action can restore an
   // already-open composer instead of silently replacing its draft.
   minimized: boolean
   setMinimized: (minimized: boolean) => void
+}
+
+/** Split a comma-separated recipient string into its committed part + the token
+ *  currently being typed (everything after the last comma). */
+function splitRecipients(value: string): { head: string; token: string } {
+  const lastComma = value.lastIndexOf(',')
+  if (lastComma === -1) return { head: '', token: value.trimStart() }
+  return { head: value.slice(0, lastComma + 1), token: value.slice(lastComma + 1).trimStart() }
 }
 
 /**
@@ -28,9 +40,17 @@ function signatureBlock(signature: string | undefined): string {
   return trimmed ? `\n\n-- \n${trimmed}` : ''
 }
 
-export function ComposeModal({ onClose, ctx, draft, minimized, setMinimized }: ComposeModalProps) {
+export function ComposeModal({
+  onClose,
+  ctx,
+  draft,
+  selfAddresses,
+  minimized,
+  setMinimized,
+}: ComposeModalProps) {
   const { account, active } = useAccountStore()
   const { settings } = useSettingsStore()
+  const contacts = useContacts(selfAddresses)
 
   // The signature is a stored setting that nothing used to apply. Prefilling
   // it rather than appending at send time means the sender can see and edit
@@ -56,6 +76,51 @@ export function ComposeModal({ onClose, ctx, draft, minimized, setMinimized }: C
 
   const defaultAddress = account ? `${account.npub}@${BRIDGE_DOMAIN}` : ''
   const fromAddress = settings.senderAddress || defaultAddress
+
+  // --- recipient autocomplete over past correspondents ---
+  const [recipientFocused, setRecipientFocused] = useState(false)
+  const [activeSuggestion, setActiveSuggestion] = useState(0)
+
+  const { token: recipientToken } = splitRecipients(to)
+  // Addresses already on the line, so we never suggest a duplicate.
+  const alreadyAdded = useMemo(
+    () => new Set(to.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)),
+    [to],
+  )
+  const suggestions = useMemo(
+    () =>
+      recipientFocused
+        ? searchContacts(contacts, recipientToken).filter((c) => !alreadyAdded.has(c.key))
+        : [],
+    [recipientFocused, contacts, recipientToken, alreadyAdded],
+  )
+  const showSuggestions = suggestions.length > 0
+  const activeIndex = Math.min(activeSuggestion, suggestions.length - 1)
+
+  function applySuggestion(address: string) {
+    const { head } = splitRecipients(to)
+    setTo(`${head}${head ? ' ' : ''}${address}, `)
+    setActiveSuggestion(0)
+    toRef.current?.focus()
+  }
+
+  function onRecipientKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!showSuggestions) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveSuggestion((i) => Math.min(i + 1, suggestions.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveSuggestion((i) => Math.max(i - 1, 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      applySuggestion(suggestions[activeIndex].address)
+    } else if (e.key === 'Escape') {
+      // Dismiss the dropdown without letting the composer's own Escape close it.
+      e.stopPropagation()
+      setRecipientFocused(false)
+    }
+  }
 
   // A reply already knows its recipient, so the cursor belongs in the body.
   useEffect(() => {
@@ -201,17 +266,55 @@ export function ComposeModal({ onClose, ctx, draft, minimized, setMinimized }: C
         )}
 
         <div className="flex flex-col divide-y divide-border border-b border-border">
-          <label className="flex items-center gap-2 px-3.5">
-            {/* Wide enough for the longest label, so both inputs share one gutter. */}
-            <span className="eyebrow w-16 flex-none">To</span>
-            <input
-              ref={toRef}
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              placeholder="npub, name@domain, or an email address"
-              className="h-9 flex-1 bg-transparent text-[13px] text-foreground placeholder:text-subtle focus:outline-none"
-            />
-          </label>
+          <div className="relative">
+            <label className="flex items-center gap-2 px-3.5">
+              {/* Wide enough for the longest label, so both inputs share one gutter. */}
+              <span className="eyebrow w-16 flex-none">To</span>
+              <input
+                ref={toRef}
+                value={to}
+                onChange={(e) => {
+                  setTo(e.target.value)
+                  setActiveSuggestion(0)
+                }}
+                onFocus={() => setRecipientFocused(true)}
+                // Delay so a suggestion click registers before the list unmounts.
+                onBlur={() => setTimeout(() => setRecipientFocused(false), 120)}
+                onKeyDown={onRecipientKeyDown}
+                placeholder="npub, name@domain, or an email address"
+                autoComplete="off"
+                role="combobox"
+                aria-expanded={showSuggestions}
+                aria-autocomplete="list"
+                className="h-9 flex-1 bg-transparent text-[13px] text-foreground placeholder:text-subtle focus:outline-none"
+              />
+            </label>
+            {showSuggestions && (
+              <ul className="absolute left-2 right-2 top-full z-20 max-h-56 overflow-y-auto rounded-md border border-border bg-card py-1 shadow-lg">
+                {suggestions.map((c, i) => (
+                  <li key={c.key}>
+                    <button
+                      type="button"
+                      // Keep focus on the input so onBlur doesn't fire before this click.
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => applySuggestion(c.address)}
+                      className={[
+                        'flex w-full items-baseline gap-2 px-3 py-1.5 text-left',
+                        i === activeIndex ? 'bg-accent' : 'hover:bg-accent/60',
+                      ].join(' ')}
+                    >
+                      {c.name && (
+                        <span className="flex-none text-[12.5px] font-medium text-foreground">
+                          {c.name}
+                        </span>
+                      )}
+                      <span className="truncate font-mono text-[11px] text-subtle">{c.address}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <label className="flex items-center gap-2 px-3.5">
             {/* Wide enough for the longest label, so both inputs share one gutter. */}
             <span className="eyebrow w-16 flex-none">Subject</span>

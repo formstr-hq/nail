@@ -131,6 +131,7 @@ function MailApp() {
           onClose={closeCompose}
           ctx={ctx}
           draft={compose}
+          selfAddresses={selfAddresses}
           minimized={composeMinimized}
           setMinimized={setComposeMinimized}
         />

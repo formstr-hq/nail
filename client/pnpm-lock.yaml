@@ -15,8 +15,8 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
       '@formstr/local-relay':
-        specifier: link:../../common-packages/packages/local-relay
-        version: link:../../common-packages/packages/local-relay
+        specifier: ^0.6.1
+        version: 0.6.1(typescript@5.7.3)
       '@formstr/signer':
         specifier: ^0.2.2
         version: 0.2.2(typescript@5.7.3)
@@ -358,6 +358,9 @@ packages:
 
   '@fontsource/ibm-plex-mono@5.3.0':
     resolution: {integrity: sha512-eTgnZjZEGk1QtD3ZstF+Vclo2HLAni8YMy34/DxllwZvyz1lR/1RF/xTiAquOBO7MvqBx8D2Ig2WCPMVfdZu7Q==}
+
+  '@formstr/local-relay@0.6.1':
+    resolution: {integrity: sha512-8IKAkGKs2ZXBrqOWDAjqXMSNMtydmJWEIThURWswkOtCFi36syg5BhYMgSEB0v/KnwqePvgt7whoCPt2WaQ5dQ==}
 
   '@formstr/signer@0.2.2':
     resolution: {integrity: sha512-25BCGIKZSKRrtVQwnxfWeiLH7KctEbxQrB26dxcjbkcnIIcfiV39s/Xt9yG//eZ+1zTHUpkIQkplfOhjTENtNw==}
@@ -1818,6 +1821,12 @@ snapshots:
   '@fontsource-variable/inter@5.3.0': {}
 
   '@fontsource/ibm-plex-mono@5.3.0': {}
+
+  '@formstr/local-relay@0.6.1(typescript@5.7.3)':
+    dependencies:
+      nostr-tools: 2.23.9(typescript@5.7.3)
+    transitivePeerDependencies:
+      - typescript
 
   '@formstr/signer@0.2.2(typescript@5.7.3)':
     dependencies:
