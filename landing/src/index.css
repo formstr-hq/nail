@@ -5,11 +5,19 @@
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
 
+  /* "Calm paper, loud ink." The system is monochrome; colour is functional,
+     not a brand — reach for whatever hue does the job in a given spot
+     (emphasis, status, a mark) and keep it rare. Name each colour token for
+     its job, not "accent" — --color-emphasis is the emphasis hue; semantic
+     reds/ambers live inline where used.
+     See DESIGN.md, and the wider Formstr system in nostr-calendar's tokens. */
   --color-ink: #0b0b0c;
-  --color-paper: #f7f5ef;
-  --color-primary: #ff5c00;
-  --color-primary-light: #ff8a00;
-  --color-amber: #ffb020;
+  --color-paper: #f4f4f3;
+  --color-surface: #ffffff;
+  --color-line: #e4e4e2;
+  --color-primary: #0b0b0c;
+  --color-primary-light: #2a2a2a;
+  --color-emphasis: #e5484d;
 }
 
 html {
@@ -18,7 +26,7 @@ html {
 
 body {
   margin: 0;
-  background: #f7f5ef;
+  background: #f4f4f3;
   color: #0b0b0c;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -106,7 +114,7 @@ body {
   z-index: 60;
   transform-origin: 0 50%;
   transform: scaleX(var(--scroll, 0));
-  background: linear-gradient(90deg, #ff5c00, #ff8a00, #ffb020);
+  background: #0b0b0c;
   pointer-events: none;
 }
 
@@ -176,7 +184,7 @@ div.nostr-signer__root {
   border-color: rgba(11, 11, 12, 0.08);
 }
 .nostr-signer__root .nostr-signer__tab:hover::after {
-  color: #ff5c00;
+  color: #0b0b0c;
   transform: translateY(-50%) translateX(3px);
 }
 .nostr-signer__root .nostr-signer__tab-icon {
@@ -186,8 +194,8 @@ div.nostr-signer__root {
   height: 38px;
   flex: none;
   border-radius: 10px;
-  background: #fff1e8;
-  color: #ff5c00;
+  background: #f0f0ef;
+  color: #0b0b0c;
 }
 .nostr-signer__root .nostr-signer__tab-icon svg {
   width: 19px;
@@ -221,15 +229,15 @@ div.nostr-signer__root {
   box-shadow: 0 1px 2px rgba(11, 11, 12, 0.04);
 }
 .nostr-signer__root .nostr-signer__tab--create:hover {
-  border-color: rgba(255, 92, 0, 0.45);
+  border-color: rgba(11, 11, 12, 0.25);
   background: #fff;
-  box-shadow: 0 4px 14px rgba(255, 92, 0, 0.1);
+  box-shadow: 0 4px 14px rgba(11, 11, 12, 0.1);
 }
 .nostr-signer__root .nostr-signer__tab--create::after {
-  color: #ff5c00;
+  color: #0b0b0c;
 }
 .nostr-signer__root .nostr-signer__tab--create .nostr-signer__tab-icon {
-  background: linear-gradient(180deg, #ff5c00, #ffb020);
+  background: #0b0b0c;
   color: #fff;
 }
 
@@ -308,7 +316,7 @@ div.nostr-signer__root {
   cursor: pointer;
 }
 .nostr-signer__root .nostr-signer__back:hover {
-  color: #ff5c00;
+  color: #0b0b0c;
 }
 /* after account creation the ncryptsec backup must be acknowledged —
    no navigating away from it */
@@ -332,7 +340,7 @@ div.nostr-signer__root {
 .nostr-signer__root .nostr-signer__back:focus-visible,
 .nostr-signer__root .nostr-signer__button:focus-visible,
 .nostr-signer__root .nostr-signer__close:focus-visible {
-  outline: 2px solid rgba(255, 92, 0, 0.5);
+  outline: 2px solid rgba(11, 11, 12, 0.35);
   outline-offset: 1px;
 }
 
@@ -362,21 +370,21 @@ div.nostr-signer__root {
   color: #0b0b0c;
 }
 .nostr-signer__root .nostr-signer__input:focus {
-  border-color: #ff5c00;
-  box-shadow: 0 0 0 3px rgba(255, 92, 0, 0.15);
+  border-color: #0b0b0c;
+  box-shadow: 0 0 0 3px rgba(11, 11, 12, 0.12);
 }
 
 .nostr-signer__root .nostr-signer__button {
   border-radius: 10px;
 }
 .nostr-signer__root .nostr-signer__button--primary {
-  background: #ff5c00;
+  background: #0b0b0c;
   border: none;
   color: #fff;
   font-weight: 600;
 }
 .nostr-signer__root .nostr-signer__button--primary:hover {
-  background: #ff8a00;
+  background: #2a2a2a;
 }
 .nostr-signer__root .nostr-signer__button--secondary {
   background: transparent;
@@ -388,7 +396,7 @@ div.nostr-signer__root {
 }
 
 .nostr-signer__root .nostr-signer__qr-uri {
-  background: #f7f5ef;
+  background: #f4f4f3;
   color: #6b7280;
 }
 .nostr-signer__root .nostr-signer__ncryptsec-display {

@@ -54,16 +54,15 @@ const SECONDARY_TABS = ['extension', 'ncryptsec', 'bunker', 'nostrconnect']
 const ICON_SVG_OPEN =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
 
-/** Inline mailstr glyph — same mark as the landing favicon. */
+/** Inline mailstr glyph — same mark as the landing favicon. Monochrome + one
+ *  spark; the parts are coloured from theme tokens in index.css so the mark
+ *  tracks light/dark instead of baking colours into the string. */
 const MAILSTR_GLYPH =
   '<svg class="nostr-signer__brand-glyph" viewBox="0 0 64 64" aria-hidden="true">' +
-  '<defs><linearGradient id="signer-mailg" x1="0" y1="0" x2="0" y2="1">' +
-  '<stop offset="0" stop-color="#ff5c00"/><stop offset="1" stop-color="#ffb020"/>' +
-  '</linearGradient></defs>' +
-  '<rect x="4" y="12" width="56" height="40" rx="8" fill="url(#signer-mailg)"/>' +
-  '<path d="M8 18 L32 38 L56 18" fill="none" stroke="#f7f5ef" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>' +
-  '<circle cx="50" cy="14" r="10" fill="#0b0b0c"/>' +
-  '<path d="M50 8.5 L50 19.5 M45.2 11.25 L54.8 16.75 M45.2 16.75 L54.8 11.25" stroke="#ffb020" stroke-width="2.4" stroke-linecap="round"/>' +
+  '<rect class="glyph-env" x="4" y="12" width="56" height="40" rx="8"/>' +
+  '<path class="glyph-flap" d="M8 18 L32 38 L56 18" fill="none" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+  '<circle class="glyph-disc" cx="50" cy="14" r="10"/>' +
+  '<path class="glyph-spark" d="M50 8.5 L50 19.5 M45.2 11.25 L54.8 16.75 M45.2 16.75 L54.8 11.25" stroke-width="2.4" stroke-linecap="round"/>' +
   '</svg>'
 
 /**

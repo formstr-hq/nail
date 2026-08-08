@@ -3,53 +3,74 @@
 @tailwind utilities;
 
 /* ------------------------------------------------------------------ */
-/* Graph Paper — the client speaking the landing page's visual language: */
-/* ink on paper, hairline rules, a faint engineering grid, and orange    */
-/* spent only where it reports state.                                    */
+/* Graph Paper — the client speaking the suite's visual language.        */
+/* "Calm paper, loud ink": a monochrome canvas where structure comes     */
+/* from weight, size and space, not colour. The primary action is loud   */
+/* ink (a near-black button), not a hue.                                  */
 /*                                                                       */
-/* Formstr brand: ink #0b0b0c, paper #f7f5ef, primary #ff5c00,           */
-/* primary-light #ff8a00, amber #ffb020.                                 */
+/* Colour is functional, not a brand — spent only where it has a job:    */
+/*   --emphasis   a rare attention hue (the mailstr mark's spark)         */
+/*   --trust      sender proof, its own axis, deliberately not emphasis   */
+/*   --destructive  danger / errors                                       */
+/* Everything else is ink, paper and grey. See landing/DESIGN.md.        */
 /*                                                                       */
 /* Values stay as space-separated HSL triplets rather than hex so        */
 /* Tailwind's `/<alpha-value>` modifiers (bg-primary/90) keep working.    */
 /* ------------------------------------------------------------------ */
 @layer base {
   :root {
-    --background: 45 33% 95%;
-    --foreground: 240 4% 5%;
+    --background: 40 6% 95%;
+    --foreground: 240 6% 4%;
     --card: 0 0% 100%;
-    --card-foreground: 240 4% 5%;
-    --border: 46 24% 86%;
-    --input: 46 24% 82%;
-    --ring: 22 100% 50%;
-    --primary: 22 100% 50%;
+    --card-foreground: 240 6% 4%;
+    --border: 40 5% 88%;
+    --input: 40 5% 84%;
+    /* Focus ring is ink, not a hue: a coloured ring on an input reads as a
+       status. Structure over colour, all the way down to the affordances. */
+    --ring: 240 6% 22%;
+    /* Primary is loud ink — the near-black button, not a colour. */
+    --primary: 240 6% 8%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 45 25% 91%;
-    --secondary-foreground: 240 4% 5%;
-    --muted: 45 25% 91%;
-    --muted-foreground: 44 8% 27%;
-    --accent: 25 79% 92%;
-    --accent-foreground: 22 90% 30%;
-    --destructive: 0 72% 42%;
-    --destructive-foreground: 210 20% 98%;
+    --secondary: 40 6% 91%;
+    --secondary-foreground: 240 6% 8%;
+    --muted: 40 6% 91%;
+    --muted-foreground: 45 4% 40%;
+    /* `accent` here is shadcn's hover/active surface, not an attention hue —
+       kept neutral grey so it never competes with --emphasis. */
+    --accent: 40 6% 90%;
+    --accent-foreground: 240 6% 8%;
+    --destructive: 0 70% 45%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Emphasis — the one attention hue, spent sparingly where we most want the
+       eye: the mailstr mark's spark, and the single filled action button
+       (Compose). Functional, not a brand colour. See DESIGN.md.
+       emphasis-foreground is the text/mark laid on top of it. */
+    --emphasis: 359 74% 59%;
+    --emphasis-foreground: 0 0% 100%;
     --radius: 0.375rem;
 
     /* Three panes, three grounds — nav recedes, list sits between, the
        reading pane is the sheet you actually write on. */
-    --surface-nav: 45 32% 93%;
-    --surface-list: 48 38% 97%;
+    --surface-nav: 40 6% 92%;
+    --surface-list: 40 7% 96%;
     --surface-read: 0 0% 100%;
 
     /* Faintest ink — timestamps, npubs, provenance. Distinct from
        --muted-foreground, which still has to pass contrast as body text. */
-    --subtle: 41 6% 51%;
+    --subtle: 45 4% 55%;
 
-    /* Trust is its own axis, deliberately not the accent: orange already
-       means "state changed", and a proved sender must not read as a
-       notification. Only the proved case is coloured — an unproved sender
-       is the common case and gets plain neutral text, not an alarm. */
+    /* Trust is its own axis, deliberately not emphasis: emphasis means
+       "look here", and a proved sender must not read as an alert. Only the
+       proved case is coloured — an unproved sender is the common case and
+       gets plain neutral text, not an alarm. */
     --trust: 152 39% 30%;
     --trust-muted: 136 26% 92%;
+
+    /* Healthy/live status — the good counterpart to --destructive (e.g. the
+       relay indicator when we're listening). A different job than --trust:
+       "the system is live" vs "this sender is who they claim". */
+    --positive: 145 63% 38%;
 
     /* Ruling on the reading pane. Alpha-baked rather than tokenised —
        it is a texture, not a colour anything else refers to. Kept low enough
@@ -58,34 +79,39 @@
   }
 
   .dark {
-    --background: 240 4% 5%;
-    --foreground: 39 35% 92%;
-    --card: 30 6% 7%;
-    --card-foreground: 39 35% 92%;
-    --border: 34 10% 14%;
-    --input: 34 10% 18%;
-    --ring: 22 100% 59%;
-    --primary: 22 100% 59%;
-    --primary-foreground: 24 40% 6%;
-    --secondary: 30 6% 11%;
-    --secondary-foreground: 39 35% 92%;
-    --muted: 30 6% 11%;
-    --muted-foreground: 37 12% 61%;
-    --accent: 30 29% 11%;
-    --accent-foreground: 39 100% 62%;
-    --destructive: 0 65% 62%;
-    --destructive-foreground: 24 40% 6%;
+    --background: 0 0% 7%;
+    --foreground: 60 5% 95%;
+    --card: 0 0% 10%;
+    --card-foreground: 60 5% 95%;
+    --border: 0 0% 17%;
+    --input: 0 0% 22%;
+    --ring: 0 0% 75%;
+    /* Loud ink inverts to loud light on a dark ground: a near-white button. */
+    --primary: 0 0% 92%;
+    --primary-foreground: 0 0% 8%;
+    --secondary: 0 0% 14%;
+    --secondary-foreground: 60 5% 95%;
+    --muted: 0 0% 14%;
+    --muted-foreground: 40 6% 63%;
+    --accent: 0 0% 15%;
+    --accent-foreground: 60 5% 95%;
+    --destructive: 0 65% 60%;
+    --destructive-foreground: 0 0% 8%;
 
-    /* Warm dark, not neutral: the grounds keep a trace of the paper's
-       yellow so orange sits in the same family rather than on top of it. */
-    --surface-nav: 0 0% 3%;
-    --surface-list: 0 3% 6%;
-    --surface-read: 30 6% 7%;
+    --emphasis: 359 74% 64%;
+    --emphasis-foreground: 0 0% 8%;
 
-    --subtle: 35 8% 44%;
+    /* Neutral dark grounds — nav darkest, list between, read pane raised. */
+    --surface-nav: 0 0% 5%;
+    --surface-list: 0 0% 8%;
+    --surface-read: 0 0% 10%;
+
+    --subtle: 45 4% 52%;
 
     --trust: 146 33% 62%;
-    --trust-muted: 150 29% 12%;
+    --trust-muted: 150 20% 13%;
+
+    --positive: 145 55% 55%;
 
     --grid-line: rgb(255 255 255 / 0.045);
   }
@@ -289,8 +315,24 @@ div.nostr-signer__root {
   color: hsl(var(--primary));
 }
 .nostr-signer__root .nostr-signer__tab--create .nostr-signer__tab-icon {
-  background: linear-gradient(180deg, #ff5c00, #ffb020);
-  color: #fff;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+/* The injected mailstr mark (LoginPage.MAILSTR_GLYPH). Coloured here, from
+   theme tokens, so the envelope and its spark track light/dark instead of
+   being baked into the SVG string. */
+.nostr-signer__brand-glyph .glyph-env {
+  fill: hsl(var(--foreground));
+}
+.nostr-signer__brand-glyph .glyph-flap {
+  stroke: hsl(var(--card));
+}
+.nostr-signer__brand-glyph .glyph-disc {
+  fill: hsl(var(--card));
+}
+.nostr-signer__brand-glyph .glyph-spark {
+  stroke: hsl(var(--emphasis));
 }
 
 /* mono eyebrow divider — same register as the landing's section labels */

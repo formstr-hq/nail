@@ -26,7 +26,10 @@ function framed(html: string, allowRemote: boolean, dark: boolean): string {
   // reading pane and messages that set their own colours are left alone; only
   // the defaults (text, links, native controls) track light/dark.
   const fg = dark ? '#e6e6e6' : '#0b0b0c'
-  const link = dark ? '#ff9d5c' : '#c24a00'
+  // Links stay ink and lean on the underline for affordance — colour is
+  // functional here too, and a coloured link in arbitrary mail would compete
+  // with the app's own meaning for colour. Underline carries the "link".
+  const link = fg
   // `<base target="_blank">` sends every link to a new tab instead of replacing
   // the frame's own document; the sandbox flags below are what let that popup
   // actually open and land as a normal (un-sandboxed) page.

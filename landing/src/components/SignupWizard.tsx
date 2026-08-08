@@ -322,7 +322,7 @@ export default function SignupWizard({
               {step === "login" && "Sign in with your Nostr key"}
               {step === "name" && "Pick your address"}
               {step === "pay" && "One payment, and it's yours"}
-              {step === "done" && "Welcome to Mailstr"}
+              {step === "done" && "Welcome to Mail by Formstr"}
             </h3>
             <p className="mt-0.5 text-sm text-gray-500">
               {step === "login" &&

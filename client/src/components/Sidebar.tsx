@@ -57,7 +57,7 @@ function RelayState({ status }: { status: InboxStatus }) {
 
   return (
     <div className="flex items-center gap-1.5 px-1 pt-2 font-mono text-[10px] text-subtle">
-      <span className="h-1.5 w-1.5 flex-none rounded-full bg-primary" />
+      <span className="h-1.5 w-1.5 flex-none rounded-full bg-positive" />
       <span className="truncate">
         {status.relays.length} {status.relays.length === 1 ? 'relay' : 'relays'}
         {status.decoding > 0 && ` · reading ${status.decoding}`}
@@ -99,7 +99,15 @@ export function Sidebar({ onCompose, onSettings, status }: SidebarProps) {
       </div>
 
       <div className="px-3 pb-4">
-        <Button variant="primary" onClick={onCompose} className="w-full">
+        {/* The one hero action — it wears the action colour, and being the
+            single filled, raised control is what makes it read as "the thing
+            to do". A clean neutral shadow lifts it off the flat nav; the pop is
+            the colour, not a glow. */}
+        <Button
+          variant="action"
+          onClick={onCompose}
+          className="h-9 w-full shadow-md transition-all hover:-translate-y-px hover:shadow-lg active:translate-y-0 active:shadow"
+        >
           <PenIcon className="h-3.5 w-3.5" />
           Write
         </Button>

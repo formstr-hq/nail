@@ -1,11 +1,15 @@
 import type { ButtonHTMLAttributes } from 'react'
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
+type Variant = 'primary' | 'action' | 'secondary' | 'ghost' | 'danger'
 type Size = 'sm' | 'md'
 
 const VARIANT: Record<Variant, string> = {
   primary:
     'bg-primary text-primary-foreground border-primary hover:bg-primary/90 disabled:hover:bg-primary',
+  // The one filled call to act (Compose): the attention hue, distinct from
+  // primary's neutral ink. Emphasis does double duty — mark spark and action.
+  action:
+    'bg-emphasis text-emphasis-foreground border-emphasis hover:bg-emphasis/90 disabled:hover:bg-emphasis',
   secondary: 'bg-card text-foreground border-input hover:bg-accent disabled:hover:bg-card',
   ghost: 'bg-transparent text-muted-foreground border-transparent hover:bg-accent hover:text-foreground',
   danger: 'bg-transparent text-destructive border-transparent hover:bg-destructive/10',

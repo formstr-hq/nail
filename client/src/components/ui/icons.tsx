@@ -4,7 +4,7 @@
  * Kept local rather than pulled from an icon package: the client uses a dozen
  * glyphs and a dependency for that would ship a few hundred it never renders.
  */
-import { useId, type SVGProps } from 'react'
+import { type SVGProps } from 'react'
 
 function Icon({ children, ...props }: SVGProps<SVGSVGElement>) {
   return (
@@ -168,28 +168,30 @@ export const InboxIcon = (p: SVGProps<SVGSVGElement>) => (
  * whichever came first, and the envelope loses its fill.
  */
 export function BrandGlyph({ size = 22 }: { size?: number }) {
-  const gradientId = `mailstr-mark-${useId()}`
+  // Monochrome + one spark, tracking the theme: the envelope is ink (paper in
+  // dark), its cut-out disc is the ground behind it, the asterisk is emphasis.
   return (
     <svg viewBox="0 0 64 64" width={size} height={size} aria-hidden="true">
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#ff5c00" />
-          <stop offset="1" stopColor="#ffb020" />
-        </linearGradient>
-      </defs>
-      <rect x="4" y="12" width="56" height="40" rx="8" fill={`url(#${gradientId})`} />
+      <rect
+        x="4"
+        y="12"
+        width="56"
+        height="40"
+        rx="8"
+        className="fill-foreground"
+      />
       <path
         d="M8 18 L32 38 L56 18"
         fill="none"
-        stroke="#f7f5ef"
+        className="stroke-background"
         strokeWidth="4.5"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <circle cx="50" cy="14" r="10" fill="#0b0b0c" />
+      <circle cx="50" cy="14" r="10" className="fill-background" />
       <path
         d="M50 8.5 L50 19.5 M45.2 11.25 L54.8 16.75 M45.2 16.75 L54.8 11.25"
-        stroke="#ffb020"
+        className="stroke-emphasis"
         strokeWidth="2.4"
         strokeLinecap="round"
       />

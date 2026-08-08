@@ -59,7 +59,7 @@ export function Avatar({ label, picture, size = 32, className = '' }: AvatarProp
     <span
       aria-hidden="true"
       style={box}
-      className={`grid flex-none place-items-center rounded-md bg-gradient-to-b from-[#ff5c00] to-[#ffb020] font-bold text-white ${className}`}
+      className={`grid flex-none place-items-center rounded-md bg-secondary font-bold text-foreground ${className}`}
     >
       {initials(label)}
     </span>

@@ -22,9 +22,17 @@ export default {
           DEFAULT: 'hsl(var(--muted))',
           foreground: 'hsl(var(--muted-foreground))',
         },
+        // shadcn's hover/active surface, kept neutral — not an attention hue.
         accent: {
           DEFAULT: 'hsl(var(--accent))',
           foreground: 'hsl(var(--accent-foreground))',
+        },
+        // The one attention hue — the mark's spark and the single filled
+        // action button (Compose). Functional, not a brand colour. See
+        // landing/DESIGN.md.
+        emphasis: {
+          DEFAULT: 'hsl(var(--emphasis))',
+          foreground: 'hsl(var(--emphasis-foreground))',
         },
         destructive: {
           DEFAULT: 'hsl(var(--destructive))',
@@ -41,6 +49,9 @@ export default {
           list: 'hsl(var(--surface-list))',
           read: 'hsl(var(--surface-read))',
         },
+        // Healthy/live status (e.g. relays listening) — the good counterpart
+        // to destructive. A different job than trust; see index.css.
+        positive: 'hsl(var(--positive))',
         // Faintest legible ink: timestamps, npubs, provenance.
         subtle: 'hsl(var(--subtle))',
         // Sender proof. Its own axis, deliberately not the accent.
