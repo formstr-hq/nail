@@ -5,6 +5,10 @@
   --font-sans: "Inter", system-ui, -apple-system, sans-serif;
   --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
 
+  /* Small-phone breakpoint (iPhone SE is 375px) — lets the nav shed its
+     roomier labels below this width instead of overflowing. */
+  --breakpoint-xs: 26rem;
+
   /* "Calm paper, loud ink." The system is monochrome; colour is functional,
      not a brand — reach for whatever hue does the job in a given spot
      (emphasis, status, a mark) and keep it rare. Name each colour token for

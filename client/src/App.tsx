@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { useMailStore } from '@/store/mail'
@@ -7,7 +7,7 @@ import { useResolveContext } from '@/hooks/useResolveContext'
 import { useOwnedAddresses } from '@/hooks/useOwnedAddresses'
 import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
 import type { Draft } from '@/lib/mail/draft'
-import { LoginPage } from '@/components/LoginPage'
+import { LoginPage, SignerLogin } from '@/components/LoginPage'
 import { Sidebar } from '@/components/Sidebar'
 import { EmailList } from '@/components/EmailList'
 import { EmailView } from '@/components/EmailView'
@@ -22,6 +22,8 @@ function MailApp() {
   const [composeMinimized, setComposeMinimized] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [navOpen, setNavOpen] = useState(false)
+  // The signer login shown over the app to add a second account.
+  const [addingAccount, setAddingAccount] = useState(false)
 
   const { account, active } = useAccountStore()
   const { load, settings } = useSettingsStore()
@@ -35,12 +37,24 @@ function MailApp() {
     load(account.pubkey, active).catch(console.error)
   }, [account, active, load])
 
-  // Everything that is "me", so Reply all never copies the sender to themselves.
-  const selfAddresses = [
-    account ? `${account.npub}@${BRIDGE_DOMAIN}` : '',
-    settings.senderAddress ?? '',
-    ...addresses,
-  ].filter(Boolean)
+  // Every address this account owns: the default npub mailbox, a configured
+  // sender address, and any NIP-05 aliases — deduped, case-insensitively,
+  // keeping first-seen order (npub mailbox first). Doubles as "everything that
+  // is me" for Reply-all and as the per-alias inbox list in the sidebar.
+  const selfAddresses = useMemo(() => {
+    const candidates = [
+      account ? `${account.npub}@${BRIDGE_DOMAIN}` : '',
+      settings.senderAddress ?? '',
+      ...addresses,
+    ].filter(Boolean)
+    const seen = new Set<string>()
+    return candidates.filter((a) => {
+      const key = a.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }, [account, settings.senderAddress, addresses])
 
   function openCompose(draft: Draft) {
     setCompose(draft)
@@ -81,6 +95,8 @@ function MailApp() {
           <Sidebar
             onCompose={startCompose}
             onSettings={() => setShowSettings(true)}
+            onAddAccount={() => setAddingAccount(true)}
+            aliases={selfAddresses}
             status={status}
           />
         </div>
@@ -100,6 +116,11 @@ function MailApp() {
                   setShowSettings(true)
                   setNavOpen(false)
                 }}
+                onAddAccount={() => {
+                  setAddingAccount(true)
+                  setNavOpen(false)
+                }}
+                aliases={selfAddresses}
                 status={status}
               />
             </div>
@@ -137,6 +158,19 @@ function MailApp() {
         />
       )}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+
+      {/* Adding an account switches the active one on success, so wipe the
+          previous inbox and close the overlay. The signer modal renders its
+          own full-screen layer; no wrapper needed. */}
+      {addingAccount && (
+        <SignerLogin
+          onLoggedIn={() => {
+            useMailStore.getState().clear()
+            setAddingAccount(false)
+          }}
+          onCancel={() => setAddingAccount(false)}
+        />
+      )}
     </div>
   )
 }

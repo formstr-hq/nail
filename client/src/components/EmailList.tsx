@@ -1,5 +1,6 @@
 import { useMailStore } from '@/store/mail'
 import { useAccountStore } from '@/store/account'
+import { matchesAlias } from '@/lib/mail/aliasFilter'
 import type { Email, EmailFolder } from '@/types/mail'
 import type { InboxStatus } from '@/hooks/useInbox'
 import { SenderProofLine } from '@/components/ui/SenderProof'
@@ -121,11 +122,14 @@ function ListState({
 }
 
 export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: () => void }) {
-  const { emails, folder, selectedId, query, setQuery } = useMailStore()
+  const { emails, folder, selectedId, query, setQuery, inboxFilter } = useMailStore()
   const myPubkey = useAccountStore((s) => s.account?.pubkey)
 
   const inFolder = Object.values(emails)
     .filter((e) => {
+      // Scope to the selected alias first, so every folder count and list
+      // reflects the inbox the user picked.
+      if (!matchesAlias(e, inboxFilter)) return false
       if (folder === 'trash') return e.labels.includes('trash')
       if (folder === 'archive') return e.labels.includes('archive')
       if (folder === 'spam') return e.labels.includes('spam')

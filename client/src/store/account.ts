@@ -2,14 +2,18 @@ import { create } from 'zustand'
 import type { ActiveSigner, StoredAccount } from '@formstr/signer'
 import { nostrSigner, withSignerTimeout } from '@/lib/nostr/signer'
 import { getSignerPool } from '@/lib/nostr/signerPool'
+import { useMailStore } from '@/store/mail'
 
 interface AccountState {
   account: StoredAccount | null
   active: ActiveSigner | null
+  /** Every persisted account, for the in-app user switcher. */
+  accounts: StoredAccount[]
   ready: boolean
   init: () => Promise<void>
   refresh: () => void
   unlockNcryptsec: (passphrase: string) => Promise<void>
+  switchTo: (pubkey: string) => Promise<void>
   logout: () => Promise<void>
 }
 
@@ -61,6 +65,7 @@ async function warmUpRemoteSigner(active: ActiveSigner, pubkey: string): Promise
 export const useAccountStore = create<AccountState>()((set, get) => ({
   account: null,
   active: null,
+  accounts: [],
   ready: false,
 
   // No global onChange subscription: createAccount() emits 'login' while the
@@ -103,13 +108,19 @@ export const useAccountStore = create<AccountState>()((set, get) => ({
       // resume failed — account stays locked, LoginPage handles re-auth
       active = null
     }
-    set({ account: nostrSigner.getActiveAccount(), active, ready: true })
+    set({
+      account: nostrSigner.getActiveAccount(),
+      active,
+      accounts: nostrSigner.listAccounts(),
+      ready: true,
+    })
   },
 
   refresh: () =>
     set({
       account: nostrSigner.getActiveAccount(),
       active: nostrSigner.getActiveSigner(),
+      accounts: nostrSigner.listAccounts(),
     }),
 
   unlockNcryptsec: async (passphrase) => {
@@ -119,8 +130,50 @@ export const useAccountStore = create<AccountState>()((set, get) => ({
     get().refresh()
   },
 
+  /**
+   * Make another already-signed-in account the active one.
+   *
+   * `switchAccount` clears the in-memory signer — the target account starts
+   * locked — so we immediately try the same silent unlock `init` uses. For an
+   * extension / NIP-46 / Android account that reconstructs a working signer
+   * (with the bunker warm-up so its first decrypt isn't lost). An `ncryptsec`
+   * account can't be unlocked without its passphrase: `active` stays null,
+   * App falls back to LoginPage, and its UnlockForm prompts for exactly this
+   * now-active account. Either way the previous account's mail is cleared so
+   * the two inboxes never bleed together.
+   */
+  switchTo: async (pubkey) => {
+    if (pubkey === get().account?.pubkey) return
+    await nostrSigner.switchAccount(pubkey)
+    useMailStore.getState().clear()
+
+    let active: ActiveSigner | null = null
+    try {
+      active = await nostrSigner.unlock({ pool: getSignerPool() })
+      const account = nostrSigner.getActiveAccount()
+      if (active && account) {
+        const pk = await active.getPublicKey()
+        if (pk !== account.pubkey) active = null
+        if (account.method === 'extension' && !window.nostr?.nip44) active = null
+        if (active && account.method === 'nip46') {
+          const reachable = await warmUpRemoteSigner(active, account.pubkey)
+          if (!reachable) active = null
+        }
+      }
+    } catch {
+      active = null
+    }
+
+    set({
+      account: nostrSigner.getActiveAccount(),
+      active,
+      accounts: nostrSigner.listAccounts(),
+    })
+  },
+
   logout: async () => {
     await nostrSigner.logout()
+    useMailStore.getState().clear()
     get().refresh()
   },
 }))

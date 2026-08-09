@@ -1,17 +1,10 @@
-import { useState } from 'react'
 import { useMailStore } from '@/store/mail'
 import { useAccountStore } from '@/store/account'
-import { useProfile } from '@/hooks/useProfile'
+import { AccountSwitcher } from '@/components/AccountSwitcher'
+import { matchesAlias } from '@/lib/mail/aliasFilter'
 import type { EmailFolder } from '@/types/mail'
 import type { InboxStatus } from '@/hooks/useInbox'
-import {
-  BrandGlyph,
-  PenIcon,
-  SettingsIcon,
-  LogOutIcon,
-  CopyIcon,
-  CheckIcon,
-} from '@/components/ui/icons'
+import { BrandGlyph, PenIcon, SettingsIcon, InboxIcon, AtSignIcon } from '@/components/ui/icons'
 import { Button, IconButton } from '@/components/ui/Button'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 
@@ -26,6 +19,9 @@ const FOLDERS: { id: EmailFolder; label: string }[] = [
 interface SidebarProps {
   onCompose: () => void
   onSettings: () => void
+  onAddAccount: () => void
+  /** The account's own addresses, for the per-alias inbox filter. */
+  aliases: string[]
   status: InboxStatus
 }
 
@@ -66,28 +62,21 @@ function RelayState({ status }: { status: InboxStatus }) {
   )
 }
 
-export function Sidebar({ onCompose, onSettings, status }: SidebarProps) {
-  const { folder, setFolder, emails } = useMailStore()
-  const { account, logout } = useAccountStore()
-  const profile = useProfile(account?.pubkey)
-  const [copied, setCopied] = useState(false)
+export function Sidebar({ onCompose, onSettings, onAddAccount, aliases, status }: SidebarProps) {
+  const { folder, setFolder, emails, inboxFilter, setInboxFilter } = useMailStore()
+  const { account } = useAccountStore()
 
   // The badge sits on the Inbox row, so it must count Inbox mail specifically —
   // the same predicate EmailList uses for the inbox folder. A global count also
   // tallies the self-copy every send wraps to us (which files under Sent),
-  // showing an Inbox badge for a message the Inbox list never renders.
+  // showing an Inbox badge for a message the Inbox list never renders. It also
+  // respects the active alias filter, so the badge matches what the list shows.
   const myPubkey = account?.pubkey
   const unread = Object.values(emails).filter((e) => {
     const unlabeled = !e.labels.some((l) => ['trash', 'archive', 'spam'].includes(l))
-    return unlabeled && e.senderPubkey !== myPubkey && !e.read
+    if (!(unlabeled && e.senderPubkey !== myPubkey && !e.read)) return false
+    return matchesAlias(e, inboxFilter)
   }).length
-
-  async function copyNpub() {
-    if (!account) return
-    await navigator.clipboard.writeText(account.npub)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }
 
   return (
     <aside className="flex h-full w-full flex-col border-r border-border bg-surface-nav">
@@ -113,72 +102,112 @@ export function Sidebar({ onCompose, onSettings, status }: SidebarProps) {
         </Button>
       </div>
 
-      <nav aria-label="Mail folders" className="flex flex-col gap-px px-2">
-        <div className="eyebrow px-2 pb-1.5">Folders</div>
-        {FOLDERS.map((f) => {
-          const active = folder === f.id
-          return (
-            <button
-              key={f.id}
-              type="button"
-              onClick={() => setFolder(f.id)}
-              aria-current={active ? 'page' : undefined}
-              className={[
-                'flex items-center justify-between rounded-md border-l-2 px-2.5 py-1.5 text-[13px]',
-                'transition-colors duration-[120ms]',
-                active
-                  ? 'border-l-primary bg-accent font-semibold text-foreground'
-                  : 'border-l-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-              ].join(' ')}
-            >
-              <span>{f.label}</span>
-              {f.id === 'inbox' && unread > 0 && (
-                <span
-                  className={[
-                    'font-mono text-[10px] font-semibold tabular-nums',
-                    active ? 'text-primary' : 'text-subtle',
-                  ].join(' ')}
-                >
-                  {unread}
-                </span>
-              )}
-            </button>
-          )
-        })}
-      </nav>
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-2">
+        {/* One row per address the account owns, so a user juggling several
+            aliases can read each as its own inbox. Hidden when there is only
+            the default address — a filter with a single option is just noise. */}
+        {aliases.length > 1 && (
+          <nav aria-label="Inboxes" className="flex flex-col gap-px px-2">
+            <div className="eyebrow px-2 pb-1.5">Inboxes</div>
+            <InboxOption
+              icon={<InboxIcon className="h-3.5 w-3.5 flex-none" />}
+              label="All mail"
+              active={inboxFilter === null}
+              onClick={() => setInboxFilter(null)}
+            />
+            {aliases.map((address) => (
+              <InboxOption
+                key={address}
+                icon={<AtSignIcon className="h-3.5 w-3.5 flex-none" />}
+                label={address}
+                mono
+                active={inboxFilter === address.toLowerCase()}
+                onClick={() => setInboxFilter(address)}
+              />
+            ))}
+          </nav>
+        )}
+
+        <nav aria-label="Mail folders" className="flex flex-col gap-px px-2">
+          <div className="eyebrow px-2 pb-1.5">Folders</div>
+          {FOLDERS.map((f) => {
+            const active = folder === f.id
+            return (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => setFolder(f.id)}
+                aria-current={active ? 'page' : undefined}
+                className={[
+                  'flex items-center justify-between rounded-md border-l-2 px-2.5 py-1.5 text-[13px]',
+                  'transition-colors duration-[120ms]',
+                  active
+                    ? 'border-l-primary bg-accent font-semibold text-foreground'
+                    : 'border-l-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                ].join(' ')}
+              >
+                <span>{f.label}</span>
+                {f.id === 'inbox' && unread > 0 && (
+                  <span
+                    className={[
+                      'font-mono text-[10px] font-semibold tabular-nums',
+                      active ? 'text-primary' : 'text-subtle',
+                    ].join(' ')}
+                  >
+                    {unread}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </nav>
+      </div>
 
       <div className="mt-auto border-t border-border px-3 pb-3 pt-3">
-        <div className="eyebrow px-1">Signed in as</div>
-        <div className="flex items-center gap-1.5 px-1 pt-1">
-          <span
-            className={[
-              'min-w-0 flex-1 truncate text-[12.5px] font-medium text-foreground',
-              // With no kind-0 name the key itself is the identity, so it is
-              // set in mono like every other key in the interface.
-              profile.name ? '' : 'font-mono text-[10.5px] text-subtle',
-            ].join(' ')}
-            title={account?.npub}
-          >
-            {profile.name ?? account?.npub}
-          </span>
-          <IconButton title={copied ? 'Copied' : 'Copy your npub'} onClick={copyNpub}>
-            {copied ? (
-              <CheckIcon className="h-3.5 w-3.5 text-trust" />
-            ) : (
-              <CopyIcon className="h-3.5 w-3.5" />
-            )}
-          </IconButton>
-        </div>
+        <AccountSwitcher onAddAccount={onAddAccount} />
         <RelayState status={status} />
         <div className="flex items-center gap-1 pt-2">
           <IconButton title="Settings" onClick={onSettings}>
             <SettingsIcon className="h-4 w-4" />
           </IconButton>
-          <IconButton title="Sign out" onClick={() => void logout()}>
-            <LogOutIcon className="h-4 w-4" />
-          </IconButton>
         </div>
       </div>
     </aside>
+  )
+}
+
+/** A single row in the Inboxes list — the "All mail" toggle or one alias. */
+function InboxOption({
+  icon,
+  label,
+  active,
+  mono = false,
+  onClick,
+}: {
+  icon: React.ReactNode
+  label: string
+  active: boolean
+  mono?: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-current={active ? 'true' : undefined}
+      title={label}
+      className={[
+        'flex items-center gap-2 rounded-md border-l-2 px-2.5 py-1.5 text-left',
+        'transition-colors duration-[120ms]',
+        active
+          ? 'border-l-primary bg-accent font-semibold text-foreground'
+          : 'border-l-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+      ].join(' ')}
+    >
+      <span className={active ? 'text-primary' : 'text-subtle'}>{icon}</span>
+      <span className={['min-w-0 flex-1 truncate', mono ? 'font-mono text-[11px]' : 'text-[13px]'].join(' ')}>
+        {label}
+      </span>
+    </button>
   )
 }

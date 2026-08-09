@@ -152,6 +152,25 @@ export const CheckIcon = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
+export const ChevronDownIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="m6 9 6 6 6-6" />
+  </Icon>
+)
+
+export const PlusIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M5 12h14M12 5v14" />
+  </Icon>
+)
+
+export const AtSignIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8" />
+  </Icon>
+)
+
 export const InboxIcon = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M22 12h-6l-2 3h-4l-2-3H2" />

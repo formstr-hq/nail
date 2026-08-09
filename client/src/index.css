@@ -174,10 +174,34 @@ div.nostr-signer__root {
 }
 
 .nostr-signer__root .nostr-signer__modal {
+  position: relative;
   background: hsl(var(--card));
   color: hsl(var(--card-foreground));
   border: 1px solid hsl(var(--border));
   border-radius: 16px;
+}
+
+/* Floating dismiss, injected by SignerLogin only when the modal is shown over
+   the app to add an account (the stock header close is hidden — see below). */
+.nostr-signer__root .nostr-signer__cancel-fab {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.nostr-signer__root .nostr-signer__cancel-fab:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--foreground));
 }
 
 .nostr-signer__root .nostr-signer__title {

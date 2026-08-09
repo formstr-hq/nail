@@ -45,11 +45,17 @@ interface MailState {
   selectedId: string | null
   folder: EmailFolder
   query: string
+  // Which of the account's own addresses to show mail for, lowercased, or
+  // `null` for "all mail". Every message still arrives at the one Nostr key;
+  // this filters the view by which alias it was addressed from/to.
+  inboxFilter: string | null
   addEmail: (email: Email) => void
   markRead: (id: string) => void
   setFolder: (folder: EmailFolder) => void
   setSelected: (id: string | null) => void
   setQuery: (query: string) => void
+  setInboxFilter: (address: string | null) => void
+  clear: () => void
 }
 
 export const useMailStore = create<MailState>()((set, get) => ({
@@ -59,6 +65,7 @@ export const useMailStore = create<MailState>()((set, get) => ({
   selectedId: null,
   folder: 'inbox',
   query: '',
+  inboxFilter: null,
 
   addEmail: (email) => {
     if (get().seenIds.has(email.id)) return
@@ -88,4 +95,23 @@ export const useMailStore = create<MailState>()((set, get) => ({
   setFolder: (folder) => set({ folder, selectedId: null, query: '' }),
   setSelected: (id) => set({ selectedId: id }),
   setQuery: (query) => set({ query }),
+
+  // Changing the visible alias also drops the open message and any search —
+  // both were scoped to the previous view and rarely mean the same thing here.
+  setInboxFilter: (address) =>
+    set({ inboxFilter: address ? address.toLowerCase() : null, selectedId: null, query: '' }),
+
+  // Wipe everything account-scoped when switching users. `readIds` is keyed by
+  // gift-wrap id (globally unique) and persisted per device, so it deliberately
+  // survives — a message opened under one account stays read if it ever appears
+  // under another.
+  clear: () =>
+    set({
+      emails: {},
+      seenIds: new Set(),
+      selectedId: null,
+      folder: 'inbox',
+      query: '',
+      inboxFilter: null,
+    }),
 }))
