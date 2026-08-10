@@ -79,7 +79,7 @@ export function Navbar() {
 const facts = [
   { icon: Lock, text: "Stored encrypted to your key" },
   { icon: Radio, text: "On relays you choose" },
-  { icon: KeyRound, text: "No password — sign in with your key" },
+  { icon: KeyRound, text: "Sign in with your own key" },
 ];
 
 function Hero() {
@@ -97,7 +97,7 @@ function Hero() {
 
         <p className="mx-auto mt-5 max-w-xl text-base leading-relaxed text-gray-600 sm:text-lg">
           Mail to you@{config.mailDomain} is stored encrypted to your key, on
-          relays you choose. You sign in by signing — no password.
+          relays you choose. You sign in with your own key.
         </p>
 
         <div className="mx-auto max-w-xl text-left">
