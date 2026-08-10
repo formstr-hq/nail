@@ -16,9 +16,10 @@ const CTX = { localDomains: ['mailstr.app'], ownDomain: 'mailstr.app', bridgePub
 const ALICE_NPUB = nip19.npubEncode(ALICE_PK)
 
 const base = {
-  // Derived from the key, so ownership is provable without a lookup — keeps
-  // the bulk of these tests independent of the NIP-05 stub.
-  from: { address: `${ALICE_NPUB}@mailstr.app` },
+  // A registered alias owned by ALICE_PK — the realistic From for mail that
+  // goes through the bridge. The default fetch stub below resolves it, so the
+  // bulk of these tests exercise the real NIP-05 path the bridge uses.
+  from: { address: 'alice@mailstr.app' },
   senderPubkey: ALICE_PK,
   subject: 'hi',
   body: 'hello',
@@ -31,7 +32,10 @@ const toBridge = (wraps: Event[]) =>
 
 beforeEach(() => {
   clearProbeCache()
-  vi.stubGlobal('fetch', vi.fn(() => new Response(JSON.stringify({ names: {} }))))
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => new Response(JSON.stringify({ names: { alice: ALICE_PK } }))),
+  )
 })
 afterEach(() => vi.unstubAllGlobals())
 
@@ -146,9 +150,44 @@ describe('buildWraps', () => {
     const bobPk = getPublicKey(generateSecretKey())
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => new Response(JSON.stringify({ names: { bob: bobPk } }))),
+      vi.fn(() => new Response(JSON.stringify({ names: { alice: ALICE_PK, bob: bobPk } }))),
     )
     const { wraps } = await buildWraps({ ...base, to: ['bob@mailstr.app'] })
+    expect(toBridge(wraps)).toHaveLength(0)
+    // recipient + self
+    expect(wraps).toHaveLength(2)
+  })
+
+  // The reported bug: a user logs in with their npub, buys an alias, but the
+  // npub stays the From, so mail to an external address is bounced by the
+  // bridge ("No NIP-05 record for <npub>@…"). The npub IS owned by the key
+  // (ownership passes), but the bridge resolves From over NIP-05 and the npub
+  // localpart is not a registered name. The bridge guard must catch it.
+  it('refuses an npub From for external recipients the bridge would bounce', async () => {
+    const { wraps, errors } = await buildWraps({
+      ...base,
+      from: { address: `${ALICE_NPUB}@mailstr.app` },
+      to: ['b@example.org'],
+    })
+    expect(wraps).toEqual([])
+    expect(errors[0]).toContain(ALICE_NPUB)
+    expect(errors[0]).toMatch(/bridge|external|alias/i)
+  })
+
+  // The same npub From is legal for internal mail: Nostr-direct recipients
+  // never touch the bridge, so the npub is a fine sender there.
+  it('allows an npub From for internal (Nostr-direct) recipients', async () => {
+    const bobPk = getPublicKey(generateSecretKey())
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Response(JSON.stringify({ names: { bob: bobPk } }))),
+    )
+    const { wraps, errors } = await buildWraps({
+      ...base,
+      from: { address: `${ALICE_NPUB}@mailstr.app` },
+      to: ['bob@mailstr.app'],
+    })
+    expect(errors).toEqual([])
     expect(toBridge(wraps)).toHaveLength(0)
     // recipient + self
     expect(wraps).toHaveLength(2)

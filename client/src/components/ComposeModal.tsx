@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
+import { useMailStore } from '@/store/mail'
 import { sendMail } from '@/lib/mail/send'
 import { protocolSigner } from '@/lib/nostr/protocol-signer'
 import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
+import { isNpub, splitAddress } from '@protocol'
+import { isKnownLegacyDomain } from '@/lib/nostr/nip05'
 import type { ResolveContext } from '@/lib/mail/resolve'
 import type { Draft } from '@/lib/mail/draft'
 import { useContacts } from '@/hooks/useContacts'
@@ -17,6 +20,10 @@ interface ComposeModalProps {
   draft?: Draft
   /** The user's own addresses, so the recipient picker never suggests them. */
   selfAddresses: string[]
+  /** Registered NIP-05 aliases this account owns — the only Froms the bridge
+   *  will accept for external recipients. Used to word the guard message and
+   *  to keep the npub out of the bridge path. */
+  ownedAliases: string[]
   // Minimized state is owned by the parent so the "Write" action can restore an
   // already-open composer instead of silently replacing its draft.
   minimized: boolean
@@ -45,11 +52,14 @@ export function ComposeModal({
   ctx,
   draft,
   selfAddresses,
+  ownedAliases,
   minimized,
   setMinimized,
 }: ComposeModalProps) {
   const { account, active } = useAccountStore()
   const { settings } = useSettingsStore()
+  const inboxFilter = useMailStore((s) => s.inboxFilter)
+  const setInboxFilter = useMailStore((s) => s.setInboxFilter)
   const contacts = useContacts(selfAddresses)
 
   // The signature is a stored setting that nothing used to apply. Prefilling
@@ -75,7 +85,60 @@ export function ComposeModal({
   const panelRef = useRef<HTMLDivElement>(null)
 
   const defaultAddress = account ? `${account.npub}@${BRIDGE_DOMAIN}` : ''
-  const fromAddress = settings.senderAddress || defaultAddress
+
+  // App-wide From. Seeded from the inbox the user is viewing (the sidebar's
+  // active alias) so "write from the inbox I'm in" is the default, falling back
+  // to the saved sender address then the npub. It is the npub that used to
+  // silently bounce off the bridge; the guard below now blocks that path. The
+  // picker writes back through the *silent* setter so the sidebar highlight
+  // follows the choice without clearing the email the user has open.
+  const [fromAddress, setFromAddress] = useState(() => {
+    if (inboxFilter) {
+      const match = selfAddresses.find((a) => a.toLowerCase() === inboxFilter)
+      if (match) return match
+    }
+    if (settings.senderAddress) return settings.senderAddress
+    return defaultAddress || selfAddresses[0] || ''
+  })
+  // Selected alias first, the rest in selfAddresses order (npub next, then
+  // owned aliases) — so the dropdown leads with the active sender.
+  const fromOptions = useMemo(() => {
+    const rest = selfAddresses.filter(
+      (a) => a.toLowerCase() !== fromAddress.toLowerCase(),
+    )
+    return fromAddress ? [fromAddress, ...rest] : rest
+  }, [selfAddresses, fromAddress])
+
+  // An npub From is a valid sender for anything reached directly over Nostr
+  // (npubs, and NIP-05 names on any nostr-native domain) but NOT for recipients
+  // the bridge delivers — external email addresses, which only accept a
+  // registered alias sender. Replay that rule client-side so the user gets a
+  // clear message instead of a postmaster bounce. The bridge set is only known
+  // for sure after resolving recipients (send.ts does that authoritatively);
+  // here we pre-block only on the *definite* case — a recipient on a known
+  // legacy email domain — so NIP-05 names on unfamiliar domains are never
+  // falsely flagged. Anything ambiguous is left to send.ts, which surfaces its
+  // own error on Send.
+  const recipients = useMemo(
+    () => to.split(',').map((s) => s.trim()).filter(Boolean),
+    [to],
+  )
+  const hasLegacyRecipient = useMemo(
+    () =>
+      recipients.some((r) => {
+        const parts = splitAddress(r)
+        return (
+          !!parts &&
+          !ctx.localDomains.includes(parts.domain) &&
+          isKnownLegacyDomain(parts.domain)
+        )
+      }),
+    [recipients, ctx.localDomains],
+  )
+  const fromParts = splitAddress(fromAddress)
+  const fromIsNpub = !!fromParts && isNpub(fromParts.localpart)
+  const npubBlocked = fromIsNpub && hasLegacyRecipient
+  const hasAlias = ownedAliases.length > 0
 
   // --- recipient autocomplete over past correspondents ---
   const [recipientFocused, setRecipientFocused] = useState(false)
@@ -222,7 +285,7 @@ export function ComposeModal({
     )
   }
 
-  const canSend = Boolean(to.trim() && subject.trim()) && !sending
+  const canSend = Boolean(to.trim() && subject.trim()) && !sending && !npubBlocked
 
   return (
     <div
@@ -342,12 +405,50 @@ export function ComposeModal({
           </div>
         )}
 
+        {npubBlocked && (
+          <div className="flex items-start gap-2 border-t border-border bg-accent px-3.5 py-2">
+            <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-muted-foreground" />
+            <p className="text-[11.5px] leading-relaxed text-foreground">
+              {hasAlias
+                ? 'External email addresses are delivered through the bridge, which only accepts registered alias senders — your npub can’t reach them. (Your npub still works fine for any recipient reached directly over Nostr: npubs and NIP-05 names.) Pick one of your aliases in From, or remove the external recipient.'
+                : 'External email addresses are delivered through the bridge, which only accepts registered alias senders — your npub can’t reach them. (Your npub still works fine for any recipient reached directly over Nostr: npubs and NIP-05 names.) Buy an alias to send to external email, or remove the external recipient.'}
+            </p>
+          </div>
+        )}
+
         <div className="flex items-center gap-3 border-t border-border px-3.5 py-2.5">
           <div className="min-w-0 flex-1">
             <div className="eyebrow">From</div>
-            <div className="truncate font-mono text-[10.5px] text-subtle" title={fromAddress}>
-              {fromAddress}
-            </div>
+            <select
+              value={fromAddress}
+              onChange={(e) => {
+                setFromAddress(e.target.value)
+                // Mirror the choice into the sidebar highlight (app-wide) without
+                // clearing the open message.
+                setInboxFilter(e.target.value, true)
+              }}
+              className="mt-0.5 w-full max-w-full bg-transparent font-mono text-[10.5px] text-foreground focus:outline-none"
+            >
+              {fromOptions.map((a) => (
+                <option key={a} value={a} className="font-mono">
+                  {a}
+                </option>
+              ))}
+            </select>
+            {/* No purchased alias yet: the npub works for mailstr.app mail, but
+                anything external needs an alias. Nudge to the landing, where
+                aliases are bought (the mail app lives at /mails, so "/" is the
+                signup screen). Opens in a tab so the draft is preserved. */}
+            {!hasAlias && (
+              <a
+                href="/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-1 inline-block text-[10.5px] text-muted-foreground underline hover:text-foreground"
+              >
+                Get an alias →
+              </a>
+            )}
           </div>
           <Button variant="primary" onClick={handleSend} disabled={!canSend}>
             {sending ? 'Sending…' : 'Send'}

@@ -27,6 +27,19 @@ const KNOWN_LEGACY = [
   'yahoo.com', 'proton.me', 'protonmail.com', 'icloud.com', 'me.com', 'aol.com',
 ]
 
+/**
+ * Is `domain` one of the known-not-Nostr email providers? These never serve a
+ * NIP-05 record, so a recipient on one is always delivered through the bridge.
+ * Used by the composer's pre-emptive guard to block an npub From only when a
+ * recipient is *definitely* legacy — avoiding false positives on NIP-05 names
+ * hosted on unfamiliar domains, which resolve directly over Nostr. The
+ * authoritative check is in `buildWraps` (via `resolveRecipients`); this is the
+ * in-composer preview, so it only fires on the certain case.
+ */
+export function isKnownLegacyDomain(domain: string): boolean {
+  return KNOWN_LEGACY.includes(domain.toLowerCase())
+}
+
 function seedNegativeCache(): void {
   for (const domain of KNOWN_LEGACY) {
     cache.set(`__domain__:${domain}`, { pubkey: null, expires: Infinity })

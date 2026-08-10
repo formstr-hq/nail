@@ -153,6 +153,7 @@ function MailApp() {
           ctx={ctx}
           draft={compose}
           selfAddresses={selfAddresses}
+          ownedAliases={addresses}
           minimized={composeMinimized}
           setMinimized={setComposeMinimized}
         />

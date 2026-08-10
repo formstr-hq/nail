@@ -54,7 +54,7 @@ interface MailState {
   setFolder: (folder: EmailFolder) => void
   setSelected: (id: string | null) => void
   setQuery: (query: string) => void
-  setInboxFilter: (address: string | null) => void
+  setInboxFilter: (address: string | null, keepSelection?: boolean) => void
   clear: () => void
 }
 
@@ -98,8 +98,15 @@ export const useMailStore = create<MailState>()((set, get) => ({
 
   // Changing the visible alias also drops the open message and any search —
   // both were scoped to the previous view and rarely mean the same thing here.
-  setInboxFilter: (address) =>
-    set({ inboxFilter: address ? address.toLowerCase() : null, selectedId: null, query: '' }),
+  // `keepSelection` is for the composer's app-wide From switcher: it mirrors the
+  // choice into the sidebar highlight without yanking away the email the user
+  // is mid-compose against. Navigation from the sidebar still clears.
+  setInboxFilter: (address, keepSelection) =>
+    set(
+      keepSelection
+        ? { inboxFilter: address ? address.toLowerCase() : null }
+        : { inboxFilter: address ? address.toLowerCase() : null, selectedId: null, query: '' },
+    ),
 
   // Wipe everything account-scoped when switching users. `readIds` is keyed by
   // gift-wrap id (globally unique) and persisted per device, so it deliberately

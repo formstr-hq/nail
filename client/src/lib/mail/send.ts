@@ -18,15 +18,22 @@ import type { MailAddress } from '@/types/mail'
 /**
  * Does the signing key actually own the address it wants to send as?
  *
- * Deliberately the same test the bridge applies — NIP-05 record for the
- * address must resolve to the sending key — so the client cannot accept a
- * `From` the bridge will reject, or vice versa. Divergence here would either
- * produce silent bounces or lull us into thinking the client is enforcing
- * something it isn't.
+ * This is the ownership check for the *direct* (Nostr-native) path: a From the
+ * key does not own would display as unverified to Nostr recipients, which is
+ * confusing rather than informative. The npub shortcut is intentional here —
+ * an npub address IS the key, so ownership is provable without a lookup, and
+ * the npub is a legitimate sender for internal mail.
  *
- * This is a UX guard, not the security boundary. The bridge enforces the same
- * rule against `seal.pubkey`, which is the only version an attacker cannot
- * route around; a modified client can skip this entirely.
+ * It is deliberately NOT the bridge authorization. The bridge rejects any From
+ * that is not a registered NIP-05 alias, including the npub, so mirroring it
+ * here would forbid the legal npub-to-internal case. The bridge path has its
+ * own guard in `buildWraps` (see the `legacy.length` branch), which replays
+ * `authorizeSender` exactly — no npub shortcut — and only when there are
+ * external recipients that actually require the bridge.
+ *
+ * UX guard, not the security boundary. The bridge enforces against
+ * `seal.pubkey`, the only version an attacker cannot route around; a modified
+ * client can skip this entirely.
  */
 async function senderOwnsFromAddress(from: string, senderPubkey: string): Promise<boolean> {
   const parts = splitAddress(from)
@@ -134,6 +141,32 @@ export async function buildWraps(
         wraps: [],
         targets: [],
         errors: ['No bridge configured — set your outbound bridge in Settings'],
+      }
+    }
+    // Replay the bridge's authorizeSender (outbound.ts) before publishing: the
+    // From domain must be one this bridge serves, and the address must resolve
+    // over NIP-05 to the sender's key. An npub From is provably *owned* by this
+    // key (see senderOwnsFromAddress above) but is not a NIP-05 name the bridge
+    // resolves, so mail to external recipients from an npub From is silently
+    // bounced with a postmaster "does not exist" reply. Catch it here so the
+    // user gets a clear message instead. No npub shortcut on this path: it
+    // must match the bridge exactly. Mail to local (Nostr-direct) recipients
+    // never reaches this branch, so an npub From stays legal for internal mail.
+    const fromParts = splitAddress(from.address)
+    if (
+      !fromParts ||
+      !ctx.localDomains.includes(fromParts.domain) ||
+      (await probeNip05(from.address)) !== senderPubkey
+    ) {
+      return {
+        wraps: [],
+        targets: [],
+        errors: [
+          `External recipients are delivered through the bridge, which only accepts ` +
+            `registered alias senders on ${ctx.localDomains.join('/')}. ` +
+            `"${from.address}" is not one, so the bridge would bounce this message. ` +
+            `Use a registered alias as the From, or remove the external recipients.`,
+        ],
       }
     }
     await add(ctx.bridgePubkey, legacy)
