@@ -156,6 +156,7 @@ import {
 } from "../lib/api";
 import { isValidLocalPart } from "../lib/nostr";
 import { buildNip98Header } from "../lib/nip98";
+import { redirectToMails, unlockWithTimeout } from "../lib/session";
 import InvoiceQR from "./InvoiceQR";
 
 type Step = "login" | "resolving" | "name" | "pay" | "done";
@@ -167,25 +168,6 @@ type Availability =
   | "invalid"
   | "error";
 
-/**
- * A silent resume must never be able to hang the login screen. `signer.unlock`
- * talks to relays for NIP-46 sessions and has no timeout of its own, so on a
- * flaky/hardened network a slow resume could leave the modal blank with no way
- * forward. Race it against a deadline and treat a timeout as "no resume" — the
- * full login UI renders instead of the user being stuck.
- */
-const RESUME_TIMEOUT_MS = 6000;
-function unlockWithTimeout(): Promise<Awaited<ReturnType<typeof signer.unlock>> | null> {
-  return Promise.race([
-    signer.unlock({ pool }),
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), RESUME_TIMEOUT_MS)),
-  ]);
-}
-
-function redirectToMails() {
-  window.location.href = config.mailsUrl;
-}
-
 // A key created here provably has no kind-10050 relay list yet. The mail app
 // (same origin: mailstr.app + /mails) reads this flag after the redirect so its
 // relay onboarding can trust "no list" without waiting on relay reachability.
@@ -196,10 +178,18 @@ const FRESH_SIGNUP_KEY = "mailstr.freshSignup";
 export default function SignupWizard({
   initialName,
   onClose,
+  purchaseMode = false,
 }: {
   /** Name the user typed in the hero input, if it was a name. */
   initialName?: string;
   onClose: () => void;
+  /**
+   * Set when the mail client sends an existing owner here to buy an
+   * *additional* address. Skips the "already owns a mailbox → bounce to the
+   * inbox" shortcut so a returning owner reaches address selection instead of
+   * being redirected straight back where they came from.
+   */
+  purchaseMode?: boolean;
 }) {
   const [step, setStep] = useState<Step>("login");
   const [pubkey, setPubkey] = useState<string | null>(null);
@@ -225,9 +215,10 @@ export default function SignupWizard({
     // A returning paying user shouldn't be asked to pick an address again — if
     // they already own a mailbox, send them straight to the app. Bounded so a
     // slow signer/lookup can't strand them: any error or timeout falls through
-    // to the normal signup.
+    // to the normal signup. Skipped in purchaseMode, where an existing owner
+    // has come here deliberately to claim another address.
     const active = signer.getActiveSigner();
-    if (active) {
+    if (!purchaseMode && active) {
       setStep("resolving");
       try {
         const owns = await Promise.race([
@@ -252,7 +243,7 @@ export default function SignupWizard({
       }
     }
     setStep("name");
-  }, []);
+  }, [purchaseMode]);
 
   /* Step 1 — sign in. Silent resume when a previous session exists,
      otherwise the @formstr/signer login UI (NIP-07/46/49/55). */

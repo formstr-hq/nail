@@ -21,8 +21,10 @@ function MailApp() {
   // `null` means no compose window; a Draft (possibly empty) means one is open.
   const [compose, setCompose] = useState<Draft | null>(null)
   const [composeMinimized, setComposeMinimized] = useState(false)
-  // null = closed; a section id opens Settings on that pane.
-  const [settingsSection, setSettingsSection] = useState<SectionId | null>(null)
+  // null = closed. A section id opens Settings drilled straight into that pane
+  // (used by the Relays shortcut). 'menu' opens it without a forced section, so
+  // on mobile it lands on the iOS-style section menu rather than a detail pane.
+  const [settingsSection, setSettingsSection] = useState<SectionId | 'menu' | null>(null)
   const [navOpen, setNavOpen] = useState(false)
   // The signer login shown over the app to add a second account.
   const [addingAccount, setAddingAccount] = useState(false)
@@ -96,7 +98,7 @@ function MailApp() {
         <div className="hidden w-56 flex-none md:block">
           <Sidebar
             onCompose={startCompose}
-            onSettings={() => setSettingsSection('addresses')}
+            onSettings={() => setSettingsSection('menu')}
             onOpenRelays={() => setSettingsSection('relays')}
             onAddAccount={() => setAddingAccount(true)}
             aliases={selfAddresses}
@@ -116,7 +118,7 @@ function MailApp() {
               <Sidebar
                 onCompose={startCompose}
                 onSettings={() => {
-                  setSettingsSection('addresses')
+                  setSettingsSection('menu')
                   setNavOpen(false)
                 }}
                 onOpenRelays={() => {
@@ -167,7 +169,7 @@ function MailApp() {
       )}
       {settingsSection && (
         <SettingsModal
-          initialSection={settingsSection}
+          initialSection={settingsSection === 'menu' ? undefined : settingsSection}
           onClose={() => setSettingsSection(null)}
         />
       )}

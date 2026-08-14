@@ -6,8 +6,19 @@ import { useOwnedAddresses } from '@/hooks/useOwnedAddresses'
 import { fetchDmRelayList, publishDmRelays } from '@/lib/nostr/relays'
 import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
 import { RelayManager } from '@/components/RelayManager'
+import { buyAddressUrl } from '@/lib/api/config'
 import { Button, IconButton } from '@/components/ui/Button'
-import { XIcon, AlertIcon, AtSignIcon, InboxIcon, PenIcon, SunIcon } from '@/components/ui/icons'
+import {
+  XIcon,
+  AlertIcon,
+  AtSignIcon,
+  InboxIcon,
+  PenIcon,
+  SunIcon,
+  PlusIcon,
+  BackIcon,
+  ChevronRightIcon,
+} from '@/components/ui/icons'
 
 // Sentinel select value for "type your own address" — kept distinct from any
 // real address string so it can never collide with an owned/bridge option.
@@ -105,6 +116,12 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [section, setSection] = useState<SectionId>(initialSection ?? 'addresses')
+  // Mobile navigates iOS-style: a menu list of sections that you tap into,
+  // rather than a horizontal tab strip. `mobileDetail` is whether we're drilled
+  // into a section (true) or showing the menu (false). A caller that opens
+  // Settings on a specific pane (e.g. Relays) drills straight in. On md+ this
+  // flag is inert — the rail and content always show side by side.
+  const [mobileDetail, setMobileDetail] = useState(initialSection != null)
 
   // Inbox (kind-10050) relays. `null` while loading; the ref holds the fetched
   // baseline so Save only republishes when the list actually changed — signing
@@ -197,10 +214,11 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-          {/* Section nav — a horizontal strip on mobile, a left rail from md up. */}
+          {/* Left rail — desktop only. On mobile the sections are an iOS-style
+              menu list rendered inside the content column below. */}
           <nav
             aria-label="Settings sections"
-            className="flex flex-none gap-1 overflow-x-auto border-b border-border p-2 md:w-44 md:flex-col md:gap-0.5 md:overflow-x-visible md:border-b-0 md:border-r"
+            className="hidden flex-none p-2 md:flex md:w-44 md:flex-col md:gap-0.5 md:border-r md:border-border"
           >
             {SECTIONS.map((s) => {
               const Icon = s.icon
@@ -225,7 +243,53 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
             })}
           </nav>
 
-          <div className="flex min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-4 py-4 md:px-5">
+          {/* Mobile menu — tap a row to drill into that section (iOS Settings
+              style). Hidden once drilled in, and always hidden from md up. */}
+          {!mobileDetail && (
+            <nav
+              aria-label="Settings sections"
+              className="flex flex-col overflow-y-auto py-1 md:hidden"
+            >
+              {SECTIONS.map((s) => {
+                const Icon = s.icon
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => {
+                      setSection(s.id)
+                      setMobileDetail(true)
+                    }}
+                    className="flex items-center gap-3 border-b border-border px-4 py-3 text-left text-[14px] text-foreground last:border-b-0 active:bg-accent"
+                  >
+                    <Icon className="h-[18px] w-[18px] flex-none text-muted-foreground" />
+                    <span className="flex-1">{s.label}</span>
+                    <ChevronRightIcon className="h-4 w-4 flex-none text-subtle" />
+                  </button>
+                )
+              })}
+            </nav>
+          )}
+
+          {/* Content column — always visible on md+; on mobile only once a
+              section has been tapped. */}
+          <div
+            className={[
+              mobileDetail ? 'flex' : 'hidden',
+              'min-w-0 flex-1 flex-col md:flex',
+            ].join(' ')}
+          >
+            {/* Back to the menu — mobile only. */}
+            <button
+              type="button"
+              onClick={() => setMobileDetail(false)}
+              className="flex flex-none items-center gap-1 border-b border-border px-2 py-2 text-[13px] font-medium text-muted-foreground md:hidden"
+            >
+              <BackIcon className="h-4 w-4" />
+              <span>{SECTIONS.find((s) => s.id === section)?.label ?? 'Settings'}</span>
+            </button>
+
+            <div className="flex min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-4 py-4 md:px-5">
             {section === 'addresses' && (
               <>
                 {account && (
@@ -233,39 +297,56 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
                     label="Your addresses"
                     hint={`Addresses linked to your account on ${BRIDGE_DOMAIN}.`}
                   >
-                    {addressesLoading && (
-                      <p className="text-[11.5px] text-subtle">Loading your addresses…</p>
-                    )}
-                    {!addressesLoading && addressesError && (
-                      <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
-                        <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-destructive" />
-                        <p className="flex-1 text-[11.5px] leading-relaxed text-destructive">
-                          {addressesError}
-                        </p>
-                        <Button size="sm" onClick={reloadAddresses} className="flex-none">
-                          Try again
-                        </Button>
-                      </div>
-                    )}
-                    {!addressesLoading && !addressesError && addresses.length === 0 && (
-                      <p className="text-[11.5px] text-subtle">
-                        No addresses yet. Your npub address below always works.
-                      </p>
-                    )}
-                    {!addressesLoading && !addressesError && addresses.length > 0 && (
-                      <div className="flex flex-col gap-1">
-                        {addresses.map((addr) => (
-                          <code
-                            key={addr}
-                            className="block w-full min-w-0 truncate rounded-md border border-input bg-muted px-3 py-2 font-mono text-[11px]"
-                          >
-                            {addr}
-                          </code>
-                        ))}
-                      </div>
-                    )}
-                  </Field>
+                {addressesLoading && (
+                  <p className="text-[11.5px] text-subtle">Loading your addresses…</p>
                 )}
+                {!addressesLoading && addressesError && (
+                  <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
+                    <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-destructive" />
+                    <p className="flex-1 text-[11.5px] leading-relaxed text-destructive">
+                      {addressesError}
+                    </p>
+                    <Button size="sm" onClick={reloadAddresses} className="flex-none">
+                      Try again
+                    </Button>
+                  </div>
+                )}
+                {!addressesLoading && !addressesError && addresses.length === 0 && (
+                  <p className="text-[11.5px] text-subtle">
+                    No addresses yet. Your npub address always works — buy a name below.
+                  </p>
+                )}
+                {!addressesLoading && !addressesError && addresses.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    {addresses.map((addr) => (
+                      <code
+                        key={addr}
+                        className="block w-full min-w-0 truncate rounded-md border border-input bg-muted px-3 py-2 font-mono text-[11px]"
+                      >
+                        {addr}
+                      </code>
+                    ))}
+                  </div>
+                )}
+                {/* Purchasing lives in the landing app (the tier/invoice/payment
+                    flow only exists there); we deep-link with ?buy=1, which
+                    opens its wizard in purchase mode and suppresses its own
+                    returning-owner redirect so it can't bounce back here. */}
+                <a
+                  href={buyAddressUrl()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-flex h-8 items-center justify-center gap-2 self-start whitespace-nowrap rounded-md border border-primary bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors duration-[120ms] hover:bg-primary/90"
+                >
+                  <PlusIcon className="h-4 w-4" />
+                  Buy a new address
+                </a>
+                <p className="text-[11px] leading-relaxed text-subtle">
+                  Opens the signup page in a new tab. New addresses appear here once paid — reload
+                  the list with “Try again”.
+                </p>
+              </Field>
+            )}
 
                 <Field label="Sender address" hint="Shown as the From address on mail you send.">
                   <select
@@ -352,6 +433,7 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
               Your address, signature and sender settings are encrypted and synced to your relays
               as a kind 30078 event. Theme is kept on this device only.
             </p>
+            </div>
           </div>
         </div>
 

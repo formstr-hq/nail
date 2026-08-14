@@ -1,6 +1,8 @@
+import { useEffect } from "react";
 import { AtSign, Github, Inbox, KeyRound, Lock, Radio } from "lucide-react";
 import "./index.css";
 import { config } from "./lib/config";
+import { hasBuyIntent, redirectReturningOwner } from "./lib/session";
 import SignupSection from "./components/SignupSection";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 
@@ -149,6 +151,15 @@ export function Footer() {
 /* ------------------------------------------------------------------ */
 
 function Home() {
+  // A returning user who already owns a mailbox is sent straight to the inbox
+  // rather than being shown the signup hero again. Runs once on mount, and
+  // never when a `?buy=1` deep link asks for the purchase flow (that visit is
+  // an owner deliberately here to claim another address — see session.ts).
+  useEffect(() => {
+    if (hasBuyIntent()) return;
+    void redirectReturningOwner();
+  }, []);
+
   return (
     // min-h (not fixed h + overflow-hidden) so a short viewport — a small
     // phone in particular — scrolls the hero instead of clipping it.

@@ -158,6 +158,19 @@ export const ChevronDownIcon = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
+export const ChevronRightIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="m9 18 6-6-6-6" />
+  </Icon>
+)
+
+export const UserIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
+  </Icon>
+)
+
 export const PlusIcon = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M5 12h14M12 5v14" />
