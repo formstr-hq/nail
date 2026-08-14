@@ -403,7 +403,7 @@ export default function SignupWizard({
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-ink/60 p-4 backdrop-blur-sm"
+      className="safe-modal fixed inset-0 z-[70] flex items-center justify-center bg-ink/60 px-4 backdrop-blur-sm"
       onClick={step === "pay" ? undefined : onClose}
     >
       <div

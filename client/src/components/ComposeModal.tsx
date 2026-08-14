@@ -313,7 +313,7 @@ export function ComposeModal({
         role="dialog"
         aria-modal="true"
         aria-label="New message"
-        className="pointer-events-auto flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:h-[32rem] md:max-w-xl md:rounded-xl"
+        className="pointer-events-auto safe-bottom flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:h-[32rem] md:max-w-xl md:rounded-xl"
       >
         <div className="flex items-center gap-1 border-b border-border px-3 py-2">
           <span className="eyebrow flex-1">{draft?.inReplyTo ? 'Reply' : 'New message'}</span>

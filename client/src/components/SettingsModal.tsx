@@ -313,7 +313,7 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:h-[540px] md:max-w-2xl md:rounded-xl"
+        className="safe-bottom flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:h-[540px] md:max-w-2xl md:rounded-xl"
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <span className="eyebrow flex-1">Settings</span>

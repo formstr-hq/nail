@@ -175,7 +175,7 @@ export function Footer() {
 // swap of background.
 function CheckingScreen() {
   return (
-    <div className="flex min-h-[100svh] flex-col items-center justify-center gap-4 bg-paper text-ink">
+    <div className="safe-y flex min-h-[100svh] flex-col items-center justify-center gap-4 bg-paper text-ink">
       <Glyph className="h-12 w-12 animate-pulse" />
       <p className="flex items-center gap-2 text-sm text-gray-500">
         <Loader2 size={15} className="animate-spin text-primary" />
@@ -214,7 +214,7 @@ function Home() {
   return (
     // min-h (not fixed h + overflow-hidden) so a short viewport — a small
     // phone in particular — scrolls the hero instead of clipping it.
-    <div className="flex min-h-[100svh] flex-col bg-paper text-ink">
+    <div className="safe-y flex min-h-[100svh] flex-col bg-paper text-ink">
       <Navbar />
       <Hero />
       <Footer />

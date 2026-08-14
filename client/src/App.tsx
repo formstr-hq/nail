@@ -80,7 +80,7 @@ function MailApp() {
   }
 
   return (
-    <div className="flex h-[100dvh] flex-col bg-background text-foreground">
+    <div className="safe-y flex h-[100dvh] flex-col bg-background text-foreground">
       {/* Mobile chrome. The three panes cannot all fit, so navigation moves
           into a drawer and the list/reading panes swap rather than stack. */}
       <header className="flex items-center gap-2 border-b border-border bg-surface-nav px-3 py-2 md:hidden">
@@ -114,7 +114,7 @@ function MailApp() {
               className="absolute inset-0 bg-foreground/30"
               onClick={() => setNavOpen(false)}
             />
-            <div className="relative w-60 max-w-[80vw] shadow-2xl">
+            <div className="safe-y relative w-60 max-w-[80vw] bg-surface-nav shadow-2xl">
               <Sidebar
                 onCompose={startCompose}
                 onSettings={() => {
@@ -206,7 +206,7 @@ export default function App() {
 
   if (!ready) {
     return (
-      <div className="flex min-h-[100dvh] flex-col items-center justify-center gap-3 bg-background">
+      <div className="safe-y flex min-h-[100dvh] flex-col items-center justify-center gap-3 bg-background">
         <BrandGlyph size={30} />
         <p className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-subtle">
           Opening your mailbox

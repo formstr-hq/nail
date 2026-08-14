@@ -461,3 +461,18 @@ div.nostr-signer__root {
     display: none !important;
   }
 }
+
+/* Native safe-area insets (Capacitor Android). Inert on the web (env() = 0);
+   inside the app they keep the page clear of the status bar and gesture bar
+   when the WebView draws edge-to-edge. Needs viewport-fit=cover in index.html. */
+.safe-y {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+/* A centred full-screen modal: keep its original 1rem breathing room but grow
+   to the safe-area inset when that's larger, so a tall sheet never tucks under
+   the status bar or gesture bar. */
+.safe-modal {
+  padding-top: max(1rem, env(safe-area-inset-top));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}

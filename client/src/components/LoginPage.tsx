@@ -335,14 +335,14 @@ export function LoginPage() {
   // below belongs only to the unlock and resume paths, which are ours.
   if (!resuming) {
     return (
-      <div className="bg-graph min-h-[100dvh] bg-background">
+      <div className="bg-graph safe-y min-h-[100dvh] bg-background">
         <SignerLogin />
       </div>
     )
   }
 
   return (
-    <div className="bg-graph flex min-h-[100dvh] items-center justify-center bg-background px-4">
+    <div className="bg-graph safe-y flex min-h-[100dvh] items-center justify-center bg-background px-4">
       <div className="flex w-full max-w-sm flex-col gap-6 py-10">
         <div className="flex flex-col items-center gap-2 text-center">
           <BrandGlyph size={38} />
