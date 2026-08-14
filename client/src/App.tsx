@@ -12,7 +12,8 @@ import { Sidebar } from '@/components/Sidebar'
 import { EmailList } from '@/components/EmailList'
 import { EmailView } from '@/components/EmailView'
 import { ComposeModal } from '@/components/ComposeModal'
-import { SettingsModal } from '@/components/SettingsModal'
+import { SettingsModal, type SectionId } from '@/components/SettingsModal'
+import { OnboardingModal } from '@/components/OnboardingModal'
 import { BrandGlyph, PenIcon, InboxIcon } from '@/components/ui/icons'
 import { IconButton } from '@/components/ui/Button'
 
@@ -20,13 +21,14 @@ function MailApp() {
   // `null` means no compose window; a Draft (possibly empty) means one is open.
   const [compose, setCompose] = useState<Draft | null>(null)
   const [composeMinimized, setComposeMinimized] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
+  // null = closed; a section id opens Settings on that pane.
+  const [settingsSection, setSettingsSection] = useState<SectionId | null>(null)
   const [navOpen, setNavOpen] = useState(false)
   // The signer login shown over the app to add a second account.
   const [addingAccount, setAddingAccount] = useState(false)
 
   const { account, active } = useAccountStore()
-  const { load, settings } = useSettingsStore()
+  const { load, settings, loaded: settingsLoaded } = useSettingsStore()
   const { selectedId, setSelected } = useMailStore()
   const ctx = useResolveContext()
   const { status, retry } = useInbox(ctx.bridgePubkey)
@@ -94,7 +96,8 @@ function MailApp() {
         <div className="hidden w-56 flex-none md:block">
           <Sidebar
             onCompose={startCompose}
-            onSettings={() => setShowSettings(true)}
+            onSettings={() => setSettingsSection('addresses')}
+            onOpenRelays={() => setSettingsSection('relays')}
             onAddAccount={() => setAddingAccount(true)}
             aliases={selfAddresses}
             status={status}
@@ -113,7 +116,11 @@ function MailApp() {
               <Sidebar
                 onCompose={startCompose}
                 onSettings={() => {
-                  setShowSettings(true)
+                  setSettingsSection('addresses')
+                  setNavOpen(false)
+                }}
+                onOpenRelays={() => {
+                  setSettingsSection('relays')
                   setNavOpen(false)
                 }}
                 onAddAccount={() => {
@@ -158,7 +165,19 @@ function MailApp() {
           setMinimized={setComposeMinimized}
         />
       )}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {settingsSection && (
+        <SettingsModal
+          initialSection={settingsSection}
+          onClose={() => setSettingsSection(null)}
+        />
+      )}
+
+      {/* First-run relay setup — shown once per account (the flag lives in the
+          synced settings event, so "once" holds across devices). Gated on
+          settingsLoaded so it never flashes before settings are known. */}
+      {settingsLoaded && !settings.onboardedAt && !addingAccount && (
+        <OnboardingModal status={status} />
+      )}
 
       {/* Adding an account switches the active one on success, so wipe the
           previous inbox and close the overlay. The signer modal renders its

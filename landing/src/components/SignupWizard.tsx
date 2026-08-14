@@ -148,20 +148,50 @@ import { config } from "../lib/config";
 import {
   apiUrl,
   generateMailInvoice,
-  getMailPrice,
+  getMailTiers,
+  ownsMailbox,
   resolveNip05,
   type MailInvoice,
+  type MailTier,
 } from "../lib/api";
 import { isValidLocalPart } from "../lib/nostr";
 import { buildNip98Header } from "../lib/nip98";
 import InvoiceQR from "./InvoiceQR";
 
-type Step = "login" | "name" | "pay" | "done";
-type Availability = "idle" | "checking" | "free" | "taken" | "invalid";
+type Step = "login" | "resolving" | "name" | "pay" | "done";
+type Availability =
+  | "idle"
+  | "checking"
+  | "free"
+  | "taken"
+  | "invalid"
+  | "error";
+
+/**
+ * A silent resume must never be able to hang the login screen. `signer.unlock`
+ * talks to relays for NIP-46 sessions and has no timeout of its own, so on a
+ * flaky/hardened network a slow resume could leave the modal blank with no way
+ * forward. Race it against a deadline and treat a timeout as "no resume" — the
+ * full login UI renders instead of the user being stuck.
+ */
+const RESUME_TIMEOUT_MS = 6000;
+function unlockWithTimeout(): Promise<Awaited<ReturnType<typeof signer.unlock>> | null> {
+  return Promise.race([
+    signer.unlock({ pool }),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), RESUME_TIMEOUT_MS)),
+  ]);
+}
 
 function redirectToMails() {
   window.location.href = config.mailsUrl;
 }
+
+// A key created here provably has no kind-10050 relay list yet. The mail app
+// (same origin: mailstr.app + /mails) reads this flag after the redirect so its
+// relay onboarding can trust "no list" without waiting on relay reachability.
+// Same string as client/src/lib/freshSignup.ts — duplicated because landing and
+// client are separate builds.
+const FRESH_SIGNUP_KEY = "mailstr.freshSignup";
 
 export default function SignupWizard({
   initialName,
@@ -178,14 +208,49 @@ export default function SignupWizard({
     name: string;
     taken: boolean;
   } | null>(null);
-  const [price, setPrice] = useState<number | null>(null);
+  // The name whose availability check failed, plus a nonce the Retry button
+  // bumps to re-run it. Without this a flaky lookup leaves the field stuck on
+  // "Checking…" forever with "Claim it" permanently disabled — a dead end.
+  const [checkFailed, setCheckFailed] = useState<string | null>(null);
+  const [checkNonce, setCheckNonce] = useState(0);
+  const [tiers, setTiers] = useState<MailTier[] | null>(null);
+  const [selectedTierId, setSelectedTierId] = useState<string | null>(null);
   const [invoice, setInvoice] = useState<MailInvoice | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loginRef = useRef<HTMLDivElement>(null);
 
-  const proceedAs = useCallback((pk: string) => {
+  const proceedAs = useCallback(async (pk: string) => {
     setPubkey(pk);
+    // A returning paying user shouldn't be asked to pick an address again — if
+    // they already own a mailbox, send them straight to the app. Bounded so a
+    // slow signer/lookup can't strand them: any error or timeout falls through
+    // to the normal signup.
+    const active = signer.getActiveSigner();
+    if (active) {
+      setStep("resolving");
+      try {
+        const owns = await Promise.race([
+          (async () => {
+            const header = await buildNip98Header(
+              active,
+              apiUrl("/api/nip-05/get-nip05"),
+              "GET",
+            );
+            return ownsMailbox(header);
+          })(),
+          new Promise<boolean>((_, reject) =>
+            setTimeout(() => reject(new Error("timeout")), 6000),
+          ),
+        ]);
+        if (owns) {
+          redirectToMails();
+          return;
+        }
+      } catch {
+        // fall through to signup
+      }
+    }
     setStep("name");
   }, []);
 
@@ -198,7 +263,7 @@ export default function SignupWizard({
 
     (async () => {
       try {
-        const resumed = await signer.unlock({ pool });
+        const resumed = await unlockWithTimeout();
         if (cancelled) return;
         if (resumed) {
           const account = signer.getActiveAccount();
@@ -225,9 +290,27 @@ export default function SignupWizard({
       });
       const detachQr = autoGenerateQr(el);
       const detachNav = methodListNav(el);
+      // Flag a freshly-created key for the mail app's relay onboarding. Capture
+      // phase on the container runs before the package's created-ack handler
+      // fires onLogin, so the flag is set before the redirect. Only the create
+      // path clicks created-ack, so imported keys are never marked.
+      const markCreated = (e: Event) => {
+        if ((e.target as HTMLElement | null)?.closest('[data-action="created-ack"]')) {
+          const pk = signer.getActiveAccount()?.pubkey;
+          if (pk) {
+            try {
+              localStorage.setItem(FRESH_SIGNUP_KEY, pk);
+            } catch {
+              // storage unavailable — onboarding falls back to reachability
+            }
+          }
+        }
+      };
+      el.addEventListener("click", markCreated, true);
       detach = () => {
         detachNav();
         detachQr();
+        el.removeEventListener("click", markCreated, true);
         binding.detach();
       };
     })();
@@ -247,29 +330,39 @@ export default function SignupWizard({
       try {
         const owner = await resolveNip05(name);
         setNameCheck({ name, taken: owner !== null });
+        setCheckFailed(null);
       } catch {
-        setError("Couldn't check availability — is the network up?");
+        // Surface a retryable inline error instead of a permanent "Checking…".
+        setCheckFailed(name);
       }
     }, 400);
     return () => clearTimeout(t);
-  }, [step, name]);
+  }, [step, name, checkNonce]);
 
   const availability: Availability = !name
     ? "idle"
     : !isValidLocalPart(name)
       ? "invalid"
-      : nameCheck?.name === name
-        ? nameCheck.taken
-          ? "taken"
-          : "free"
-        : "checking";
+      : checkFailed === name
+        ? "error"
+        : nameCheck?.name === name
+          ? nameCheck.taken
+            ? "taken"
+            : "free"
+          : "checking";
 
   useEffect(() => {
-    if (step !== "name" || price !== null) return;
-    getMailPrice()
-      .then(setPrice)
-      .catch(() => setPrice(null));
-  }, [step, price]);
+    if (step !== "name" || tiers !== null) return;
+    getMailTiers()
+      .then((list) => {
+        setTiers(list);
+        // Default the selection to the first purchasable tier.
+        setSelectedTierId((prev) => prev ?? list.find((t) => t.available)?.id ?? null);
+      })
+      .catch(() => setTiers(null));
+  }, [step, tiers]);
+
+  const selectedTier = tiers?.find((t) => t.id === selectedTierId) ?? null;
 
   /* Step 2 → 3 — NIP-98-signed invoice request. */
   const requestInvoice = async () => {
@@ -279,10 +372,20 @@ export default function SignupWizard({
       setStep("login");
       return;
     }
+    if (!selectedTier) {
+      setError("Pick a plan first.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const body = { pubkey, nip05: `${name}@${config.mailDomain}` };
+      // tierId is part of the signed body, so the backend prices by the chosen
+      // tier and the NIP-98 payload digest still matches what's sent.
+      const body = {
+        pubkey,
+        nip05: `${name}@${config.mailDomain}`,
+        tierId: selectedTier.id,
+      };
       const url = apiUrl("/api/generate-invoice/mail");
       const header = await buildNip98Header(
         active,
@@ -320,6 +423,7 @@ export default function SignupWizard({
           <div>
             <h3 className="text-lg font-bold text-ink">
               {step === "login" && "Sign in with your Nostr key"}
+              {step === "resolving" && "One moment…"}
               {step === "name" && "Pick your address"}
               {step === "pay" && "One payment, and it's yours"}
               {step === "done" && "Welcome to Mail by Formstr"}
@@ -327,6 +431,7 @@ export default function SignupWizard({
             <p className="mt-0.5 text-sm text-gray-500">
               {step === "login" &&
                 "Your key is your account. New to Nostr? Create one below."}
+              {step === "resolving" && "Checking your account"}
               {step === "name" && "This becomes your email and your NIP-05 handle."}
               {step === "pay" && `Claiming ${address}`}
               {step === "done" && "Taking you to your inbox…"}
@@ -348,6 +453,16 @@ export default function SignupWizard({
         )}
 
         {step === "login" && <div ref={loginRef} className="signer-embed" />}
+
+        {step === "resolving" && (
+          <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+            <span className="relative flex h-10 w-10 items-center justify-center">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/20" />
+              <Loader2 size={24} className="animate-spin text-primary" />
+            </span>
+            <p className="text-sm text-gray-500">Checking your account…</p>
+          </div>
+        )}
 
         {step === "name" && (
           <div>
@@ -391,10 +506,104 @@ export default function SignupWizard({
                   Lowercase letters, digits, dots, underscores and hyphens only.
                 </span>
               )}
+              {availability === "error" && (
+                <span className="inline-flex items-center gap-2 text-gray-500">
+                  Couldn't check availability.
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCheckFailed(null);
+                      setCheckNonce((n) => n + 1);
+                    }}
+                    className="font-semibold text-primary underline"
+                  >
+                    Retry
+                  </button>
+                </span>
+              )}
             </p>
 
+            {/* Plans come from the backend (see getMailTiers). Each is its own
+                card listing what's included (✓) and not (✗); a not-yet-sellable
+                tier is shown greyed with a "coming soon" badge. */}
+            <div className="mt-4 flex flex-col gap-2">
+              {tiers === null ? (
+                <div className="flex items-center justify-center rounded-xl border border-black/10 bg-white p-6">
+                  <Loader2 size={18} className="animate-spin text-gray-300" />
+                </div>
+              ) : (
+                tiers.map((t) => {
+                  const selected = t.id === selectedTierId;
+                  return (
+                    <div
+                      key={t.id}
+                      role="radio"
+                      aria-checked={selected}
+                      aria-disabled={!t.available}
+                      tabIndex={t.available ? 0 : -1}
+                      onClick={() => t.available && setSelectedTierId(t.id)}
+                      onKeyDown={(e) => {
+                        if (t.available && (e.key === "Enter" || e.key === " ")) {
+                          e.preventDefault();
+                          setSelectedTierId(t.id);
+                        }
+                      }}
+                      className={[
+                        "rounded-xl border p-4 text-left transition-colors",
+                        t.available
+                          ? "cursor-pointer"
+                          : "cursor-default opacity-60",
+                        selected
+                          ? "border-primary bg-white ring-1 ring-primary"
+                          : "border-black/10 bg-white hover:border-black/20",
+                      ].join(" ")}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-base font-bold text-ink">{t.name}</h4>
+                            {!t.available && (
+                              <span className="rounded-full bg-black/[0.06] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                                Coming soon
+                              </span>
+                            )}
+                          </div>
+                          {t.description && (
+                            <p className="mt-0.5 text-xs text-gray-500">{t.description}</p>
+                          )}
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <span className="text-lg font-bold leading-none text-ink">
+                            {t.priceSats.toLocaleString()}
+                          </span>
+                          <span className="ml-1 text-sm text-gray-500">sats</span>
+                          <span className="block text-[11px] text-gray-400">one-time</span>
+                        </div>
+                      </div>
+                      {(t.features.length > 0 || t.notIncluded.length > 0) && (
+                        <ul className="mt-3 flex flex-col gap-1.5 text-sm">
+                          {t.features.map((f) => (
+                            <li key={f} className="flex items-center gap-2 text-gray-600">
+                              <Check size={15} className="shrink-0 text-emerald-600" />
+                              <span>{f}</span>
+                            </li>
+                          ))}
+                          {t.notIncluded.map((f) => (
+                            <li key={f} className="flex items-center gap-2 text-gray-400">
+                              <X size={15} className="shrink-0" />
+                              <span>{f}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
             <button
-              disabled={availability !== "free" || busy}
+              disabled={availability !== "free" || busy || !selectedTier}
               onClick={requestInvoice}
               className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition-all enabled:hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -403,7 +612,10 @@ export default function SignupWizard({
                   <Loader2 size={15} className="animate-spin" /> Preparing invoice…
                 </>
               ) : (
-                <>Claim it{price !== null ? ` — ${price} sats` : ""}</>
+                <>
+                  Get {selectedTier?.name ?? "Mail"}
+                  {selectedTier ? ` — ${selectedTier.priceSats.toLocaleString()} sats` : ""}
+                </>
               )}
             </button>
             <p className="mt-2 text-center text-xs text-gray-400">

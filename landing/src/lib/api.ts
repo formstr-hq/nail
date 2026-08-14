@@ -37,13 +37,87 @@ export async function getMailPrice(): Promise<number> {
   return res.amount;
 }
 
+/** One purchasable plan within a product. A product exposes a list of these; a
+ *  tier that isn't sellable yet has `available: false` (it's a real tier, not a
+ *  string teased inside another tier). New tiers are just new entries. */
+export interface MailTier {
+  id: string;
+  name: string;
+  description: string;
+  priceSats: number;
+  features: string[]; // included on this tier (✓)
+  notIncluded: string[]; // explicitly not on this tier (✗), e.g. attachments
+  available: boolean; // whether the tier can be purchased
+}
+
+// Built-in copy, used only until the backend's /api/tiers/mail is deployed. The
+// price still comes from the backend (/api/price/mail).
+function fallbackTiers(priceSats: number): MailTier[] {
+  return [
+    {
+      id: "base",
+      name: "Mail",
+      description: "Your own encrypted mailbox, delivered over Nostr.",
+      priceSats,
+      features: [
+        `Your name@${config.mailDomain} address`,
+        "Send & receive end-to-end encrypted mail",
+      ],
+      notIncluded: ["Attachments", "Extra storage"],
+      available: true,
+    },
+  ];
+}
+
+/** Tiers from the backend, or `null` if the endpoint isn't there yet. Each
+ *  entry is validated/normalized so a partial response can't break the UI. */
+async function fetchMailTiers(): Promise<MailTier[] | null> {
+  try {
+    const res = await fetch(`${config.apiBaseUrl}/api/tiers/mail`);
+    if (!res.ok) return null;
+    const data: unknown = await res.json();
+    if (!Array.isArray(data)) return null;
+    const tiers = data
+      .filter(
+        (t): t is Record<string, unknown> =>
+          !!t && typeof t === "object" && typeof (t as { priceSats?: unknown }).priceSats === "number",
+      )
+      .map((t) => ({
+        id: String(t.id ?? ""),
+        name: String(t.name ?? "Mail"),
+        description: String(t.description ?? ""),
+        priceSats: t.priceSats as number,
+        features: Array.isArray(t.features)
+          ? (t.features as unknown[]).filter((f): f is string => typeof f === "string")
+          : [],
+        notIncluded: Array.isArray(t.notIncluded)
+          ? (t.notIncluded as unknown[]).filter((f): f is string => typeof f === "string")
+          : [],
+        available: t.available !== false,
+      }));
+    return tiers.length ? tiers : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The mail tiers to show on the signup screen. Prefers the backend endpoint; if
+ * it isn't deployed yet, uses the built-in copy with the live price.
+ */
+export async function getMailTiers(): Promise<MailTier[]> {
+  const fromApi = await fetchMailTiers();
+  if (fromApi) return fromApi;
+  return fallbackTiers(await getMailPrice());
+}
+
 /**
  * Ask the backend for a Lightning invoice that, once paid, provisions the
  * mailbox. Requires a NIP-98 Authorization header (see nip98.ts).
  */
 export async function generateMailInvoice(
   authHeader: string,
-  body: { pubkey: string; nip05: string },
+  body: { pubkey: string; nip05: string; tierId: string },
 ): Promise<MailInvoice> {
   const res = await fetch(`${config.apiBaseUrl}/api/generate-invoice/mail`, {
     method: "POST",
@@ -69,6 +143,44 @@ export async function generateMailInvoice(
 /** Absolute URL of an API path — NIP-98 signs the exact URL being called. */
 export function apiUrl(path: string): string {
   return `${config.apiBaseUrl}${path}`;
+}
+
+/** True if the response body names at least one owned NIP-05 address. Tolerant
+ *  of the several shapes the backend has returned (bare string, array, or an
+ *  object with `nip05`/`nip05Addresses`), matching the client's normalizer. */
+function hasAnyAddress(body: unknown): boolean {
+  if (typeof body === "string") return body.trim().length > 0;
+  if (Array.isArray(body)) {
+    return body.some((e) =>
+      typeof e === "string"
+        ? e.trim().length > 0
+        : !!e &&
+          typeof e === "object" &&
+          (typeof (e as Record<string, unknown>).nip05 === "string" ||
+            typeof (e as Record<string, unknown>).name === "string"),
+    );
+  }
+  if (body && typeof body === "object") {
+    const o = body as Record<string, unknown>;
+    if (typeof o.nip05 === "string") return o.nip05.trim().length > 0;
+    if (Array.isArray(o.nip05Addresses))
+      return o.nip05Addresses.some((v) => typeof v === "string" && v.trim().length > 0);
+  }
+  return false;
+}
+
+/**
+ * Whether the signed-in account already owns a mailbox on the mail domain.
+ * NIP-98 authenticated (pass a header built with the active signer). Any error
+ * or 404 resolves to `false` so a hiccup never blocks a new signup.
+ */
+export async function ownsMailbox(authHeader: string): Promise<boolean> {
+  const res = await fetch(`${config.apiBaseUrl}/api/nip-05/get-nip05`, {
+    headers: { Authorization: authHeader },
+  });
+  if (!res.ok) return false;
+  const body = await res.json().catch(() => null);
+  return hasAnyAddress(body);
 }
 
 /** WebSocket that fires { status: "paid" } once the invoice settles. */

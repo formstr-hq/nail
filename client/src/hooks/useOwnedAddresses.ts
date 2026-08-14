@@ -8,6 +8,45 @@ import { fetchOwnedAddresses, Nip98AuthError } from '@/lib/api/addresses'
 // error, with no extra bookkeeping needed.
 const cache = new Map<string, string[]>()
 
+// Cross-session cache. The module cache above is empty on every fresh page
+// load, so without this the sidebar's per-alias inbox list only appears once
+// the API round-trip completes — a visible "pops in late". Persisting the last
+// successful result lets a reload paint the aliases immediately from disk while
+// a background fetch revalidates (stale-while-revalidate). Deliberately local
+// and non-authoritative: it's only ever a head start, never the source of
+// truth, and a fetch always overwrites it.
+const PERSIST_PREFIX = 'mailstr.ownedAddresses:'
+
+function readPersisted(pubkey: string): string[] | null {
+  try {
+    const raw = localStorage.getItem(PERSIST_PREFIX + pubkey)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')
+      ? (parsed as string[])
+      : null
+  } catch {
+    // Blocked/absent storage or malformed JSON — behave as if nothing cached.
+    return null
+  }
+}
+
+function writePersisted(pubkey: string, addresses: string[]): void {
+  try {
+    localStorage.setItem(PERSIST_PREFIX + pubkey, JSON.stringify(addresses))
+  } catch {
+    // Storage refused it — the in-memory cache still serves this session.
+  }
+}
+
+function removePersisted(pubkey: string): void {
+  try {
+    localStorage.removeItem(PERSIST_PREFIX + pubkey)
+  } catch {
+    // ignore — nothing to clear or storage unavailable
+  }
+}
+
 const AUTH_ERROR_MESSAGE = 'Session rejected — sign in again'
 
 /**
@@ -42,9 +81,13 @@ export function useOwnedAddresses() {
   const pubkey = account?.pubkey ?? null
 
   const [addresses, setAddresses] = useState<string[]>(() =>
-    pubkey ? cache.get(pubkey) ?? [] : [],
+    pubkey ? cache.get(pubkey) ?? readPersisted(pubkey) ?? [] : [],
   )
-  const [loading, setLoading] = useState<boolean>(() => Boolean(pubkey && active && !cache.has(pubkey)))
+  // Only truly "loading" (spinner-worthy) when we have nothing to show yet —
+  // a persisted list is painted immediately and revalidated silently.
+  const [loading, setLoading] = useState<boolean>(() =>
+    Boolean(pubkey && active && !cache.has(pubkey) && !readPersisted(pubkey)),
+  )
   const [error, setError] = useState<string | null>(null)
   const [reloadNonce, setReloadNonce] = useState(0)
 
@@ -57,9 +100,9 @@ export function useOwnedAddresses() {
   const [prevPubkey, setPrevPubkey] = useState(pubkey)
   if (prevPubkey !== pubkey) {
     setPrevPubkey(pubkey)
-    setAddresses(pubkey ? cache.get(pubkey) ?? [] : [])
+    setAddresses(pubkey ? cache.get(pubkey) ?? readPersisted(pubkey) ?? [] : [])
     setError(null)
-    setLoading(Boolean(pubkey && active && !cache.has(pubkey)))
+    setLoading(Boolean(pubkey && active && !cache.has(pubkey) && !(pubkey && readPersisted(pubkey))))
   }
 
   useEffect(() => {
@@ -83,9 +126,19 @@ export function useOwnedAddresses() {
       return
     }
 
-    setAddresses([])
-    setError(null)
-    setLoading(true)
+    // Nothing in the session cache. Show any persisted result immediately and
+    // revalidate silently; only spin when we have nothing at all to show.
+    const persisted = readPersisted(pubkey)
+    const hadSomething = Boolean(persisted)
+    if (persisted) {
+      setAddresses(persisted)
+      setError(null)
+      setLoading(false)
+    } else {
+      setAddresses([])
+      setError(null)
+      setLoading(true)
+    }
 
     fetchOwnedAddresses(active)
       .then((result) => {
@@ -94,11 +147,17 @@ export function useOwnedAddresses() {
         // stays valid even if the user switched accounts mid-flight, so a
         // later switch back can reuse it instead of refetching.
         cache.set(pubkey, result)
+        writePersisted(pubkey, result)
         if (!alive) return
         setAddresses(result)
       })
       .catch((e) => {
         if (!alive) return
+        // A failed *revalidation* keeps the persisted list visible rather than
+        // replacing it with an error banner. Only surface the error when we had
+        // nothing to show — including an explicit reload(), which clears the
+        // persisted copy first so "Try again" can report a repeat failure.
+        if (hadSomething) return
         if (e instanceof Nip98AuthError) setError(AUTH_ERROR_MESSAGE)
         else setError(e instanceof Error ? e.message : String(e))
       })
@@ -113,7 +172,12 @@ export function useOwnedAddresses() {
 
   const reload = useCallback(() => {
     if (loading) return // fetch for the current pubkey is already in flight
-    if (pubkey) cache.delete(pubkey)
+    if (pubkey) {
+      cache.delete(pubkey)
+      // Drop the persisted copy too, so this forced retry reports an error on a
+      // repeat failure instead of silently keeping the stale list.
+      removePersisted(pubkey)
+    }
     setReloadNonce((n) => n + 1)
   }, [pubkey, loading])
 

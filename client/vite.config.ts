@@ -8,6 +8,10 @@ export default defineConfig({
   base: process.env.CLIENT_BASE_PATH ?? "/",
   plugins: [react()],
   server: {
+    // The e2e run starts the dev server headless where the file watcher is
+    // pure overhead (and exhausts inotify instances in sandboxed CI). Disable
+    // it there; normal `pnpm dev` keeps HMR.
+    watch: process.env.E2E ? null : undefined,
     proxy: {
       // api.formstr.app allows only a fixed set of origins and answers any
       // other with a 500 instead of a CORS rejection, so the browser cannot

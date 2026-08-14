@@ -37,6 +37,9 @@ export interface MailSettings {
   senderAddress?: string   // e.g. alice@mailstr.app
   signature?: string       // appended to outgoing emails
   bridgeDomains?: string[] // preferred bridge domains
+  onboardedAt?: number     // ms epoch the user finished relay onboarding; its
+                           // presence is the "seen once, any device" flag —
+                           // this event is NIP-44 synced across devices
 }
 
 export async function saveSettings(

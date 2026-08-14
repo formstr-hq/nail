@@ -2,6 +2,12 @@
 node_modules
 dist
 
+# Playwright e2e
+/test-results/
+/playwright-report/
+/blob-report/
+/.playwright/
+
 # env
 .env
 .env.local

@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { useThemeStore, type ThemePreference } from '@/store/theme'
 import { useOwnedAddresses } from '@/hooks/useOwnedAddresses'
+import { fetchDmRelayList, publishDmRelays } from '@/lib/nostr/relays'
 import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
+import { RelayManager } from '@/components/RelayManager'
 import { Button, IconButton } from '@/components/ui/Button'
-import { XIcon, AlertIcon } from '@/components/ui/icons'
+import { XIcon, AlertIcon, AtSignIcon, InboxIcon, PenIcon, SunIcon } from '@/components/ui/icons'
 
 // Sentinel select value for "type your own address" — kept distinct from any
 // real address string so it can never collide with an owned/bridge option.
@@ -17,8 +19,19 @@ const THEMES: { id: ThemePreference; label: string }[] = [
   { id: 'system', label: 'System' },
 ]
 
+export type SectionId = 'addresses' | 'relays' | 'composing' | 'appearance'
+
+const SECTIONS: { id: SectionId; label: string; icon: typeof AtSignIcon }[] = [
+  { id: 'addresses', label: 'Addresses', icon: AtSignIcon },
+  { id: 'relays', label: 'Relays', icon: InboxIcon },
+  { id: 'composing', label: 'Composing', icon: PenIcon },
+  { id: 'appearance', label: 'Appearance', icon: SunIcon },
+]
+
 interface SettingsModalProps {
   onClose: () => void
+  /** Which pane to open on. Defaults to Addresses. */
+  initialSection?: SectionId
 }
 
 /** A labelled block with a one-line explanation. Used for every setting. */
@@ -43,7 +56,7 @@ function Field({
 const inputClass =
   'h-9 w-full rounded-md border border-input bg-background px-3 text-[13px] text-foreground placeholder:text-subtle focus:outline-none'
 
-export function SettingsModal({ onClose }: SettingsModalProps) {
+export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
   const { account, active } = useAccountStore()
   const { settings, save } = useSettingsStore()
   const { preference, setPreference } = useThemeStore()
@@ -91,6 +104,29 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [signature, setSignature] = useState(settings.signature ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [section, setSection] = useState<SectionId>(initialSection ?? 'addresses')
+
+  // Inbox (kind-10050) relays. `null` while loading; the ref holds the fetched
+  // baseline so Save only republishes when the list actually changed — signing
+  // a fresh event on every Save would be wasteful.
+  const [relays, setRelays] = useState<string[] | null>(null)
+  const initialRelaysRef = useRef<string[] | null>(null)
+  useEffect(() => {
+    if (!account) return
+    let alive = true
+    fetchDmRelayList(account.pubkey)
+      .then((res) => {
+        if (!alive) return
+        setRelays(res.relays)
+        initialRelaysRef.current = res.relays
+      })
+      .catch(() => {
+        if (alive) setRelays([])
+      })
+    return () => {
+      alive = false
+    }
+  }, [account])
 
   const placeholder = `you@${BRIDGE_DOMAIN}`
 
@@ -115,6 +151,18 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     setSaving(true)
     setError('')
     try {
+      // Publish the inbox relay list first (its own kind-10050 event) when it
+      // changed, then the encrypted settings. Order matters only in that a
+      // relay-publish failure should surface before we close.
+      const relaysChanged =
+        relays !== null &&
+        initialRelaysRef.current !== null &&
+        (relays.length !== initialRelaysRef.current.length ||
+          relays.some((r, i) => r !== initialRelaysRef.current![i]))
+      if (relaysChanged) {
+        await publishDmRelays(relays!, account.pubkey, active)
+        initialRelaysRef.current = relays
+      }
       await save(
         { ...settings, senderAddress: senderAddress || undefined, signature: signature || undefined },
         account.pubkey,
@@ -139,7 +187,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        className="flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:max-w-md md:rounded-xl"
+        className="flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:h-[540px] md:max-w-2xl md:rounded-xl"
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <span className="eyebrow flex-1">Settings</span>
@@ -148,112 +196,163 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           </IconButton>
         </div>
 
-        <div className="flex flex-col gap-5 overflow-y-auto px-4 py-4">
-          {account && (
-            <Field label="Your addresses" hint={`Addresses linked to your account on ${BRIDGE_DOMAIN}.`}>
-              {addressesLoading && (
-                <p className="text-[11.5px] text-subtle">Loading your addresses…</p>
-              )}
-              {!addressesLoading && addressesError && (
-                <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
-                  <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-destructive" />
-                  <p className="flex-1 text-[11.5px] leading-relaxed text-destructive">
-                    {addressesError}
-                  </p>
-                  <Button size="sm" onClick={reloadAddresses} className="flex-none">
-                    Try again
-                  </Button>
-                </div>
-              )}
-              {!addressesLoading && !addressesError && addresses.length === 0 && (
-                <p className="text-[11.5px] text-subtle">
-                  No addresses yet. Your npub address below always works.
-                </p>
-              )}
-              {!addressesLoading && !addressesError && addresses.length > 0 && (
-                <div className="flex flex-col gap-1">
-                  {addresses.map((addr) => (
-                    <code
-                      key={addr}
-                      className="block w-full min-w-0 truncate rounded-md border border-input bg-muted px-3 py-2 font-mono text-[11px]"
-                    >
-                      {addr}
-                    </code>
-                  ))}
-                </div>
-              )}
-            </Field>
-          )}
-
-          <Field
-            label="Sender address"
-            hint="Shown as the From address on mail you send."
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+          {/* Section nav — a horizontal strip on mobile, a left rail from md up. */}
+          <nav
+            aria-label="Settings sections"
+            className="flex flex-none gap-1 overflow-x-auto border-b border-border p-2 md:w-44 md:flex-col md:gap-0.5 md:overflow-x-visible md:border-b-0 md:border-r"
           >
-            <select
-              value={senderMode}
-              onChange={(e) => handleSenderModeChange(e.target.value)}
-              className={inputClass}
-            >
-              {fixedSenderOptions.map((addr) => (
-                <option key={addr} value={addr}>
-                  {addr}
-                </option>
-              ))}
-              <option value={CUSTOM_SENDER}>Custom…</option>
-            </select>
-            {senderMode === CUSTOM_SENDER && (
-              <input
-                value={senderAddress}
-                onChange={(e) => setSenderAddress(e.target.value)}
-                placeholder={placeholder}
-                className={inputClass}
-              />
-            )}
-          </Field>
-
-          <Field
-            label="Signature"
-            hint="Added to the bottom of new messages, where you can still edit it before sending."
-          >
-            <textarea
-              value={signature}
-              onChange={(e) => setSignature(e.target.value)}
-              placeholder="Sent with Mail by Form*"
-              rows={3}
-              className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-subtle focus:outline-none"
-            />
-          </Field>
-
-          <Field label="Theme">
-            <div
-              role="radiogroup"
-              aria-label="Theme"
-              className="flex gap-1 rounded-md border border-input bg-background p-1"
-            >
-              {THEMES.map((t) => (
+            {SECTIONS.map((s) => {
+              const Icon = s.icon
+              const activeSection = section === s.id
+              return (
                 <button
-                  key={t.id}
+                  key={s.id}
                   type="button"
-                  role="radio"
-                  aria-checked={preference === t.id}
-                  onClick={() => setPreference(t.id)}
+                  onClick={() => setSection(s.id)}
+                  aria-current={activeSection ? 'page' : undefined}
                   className={[
-                    'flex-1 rounded-sm px-2 py-1.5 text-[12px] font-medium transition-colors duration-[120ms]',
-                    preference === t.id
-                      ? 'bg-accent text-foreground'
-                      : 'text-muted-foreground hover:text-foreground',
+                    'flex flex-none items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors duration-[120ms]',
+                    activeSection
+                      ? 'bg-accent font-medium text-foreground'
+                      : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                   ].join(' ')}
                 >
-                  {t.label}
+                  <Icon className="h-4 w-4 flex-none" />
+                  <span>{s.label}</span>
                 </button>
-              ))}
-            </div>
-          </Field>
+              )
+            })}
+          </nav>
 
-          <p className="border-t border-border pt-4 text-[11px] leading-relaxed text-subtle">
-            Your address, signature and sender settings are encrypted and synced to your relays
-            as a kind 30078 event. Theme is kept on this device only.
-          </p>
+          <div className="flex min-w-0 flex-1 flex-col gap-5 overflow-y-auto px-4 py-4 md:px-5">
+            {section === 'addresses' && (
+              <>
+                {account && (
+                  <Field
+                    label="Your addresses"
+                    hint={`Addresses linked to your account on ${BRIDGE_DOMAIN}.`}
+                  >
+                    {addressesLoading && (
+                      <p className="text-[11.5px] text-subtle">Loading your addresses…</p>
+                    )}
+                    {!addressesLoading && addressesError && (
+                      <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
+                        <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-destructive" />
+                        <p className="flex-1 text-[11.5px] leading-relaxed text-destructive">
+                          {addressesError}
+                        </p>
+                        <Button size="sm" onClick={reloadAddresses} className="flex-none">
+                          Try again
+                        </Button>
+                      </div>
+                    )}
+                    {!addressesLoading && !addressesError && addresses.length === 0 && (
+                      <p className="text-[11.5px] text-subtle">
+                        No addresses yet. Your npub address below always works.
+                      </p>
+                    )}
+                    {!addressesLoading && !addressesError && addresses.length > 0 && (
+                      <div className="flex flex-col gap-1">
+                        {addresses.map((addr) => (
+                          <code
+                            key={addr}
+                            className="block w-full min-w-0 truncate rounded-md border border-input bg-muted px-3 py-2 font-mono text-[11px]"
+                          >
+                            {addr}
+                          </code>
+                        ))}
+                      </div>
+                    )}
+                  </Field>
+                )}
+
+                <Field label="Sender address" hint="Shown as the From address on mail you send.">
+                  <select
+                    value={senderMode}
+                    onChange={(e) => handleSenderModeChange(e.target.value)}
+                    className={inputClass}
+                  >
+                    {fixedSenderOptions.map((addr) => (
+                      <option key={addr} value={addr}>
+                        {addr}
+                      </option>
+                    ))}
+                    <option value={CUSTOM_SENDER}>Custom…</option>
+                  </select>
+                  {senderMode === CUSTOM_SENDER && (
+                    <input
+                      value={senderAddress}
+                      onChange={(e) => setSenderAddress(e.target.value)}
+                      placeholder={placeholder}
+                      className={inputClass}
+                    />
+                  )}
+                </Field>
+              </>
+            )}
+
+            {section === 'relays' && (
+              <Field
+                label="Inbox relays"
+                hint="Where your encrypted mail is delivered and read from (kind 10050)."
+              >
+                {relays === null ? (
+                  <p className="text-[11.5px] text-subtle">Loading your relays…</p>
+                ) : (
+                  <RelayManager relays={relays} onChange={setRelays} />
+                )}
+              </Field>
+            )}
+
+            {section === 'composing' && (
+              <Field
+                label="Signature"
+                hint="Added to the bottom of new messages, where you can still edit it before sending."
+              >
+                <textarea
+                  value={signature}
+                  onChange={(e) => setSignature(e.target.value)}
+                  placeholder="Sent with Mail by Form*"
+                  rows={3}
+                  className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-[13px] text-foreground placeholder:text-subtle focus:outline-none"
+                />
+              </Field>
+            )}
+
+            {section === 'appearance' && (
+              <Field label="Theme">
+                <div
+                  role="radiogroup"
+                  aria-label="Theme"
+                  className="flex gap-1 rounded-md border border-input bg-background p-1"
+                >
+                  {THEMES.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={preference === t.id}
+                      onClick={() => setPreference(t.id)}
+                      className={[
+                        'flex-1 rounded-sm px-2 py-1.5 text-[12px] font-medium transition-colors duration-[120ms]',
+                        preference === t.id
+                          ? 'bg-accent text-foreground'
+                          : 'text-muted-foreground hover:text-foreground',
+                      ].join(' ')}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            )}
+
+            <p className="mt-auto border-t border-border pt-4 text-[11px] leading-relaxed text-subtle">
+              Your address, signature and sender settings are encrypted and synced to your relays
+              as a kind 30078 event. Theme is kept on this device only.
+            </p>
+          </div>
         </div>
 
         {error && (

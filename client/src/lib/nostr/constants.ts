@@ -14,11 +14,16 @@ export const KIND_SETTINGS = 30078
 
 export const LABEL_NAMESPACE = 'mail'
 
-export const DEFAULT_RELAYS = [
-  'wss://relay.damus.io',
-  'wss://relay.nostr.band',
-  'wss://nos.lol',
-]
+// Overridable so the e2e suite can point the whole app at a single local mock
+// relay (VITE_DEFAULT_RELAYS=ws://localhost:PORT); production uses the built-in
+// public set.
+const DEFAULT_RELAYS_RAW: string =
+  (import.meta.env.VITE_DEFAULT_RELAYS as string | undefined) ??
+  'wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social'
+
+export const DEFAULT_RELAYS: string[] = DEFAULT_RELAYS_RAW.split(',')
+  .map((r) => r.trim())
+  .filter(Boolean)
 
 // NIP-44 / NIP-59 plaintext size limit
 export const BLOSSOM_THRESHOLD_BYTES = 60_000

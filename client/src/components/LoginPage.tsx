@@ -3,6 +3,7 @@ import { renderLoginHtml, attachLoginListeners } from '@formstr/signer/ui'
 import '@formstr/signer/styles.css'
 import { nostrSigner } from '@/lib/nostr/signer'
 import { getSignerPool } from '@/lib/nostr/signerPool'
+import { markFreshSignup } from '@/lib/freshSignup'
 import { DEFAULT_RELAYS } from '@/lib/nostr/constants'
 import { useAccountStore } from '@/store/account'
 import { Button } from '@/components/ui/Button'
@@ -289,11 +290,24 @@ export function SignerLogin({
     })
     const detachQr = autoGenerateQr(el)
     const detachNav = methodListNav(el)
+    // A brand-new key created here provably has no kind-10050 relay list, so
+    // flag it for the relay onboarding. Capture phase on the container runs
+    // before the package's own created-ack handler fires onLogin, so the flag
+    // is set by the time onboarding reads it. Only the create path clicks
+    // created-ack, so imports/extensions are never marked.
+    const markCreated = (e: Event) => {
+      if ((e.target as HTMLElement | null)?.closest('[data-action="created-ack"]')) {
+        const pk = nostrSigner.getActiveAccount()?.pubkey
+        if (pk) markFreshSignup(pk)
+      }
+    }
+    el.addEventListener('click', markCreated, true)
     return () => {
       detachNav()
       detachQr()
       detachCancel?.()
       binding.detach()
+      el.removeEventListener('click', markCreated, true)
       el.innerHTML = ''
     }
   }, [refresh, onLoggedIn, onCancel])

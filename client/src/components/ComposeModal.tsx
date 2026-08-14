@@ -86,20 +86,24 @@ export function ComposeModal({
 
   const defaultAddress = account ? `${account.npub}@${BRIDGE_DOMAIN}` : ''
 
-  // App-wide From. Seeded from the inbox the user is viewing (the sidebar's
-  // active alias) so "write from the inbox I'm in" is the default, falling back
-  // to the saved sender address then the npub. It is the npub that used to
-  // silently bounce off the bridge; the guard below now blocks that path. The
-  // picker writes back through the *silent* setter so the sidebar highlight
-  // follows the choice without clearing the email the user has open.
-  const [fromAddress, setFromAddress] = useState(() => {
+  // App-wide From, fully derived from the inbox the user is viewing (the
+  // sidebar's active alias), falling back to the saved sender address then the
+  // npub. Deriving it — rather than seeding a `useState` once at mount — is the
+  // fix for the composer/sidebar handle mismatch: `selfAddresses` (owned
+  // addresses), `settings.senderAddress`, and `inboxFilter` all resolve/change
+  // *after* the composer opens, and a frozen seed left the From showing a
+  // different handle than the sidebar. An explicit pick writes through to
+  // `inboxFilter` (the select's onChange, silent setter), so this expression
+  // tracks the user's choice too and the two never disagree. It is the npub
+  // that used to silently bounce off the bridge; the guard below blocks that.
+  const fromAddress = useMemo(() => {
     if (inboxFilter) {
       const match = selfAddresses.find((a) => a.toLowerCase() === inboxFilter)
       if (match) return match
     }
     if (settings.senderAddress) return settings.senderAddress
     return defaultAddress || selfAddresses[0] || ''
-  })
+  }, [inboxFilter, selfAddresses, settings.senderAddress, defaultAddress])
   // Selected alias first, the rest in selfAddresses order (npub next, then
   // owned aliases) — so the dropdown leads with the active sender.
   const fromOptions = useMemo(() => {
@@ -422,9 +426,9 @@ export function ComposeModal({
             <select
               value={fromAddress}
               onChange={(e) => {
-                setFromAddress(e.target.value)
-                // Mirror the choice into the sidebar highlight (app-wide) without
-                // clearing the open message.
+                // The From is derived from inboxFilter, so a pick is expressed by
+                // updating the filter — which mirrors the choice into the sidebar
+                // highlight (app-wide) without clearing the open message.
                 setInboxFilter(e.target.value, true)
               }}
               className="mt-0.5 w-full max-w-full bg-transparent font-mono text-[10.5px] text-foreground focus:outline-none"

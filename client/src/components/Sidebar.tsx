@@ -19,6 +19,8 @@ const FOLDERS: { id: EmailFolder; label: string }[] = [
 interface SidebarProps {
   onCompose: () => void
   onSettings: () => void
+  /** Open Settings straight to the Relays pane (from the relay status line). */
+  onOpenRelays: () => void
   onAddAccount: () => void
   /** The account's own addresses, for the per-alias inbox filter. */
   aliases: string[]
@@ -62,7 +64,7 @@ function RelayState({ status }: { status: InboxStatus }) {
   )
 }
 
-export function Sidebar({ onCompose, onSettings, onAddAccount, aliases, status }: SidebarProps) {
+export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, aliases, status }: SidebarProps) {
   const { folder, setFolder, emails, inboxFilter, setInboxFilter } = useMailStore()
   const { account } = useAccountStore()
 
@@ -165,7 +167,15 @@ export function Sidebar({ onCompose, onSettings, onAddAccount, aliases, status }
 
       <div className="mt-auto border-t border-border px-3 pb-3 pt-3">
         <AccountSwitcher onAddAccount={onAddAccount} />
-        <RelayState status={status} />
+        <button
+          type="button"
+          onClick={onOpenRelays}
+          title="Relay settings"
+          aria-label="Relay settings"
+          className="-mx-1 block w-[calc(100%+0.5rem)] rounded-md px-1 text-left transition-colors hover:bg-accent/60"
+        >
+          <RelayState status={status} />
+        </button>
         <div className="flex items-center gap-1 pt-2">
           <IconButton title="Settings" onClick={onSettings}>
             <SettingsIcon className="h-4 w-4" />
