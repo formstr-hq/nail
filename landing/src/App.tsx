@@ -1,9 +1,28 @@
-import { useEffect } from "react";
-import { AtSign, Github, Inbox, KeyRound, Lock, Radio } from "lucide-react";
+import { useLayoutEffect, useEffect, useState } from "react";
+import {
+  AtSign,
+  Github,
+  Inbox,
+  KeyRound,
+  Loader2,
+  Lock,
+  Radio,
+} from "lucide-react";
 import "./index.css";
 import { config } from "./lib/config";
-import { hasBuyIntent, redirectReturningOwner } from "./lib/session";
+import {
+  hasBuyIntent,
+  hasResumableSession,
+  redirectReturningOwner,
+} from "./lib/session";
 import SignupSection from "./components/SignupSection";
+
+// Effects never run during server prerender, so `useLayoutEffect` there only
+// logs a warning. Fall back to `useEffect` on the server; on the client use
+// the layout variant so we can swap in the "checking…" screen *before paint*
+// — no flash of the signup hero for an owner we're about to redirect.
+const useIsomorphicLayoutEffect =
+  typeof window !== "undefined" ? useLayoutEffect : useEffect;
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 
 /* ------------------------------------------------------------------ */
@@ -147,18 +166,50 @@ export function Footer() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Checking screen — held while we decide owner-vs-visitor              */
+/* ------------------------------------------------------------------ */
+
+// Shown to a returning visitor while the silent resume runs, so an owner is
+// never flashed the signup hero on the way to their inbox. Same paper canvas
+// as the landing page, so if we do fall through to the hero there's no jarring
+// swap of background.
+function CheckingScreen() {
+  return (
+    <div className="flex min-h-[100svh] flex-col items-center justify-center gap-4 bg-paper text-ink">
+      <Glyph className="h-12 w-12 animate-pulse" />
+      <p className="flex items-center gap-2 text-sm text-gray-500">
+        <Loader2 size={15} className="animate-spin text-primary" />
+        Opening your inbox…
+      </p>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
 function Home() {
   // A returning user who already owns a mailbox is sent straight to the inbox
-  // rather than being shown the signup hero again. Runs once on mount, and
-  // never when a `?buy=1` deep link asks for the purchase flow (that visit is
-  // an owner deliberately here to claim another address — see session.ts).
-  useEffect(() => {
-    if (hasBuyIntent()) return;
-    void redirectReturningOwner();
+  // rather than being shown the signup hero again. While that silent resume
+  // runs we hold a "checking…" screen so the owner never sees the landing page
+  // flash by. A brand-new visitor (no persisted account) and any `?buy=1` deep
+  // link (an owner here to claim another address — see session.ts) skip the
+  // check entirely and get the hero immediately.
+  const [checking, setChecking] = useState(false);
+
+  useIsomorphicLayoutEffect(() => {
+    if (hasBuyIntent() || !hasResumableSession()) return;
+    setChecking(true);
+    void redirectReturningOwner().then((redirected) => {
+      // Not an owner (or the resume failed) — reveal the landing page.
+      // On success the browser is already navigating away, so leave the
+      // checking screen up rather than flashing the hero mid-redirect.
+      if (!redirected) setChecking(false);
+    });
   }, []);
+
+  if (checking) return <CheckingScreen />;
 
   return (
     // min-h (not fixed h + overflow-hidden) so a short viewport — a small

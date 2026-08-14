@@ -40,6 +40,21 @@ export function hasBuyIntent(
 }
 
 /**
+ * Synchronous: is there a persisted account a silent resume could unlock?
+ * Only a returning visitor has one. We check this *before paint* to decide
+ * whether to show the "checking…" screen — so an owner we're about to
+ * redirect never sees a flash of the signup hero, while a brand-new visitor
+ * (no account) is shown the landing page immediately with no needless spinner.
+ */
+export function hasResumableSession(): boolean {
+  try {
+    return signer.getActiveAccount() != null;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * On a plain visit, a returning user who already owns a mailbox is sent
  * straight to the inbox instead of being shown the signup hero again. This is
  * the page-level auto-redirect: it runs on mount, independent of the signup
