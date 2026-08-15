@@ -5,6 +5,7 @@ import { nostrSigner } from '@/lib/nostr/signer'
 import { getSignerPool } from '@/lib/nostr/signerPool'
 import { markFreshSignup } from '@/lib/freshSignup'
 import { DEFAULT_RELAYS } from '@/lib/nostr/constants'
+import { NostrSignerPlugin } from 'nostr-signer-capacitor-plugin'
 import { useAccountStore } from '@/store/account'
 import { isNativeApp } from '@/lib/platform'
 import { Button } from '@/components/ui/Button'
@@ -92,6 +93,14 @@ function tuneLoginUi(el: HTMLElement) {
     el.querySelector('[data-tab="android"]')?.remove()
     el.querySelector('[data-panel="android"]')?.remove()
   }
+  // Mobile keyboards autocapitalize/autocorrect by default, which can silently
+  // alter a passphrase — and NIP-49 then fails to decrypt with an opaque
+  // "invalid tag". Turn those off on every password field the modal renders.
+  el.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach((input) => {
+    input.setAttribute('autocapitalize', 'none')
+    input.setAttribute('autocorrect', 'off')
+    input.setAttribute('spellcheck', 'false')
+  })
   const relaysInput = el.querySelector<HTMLInputElement>('.nostr-signer__input--relays')
   if (relaysInput) relaysInput.value = DEFAULT_RELAYS.join(', ')
 
@@ -253,6 +262,9 @@ function UnlockForm({ onUseAnother }: { onUseAnother: () => void }) {
       <input
         type="password"
         autoFocus
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
         placeholder="Passphrase"
         value={passphrase}
         onChange={(e) => setPassphrase(e.target.value)}
@@ -344,6 +356,25 @@ export function SignerLogin({
     const detachQr = autoGenerateQr(el)
     const detachNav = methodListNav(el)
     const detachFit = fitOverlayToViewport(el)
+    // The NIP-55 row launches an Android intent to a signer app; if none is
+    // installed that intent has no target and crashes the app. So only surface
+    // the row once we've confirmed a signer is present — remove it otherwise.
+    let signerCheckCancelled = false
+    if (isNativeApp()) {
+      NostrSignerPlugin.isExternalSignerInstalled()
+        .then(({ installed }) => {
+          if (!signerCheckCancelled && !installed) {
+            el.querySelector('[data-tab="android"]')?.remove()
+            el.querySelector('[data-panel="android"]')?.remove()
+          }
+        })
+        .catch(() => {
+          if (!signerCheckCancelled) {
+            el.querySelector('[data-tab="android"]')?.remove()
+            el.querySelector('[data-panel="android"]')?.remove()
+          }
+        })
+    }
     // A brand-new key created here provably has no kind-10050 relay list, so
     // flag it for the relay onboarding. Capture phase on the container runs
     // before the package's own created-ack handler fires onLogin, so the flag
@@ -357,6 +388,7 @@ export function SignerLogin({
     }
     el.addEventListener('click', markCreated, true)
     return () => {
+      signerCheckCancelled = true
       detachFit()
       detachNav()
       detachQr()
