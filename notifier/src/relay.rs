@@ -117,7 +117,9 @@ fn handle_frame(text: &str, shared: &Arc<Shared>) {
                 .get("created_at")
                 .and_then(Value::as_u64)
                 .unwrap_or(0);
-            shared.report_if_new(id, created_at);
+            // Forward the wrap verbatim so a signer-equipped host can unwrap it;
+            // a metadata-only host just uses id + created_at.
+            shared.report_if_new(id, created_at, &event.to_string());
         }
         // ["EOSE", <sub>] — end of stored events; nothing to do.
         // ["NOTICE"/"CLOSED", ...] — log for diagnostics.

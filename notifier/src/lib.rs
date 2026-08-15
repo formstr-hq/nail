@@ -45,9 +45,15 @@ pub struct WatchConfig {
 #[uniffi::export(callback_interface)]
 pub trait NotifierDelegate: Send + Sync {
     /// A previously-unseen gift-wrap addressed to the owner arrived.
+    ///
     /// `created_at` is the wrap's Unix timestamp (seconds); the host should
-    /// track the maximum to advance `since_secs` across restarts.
-    fn on_new_mail(&self, event_id: String, created_at: u64);
+    /// track the maximum to advance `since_secs` across restarts. `wrap_json`
+    /// is the full kind-1059 event as received — public ciphertext only, no
+    /// secret. A metadata-only host ignores it; a host with a NIP-55/NIP-46
+    /// signer can hand it off to be unwrapped (wrap → seal → rumor) to enrich
+    /// the notification with sender/subject. Kept here so that enrichment never
+    /// requires a change to this key-free core.
+    fn on_new_mail(&self, event_id: String, created_at: u64, wrap_json: String);
 
     /// At least one relay is connected (`true`) or all are disconnected
     /// (`false`). Drives the foreground-service notification's status text.
@@ -68,7 +74,8 @@ pub(crate) struct Shared {
 
 impl Shared {
     /// Report a wrap if its id is new. Returns `true` when it was reported.
-    pub(crate) fn report_if_new(&self, event_id: &str, created_at: u64) -> bool {
+    /// `wrap_json` is forwarded verbatim for optional host-side unwrapping.
+    pub(crate) fn report_if_new(&self, event_id: &str, created_at: u64, wrap_json: &str) -> bool {
         if created_at < self.config.since_secs {
             return false;
         }
@@ -78,7 +85,8 @@ impl Shared {
                 return false;
             }
         }
-        self.delegate.on_new_mail(event_id.to_string(), created_at);
+        self.delegate
+            .on_new_mail(event_id.to_string(), created_at, wrap_json.to_string());
         true
     }
 
@@ -165,7 +173,7 @@ mod tests {
     }
 
     impl NotifierDelegate for Arc<Recorder> {
-        fn on_new_mail(&self, event_id: String, created_at: u64) {
+        fn on_new_mail(&self, event_id: String, created_at: u64, _wrap_json: String) {
             self.mail.lock().unwrap().push((event_id, created_at));
         }
         fn on_connectivity(&self, any_connected: bool) {
@@ -191,10 +199,10 @@ mod tests {
         let rec = Arc::new(Recorder::default());
         let s = shared(100, &rec);
 
-        assert!(s.report_if_new("a", 150));
-        assert!(!s.report_if_new("a", 150)); // duplicate id
-        assert!(!s.report_if_new("b", 50)); // before `since`
-        assert!(s.report_if_new("c", 100)); // exactly `since` is included
+        assert!(s.report_if_new("a", 150, "{}"));
+        assert!(!s.report_if_new("a", 150, "{}")); // duplicate id
+        assert!(!s.report_if_new("b", 50, "{}")); // before `since`
+        assert!(s.report_if_new("c", 100, "{}")); // exactly `since` is included
 
         assert_eq!(
             *rec.mail.lock().unwrap(),
