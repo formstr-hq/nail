@@ -1,20 +1,26 @@
 package com.formstr.mail.notify
 
 import android.Manifest
-import android.content.Intent
-import android.os.Build
-import androidx.core.content.ContextCompat
+import android.content.Context
+import androidx.work.Constraints
+import androidx.work.Data
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
 import com.getcapacitor.annotation.Permission
+import java.util.concurrent.TimeUnit
 
 /**
- * JS bridge for the background mail watcher. The web app calls `start` after
+ * JS bridge for background mail notifications. The web app calls `start` after
  * login with the account pubkey and its resolved kind-10050 DM relays; the
- * plugin runs [MailWatchService] as a foreground service. `stop` tears it down
- * (e.g. on logout).
+ * plugin schedules a periodic [MailPollWorker] via WorkManager (battery-friendly
+ * — no foreground service). `stop` cancels it (e.g. on logout).
  *
  * POST_NOTIFICATIONS (Android 13+) is declared so JS can request it through the
  * standard Capacitor permission API before starting.
@@ -45,22 +51,50 @@ class NotifierPlugin : Plugin() {
             call.reject("at least one relay is required")
             return
         }
-        // Unix seconds fit an Int until 2038; the host advances this from what
-        // the service has already seen, so 0 (fetch recent history) is fine too.
-        val since = (call.getInt("since") ?: 0).toLong()
 
-        val intent = Intent(context, MailWatchService::class.java).apply {
-            putExtra(MailWatchService.EXTRA_PUBKEY, pubkey)
-            putExtra(MailWatchService.EXTRA_RELAYS, relays.toTypedArray())
-            putExtra(MailWatchService.EXTRA_SINCE, since)
+        // Baseline `since` to now on first enable, so we only alert on mail that
+        // arrives *after* the user turned notifications on — never the backlog.
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val sinceKey = "since_$pubkey"
+        if (!prefs.contains(sinceKey)) {
+            prefs.edit().putLong(sinceKey, System.currentTimeMillis() / 1000).apply()
         }
-        ContextCompat.startForegroundService(context, intent)
+
+        val data = Data.Builder()
+            .putString(MailPollWorker.KEY_PUBKEY, pubkey)
+            .putStringArray(MailPollWorker.KEY_RELAYS, relays.toTypedArray())
+            .build()
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
+
+        val wm = WorkManager.getInstance(context)
+        // 15 min is WorkManager's minimum period; the OS batches it with other
+        // wakeups and defers under Doze, which is exactly the battery win.
+        val periodic = PeriodicWorkRequestBuilder<MailPollWorker>(15, TimeUnit.MINUTES)
+            .setInputData(data)
+            .setConstraints(constraints)
+            .build()
+        wm.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, periodic)
+
+        // Poll once right away so the first check isn't up to 15 min out.
+        val immediate = OneTimeWorkRequestBuilder<MailPollWorker>()
+            .setInputData(data)
+            .setConstraints(constraints)
+            .build()
+        wm.enqueue(immediate)
+
         call.resolve()
     }
 
     @PluginMethod
     fun stop(call: PluginCall) {
-        context.stopService(Intent(context, MailWatchService::class.java))
+        WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
         call.resolve()
+    }
+
+    companion object {
+        private const val WORK_NAME = "mail-poll"
+        private const val PREFS = "notifier"
     }
 }

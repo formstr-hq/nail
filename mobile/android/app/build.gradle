@@ -51,6 +51,8 @@ dependencies {
     implementation "androidx.core:core-ktx:$androidxCoreVersion"
     // JNA backs the notifier UniFFI bindings; the @aar variant ships the .so's.
     implementation "net.java.dev.jna:jna:5.14.0@aar"
+    // WorkManager runs the periodic background mail poll.
+    implementation "androidx.work:work-runtime:2.9.1"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"

@@ -24,12 +24,22 @@ subject preview (that would require the key and couple us to the signer).
 
 ## Shape
 
-- `WatchConfig { owner_pubkey_hex, relays, since_secs }` — all public data. The
-  host persists the newest `created_at` it saw and passes it back as
-  `since_secs` so a restart never re-notifies old mail.
-- `NotifierDelegate` — host callback interface (`on_new_mail`, `on_connectivity`).
-- `Watcher::start(config, delegate) -> Arc<Watcher>` / `Watcher::stop()` — owns
-  its own Tokio runtime on a dedicated thread, so Kotlin/Swift callers need none.
+Two modes over the same key-free core:
+
+- **Poll (chosen for Android)** — `poll_once(config, timeout_secs) -> Vec<GiftWrap>`:
+  one bounded fetch (connect → read stored wraps to EOSE → disconnect), returns
+  new arrivals de-duplicated by id, blocks until done. No foreground service, no
+  persistent socket → negligible battery. Driven by a WorkManager periodic job.
+- **Instant (optional, unused on Android for now)** — `Watcher::start(config,
+  delegate)` / `stop()`: an always-on subscription that streams live arrivals via
+  `NotifierDelegate` (`on_new_mail`, `on_connectivity`), owning its own Tokio
+  runtime. Real-time, but needs a foreground service to stay alive — the battery
+  cost we opted out of.
+
+`WatchConfig { owner_pubkey_hex, relays, since_secs }` is all public data. The
+host persists the newest `created_at` it saw and passes it back as `since_secs`
+(the Android worker polls from `since - slack` and dedups by id) so a poll never
+re-notifies old mail.
 
 TLS is rustls (pure Rust) so there is no OpenSSL to cross-compile for the NDK.
 
@@ -50,14 +60,19 @@ cargo run --bin uniffi-bindgen -- generate \
 
 ## Roadmap
 
-- [x] **Phase 1 — core crate** (this): key-free relay watcher + UniFFI surface,
+- [x] **Phase 1 — core crate**: key-free relay watcher + UniFFI surface,
       compiling and unit-tested on host.
-- [ ] **Phase 2 — Android native**: cross-compile to `jniLibs`, generate Kotlin
-      bindings, wrap in a **foreground service** (the "background too" decision)
-      that holds the `Watcher` and posts local notifications on `on_new_mail`.
-- [ ] **Phase 3 — Capacitor plugin**: `start({pubkey, relays})` / `stop()` from
-      JS; the client calls it after login with the account pubkey + resolved
-      kind-10050 relays, and persists `since` between runs.
-- [ ] **Phase 4 — iOS**: same crate via a Notification Service Extension. Note:
-      iOS forbids persistent background sockets, so true background delivery
-      there will need a push wake-up — a separate design when iOS ships.
+- [x] **Phase 2 — Android native**: cross-compile to `jniLibs` + Kotlin bindings
+      (`scripts/build-notifier.sh`, run by a Gradle task). Landed first as a
+      foreground service, then **switched to a WorkManager periodic poll**
+      (`MailPollWorker` + `pollOnce`) for battery; `NotifierPlugin` schedules it.
+      Verified via `:app:assembleDebug`.
+- [ ] **Phase 3 — JS wiring**: the client calls `Notifier.start({pubkey,
+      relays})` after login (resolved kind-10050 relays), requests
+      POST_NOTIFICATIONS, and `stop`s on logout. Then run on-device.
+- [ ] **Enrichment (optional)**: unwrap the forwarded `wrap_json` via a
+      NIP-55/NIP-46 signer to show sender/subject (host-side; ncryptsec stays
+      metadata-only). See the top-level project notes.
+- [ ] **Phase 4 — iOS**: same crate via a Notification Service Extension / BG
+      refresh. iOS forbids persistent background sockets, but a periodic poll
+      maps cleanly onto BGAppRefreshTask.

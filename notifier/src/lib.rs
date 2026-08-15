@@ -39,6 +39,50 @@ pub struct WatchConfig {
     pub since_secs: u64,
 }
 
+/// A gift-wrap returned by [`poll_once`]. `wrap_json` is the full kind-1059
+/// event (public ciphertext only) so a signer-equipped host can unwrap it for
+/// sender/subject; a metadata-only host uses just `id` + `created_at`.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct GiftWrap {
+    pub id: String,
+    pub created_at: u64,
+    pub wrap_json: String,
+}
+
+/// One bounded poll of every relay: connect, read stored gift-wraps addressed to
+/// the owner from `config.since_secs` onward up to EOSE, then disconnect.
+/// Returns the arrivals, de-duplicated by id across relays. Blocks until all
+/// relays finish or `timeout_secs` elapses (per relay), so a WorkManager worker
+/// can call it directly on its background thread. Holds no key and never
+/// decrypts — the battery-friendly counterpart to the always-on [`Watcher`].
+#[uniffi::export]
+pub fn poll_once(config: WatchConfig, timeout_secs: u64) -> Vec<GiftWrap> {
+    let runtime = Runtime::new().expect("build tokio runtime");
+    runtime.block_on(async move {
+        let per_relay = std::time::Duration::from_secs(timeout_secs.max(1));
+        let fetches = config.relays.iter().map(|url| async {
+            tokio::time::timeout(per_relay, relay::poll_relay(url, &config))
+                .await
+                .unwrap_or_default()
+        });
+        let results = futures_util::future::join_all(fetches).await;
+
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for wraps in results {
+            for (id, created_at, wrap_json) in wraps {
+                if created_at < config.since_secs {
+                    continue;
+                }
+                if seen.insert(id.clone()) {
+                    out.push(GiftWrap { id, created_at, wrap_json });
+                }
+            }
+        }
+        out
+    })
+}
+
 /// Implemented by the host to receive watcher events. Callbacks fire on the
 /// watcher's runtime threads and must return promptly — post to a handler and
 /// get out; do not block.
@@ -208,6 +252,24 @@ mod tests {
             *rec.mail.lock().unwrap(),
             vec![("a".into(), 150), ("c".into(), 100)]
         );
+    }
+
+    #[test]
+    fn parses_event_and_eose_frames() {
+        use crate::relay::{parse_frame, Frame};
+
+        let event = r#"["EVENT","mail",{"id":"abc","created_at":1723,"kind":1059}]"#;
+        match parse_frame(event) {
+            Frame::Event { id, created_at, json } => {
+                assert_eq!(id, "abc");
+                assert_eq!(created_at, 1723);
+                assert!(json.contains("\"kind\":1059"));
+            }
+            _ => panic!("expected Event"),
+        }
+        assert!(matches!(parse_frame(r#"["EOSE","mail"]"#), Frame::Eose));
+        assert!(matches!(parse_frame(r#"["NOTICE","hi"]"#), Frame::Other));
+        assert!(matches!(parse_frame("not json"), Frame::Other));
     }
 
     #[test]
