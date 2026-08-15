@@ -84,15 +84,6 @@ const MAILSTR_GLYPH =
  * primary card, and the rest get icon rows under a divider.
  */
 function tuneLoginUi(el: HTMLElement) {
-  // NIP-55 signer apps exist only on Android; a NIP-07 browser extension only
-  // on the web. Show whichever fits the platform and drop the other.
-  if (isNativeApp()) {
-    el.querySelector('[data-tab="extension"]')?.remove()
-    el.querySelector('[data-panel="extension"]')?.remove()
-  } else {
-    el.querySelector('[data-tab="android"]')?.remove()
-    el.querySelector('[data-panel="android"]')?.remove()
-  }
   // Mobile keyboards autocapitalize/autocorrect by default, which can silently
   // alter a passphrase — and NIP-49 then fails to decrypt with an opaque
   // "invalid tag". Turn those off on every password field the modal renders.
@@ -214,6 +205,21 @@ function fitOverlayToViewport(el: HTMLElement): () => void {
     vv.removeEventListener('resize', sync)
     vv.removeEventListener('scroll', sync)
   }
+}
+
+/**
+ * Drop the sign-in method that doesn't apply to this platform: NIP-55 signer
+ * apps exist only on Android, a NIP-07 browser extension only on the web.
+ *
+ * MUST run *after* attachLoginListeners: the package wires the extension button
+ * unconditionally (`on(q('[data-action="extension-login"]'), …)`), so removing
+ * that element earlier makes the query null and crashes the whole modal with
+ * "Cannot read properties of null (reading 'addEventListener')".
+ */
+function removeInapplicableMethod(el: HTMLElement) {
+  const id = isNativeApp() ? 'extension' : 'android'
+  el.querySelector(`[data-tab="${id}"]`)?.remove()
+  el.querySelector(`[data-panel="${id}"]`)?.remove()
 }
 
 /** Auto-generate the nostrconnect QR when the Remote (QR) tab opens. */
@@ -367,6 +373,9 @@ export function SignerLogin({
       onCancel,
       onError: (err) => setError(friendlyUnlockError(err)),
     })
+    // After the package has wired its listeners, so removing an element can't
+    // null out one of its queries (see removeInapplicableMethod).
+    removeInapplicableMethod(el)
     const detachQr = autoGenerateQr(el)
     const detachNav = methodListNav(el)
     const detachFit = fitOverlayToViewport(el)
