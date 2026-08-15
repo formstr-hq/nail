@@ -7,3 +7,6 @@ project(':capacitor-app').projectDir = new File('../node_modules/@capacitor/app/
 
 include ':capacitor-status-bar'
 project(':capacitor-status-bar').projectDir = new File('../node_modules/@capacitor/status-bar/android')
+
+include ':nostr-signer-capacitor-plugin'
+project(':nostr-signer-capacitor-plugin').projectDir = new File('../node_modules/nostr-signer-capacitor-plugin/android')

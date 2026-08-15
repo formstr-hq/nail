@@ -6,6 +6,7 @@ import { getSignerPool } from '@/lib/nostr/signerPool'
 import { markFreshSignup } from '@/lib/freshSignup'
 import { DEFAULT_RELAYS } from '@/lib/nostr/constants'
 import { useAccountStore } from '@/store/account'
+import { isNativeApp } from '@/lib/platform'
 import { Button } from '@/components/ui/Button'
 import { BrandGlyph } from '@/components/ui/icons'
 
@@ -26,6 +27,11 @@ const TAB_COPY: Record<string, { title: string; desc: string; icon: string }> = 
     title: 'Create a new account',
     desc: 'Fresh key, protected by a passphrase',
     icon: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/>',
+  },
+  android: {
+    title: 'Signer app',
+    desc: 'Amber or another NIP-55 signer',
+    icon: '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
   },
   extension: {
     title: 'Browser extension',
@@ -49,8 +55,10 @@ const TAB_COPY: Record<string, { title: string; desc: string; icon: string }> = 
   },
 }
 
-/** Order of the "already have a key?" rows under the create card. */
-const SECONDARY_TABS = ['extension', 'ncryptsec', 'bunker', 'nostrconnect']
+/** Order of the "already have a key?" rows under the create card. `android`
+ *  (NIP-55) shows only in the native app and `extension` only on the web —
+ *  tuneLoginUi removes whichever doesn't apply, so listing both is safe. */
+const SECONDARY_TABS = ['android', 'extension', 'ncryptsec', 'bunker', 'nostrconnect']
 
 const ICON_SVG_OPEN =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -75,8 +83,15 @@ const MAILSTR_GLYPH =
  * primary card, and the rest get icon rows under a divider.
  */
 function tuneLoginUi(el: HTMLElement) {
-  el.querySelector('[data-tab="android"]')?.remove()
-  el.querySelector('[data-panel="android"]')?.remove()
+  // NIP-55 signer apps exist only on Android; a NIP-07 browser extension only
+  // on the web. Show whichever fits the platform and drop the other.
+  if (isNativeApp()) {
+    el.querySelector('[data-tab="extension"]')?.remove()
+    el.querySelector('[data-panel="extension"]')?.remove()
+  } else {
+    el.querySelector('[data-tab="android"]')?.remove()
+    el.querySelector('[data-panel="android"]')?.remove()
+  }
   const relaysInput = el.querySelector<HTMLInputElement>('.nostr-signer__input--relays')
   if (relaysInput) relaysInput.value = DEFAULT_RELAYS.join(', ')
 
