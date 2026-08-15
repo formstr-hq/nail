@@ -24,6 +24,13 @@
 
         </activity>
 
+        <!-- Background mail watcher: hosts the notifier crate's Watcher and
+             posts local notifications on new gift-wrap arrivals. -->
+        <service
+            android:name=".notify.MailWatchService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -38,4 +45,9 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Keep the mail watcher alive in the background. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Post the "new mail" notification (runtime-requested on Android 13+). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 </manifest>
