@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
-    <string name="app_name">Mailstr</string>
-    <string name="title_activity_main">Mailstr</string>
+    <string name="app_name">Mail by Form*</string>
+    <string name="title_activity_main">Mail by Form*</string>
     <string name="package_name">com.formstr.mail</string>
     <string name="custom_url_scheme">com.formstr.mail</string>
 </resources>

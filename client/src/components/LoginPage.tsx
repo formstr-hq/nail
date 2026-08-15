@@ -154,6 +154,44 @@ function methodListNav(el: HTMLElement): () => void {
   }
 }
 
+/**
+ * Keep the fixed, vertically-centred login overlay pinned to the *visible*
+ * viewport. Android's WebView has no `interactive-widget=resizes-content`, so
+ * the on-screen keyboard overlays the layout viewport instead of shrinking it:
+ * a `position:fixed; inset:0` overlay stays full-screen and its centred modal —
+ * with the passphrase field and the Create button at the bottom — sits behind
+ * the keyboard. Sizing the overlay to `visualViewport` (and top-aligning +
+ * scrolling once the keyboard eats the height) keeps the submit button
+ * reachable. A no-op where `visualViewport` is absent or the viewport is not
+ * obscured (desktop, keyboard closed), so the web layout is unchanged.
+ */
+function fitOverlayToViewport(el: HTMLElement): () => void {
+  const root = el.querySelector<HTMLElement>('.nostr-signer__root')
+  const vv = window.visualViewport
+  if (!root || !vv) return () => {}
+  const sync = () => {
+    // >120px of hidden height means a keyboard (or similar) is up, not just
+    // browser-chrome jitter.
+    const obscured = window.innerHeight - vv.height > 120
+    root.style.position = 'fixed'
+    root.style.left = `${vv.offsetLeft}px`
+    root.style.top = `${vv.offsetTop}px`
+    root.style.right = 'auto'
+    root.style.bottom = 'auto'
+    root.style.width = `${vv.width}px`
+    root.style.height = `${vv.height}px`
+    root.style.alignItems = obscured ? 'flex-start' : ''
+    root.style.overflowY = obscured ? 'auto' : ''
+  }
+  sync()
+  vv.addEventListener('resize', sync)
+  vv.addEventListener('scroll', sync)
+  return () => {
+    vv.removeEventListener('resize', sync)
+    vv.removeEventListener('scroll', sync)
+  }
+}
+
 /** Auto-generate the nostrconnect QR when the Remote (QR) tab opens. */
 function autoGenerateQr(el: HTMLElement): () => void {
   const tab = el.querySelector<HTMLButtonElement>('[data-tab="nostrconnect"]')
@@ -290,6 +328,7 @@ export function SignerLogin({
     })
     const detachQr = autoGenerateQr(el)
     const detachNav = methodListNav(el)
+    const detachFit = fitOverlayToViewport(el)
     // A brand-new key created here provably has no kind-10050 relay list, so
     // flag it for the relay onboarding. Capture phase on the container runs
     // before the package's own created-ack handler fires onLogin, so the flag
@@ -303,6 +342,7 @@ export function SignerLogin({
     }
     el.addEventListener('click', markCreated, true)
     return () => {
+      detachFit()
       detachNav()
       detachQr()
       detachCancel?.()

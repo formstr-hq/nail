@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.formstr.mail',
-  appName: 'Mailstr',
+  appName: 'Mail by Form*',
   // The combined web bundle: landing at '/', client at '/mails/'. Assembled by
   // scripts/build-web.mjs; `cap sync` copies it into the Android project.
   webDir: 'www',
