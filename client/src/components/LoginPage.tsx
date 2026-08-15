@@ -5,7 +5,6 @@ import { nostrSigner } from '@/lib/nostr/signer'
 import { getSignerPool } from '@/lib/nostr/signerPool'
 import { markFreshSignup } from '@/lib/freshSignup'
 import { DEFAULT_RELAYS } from '@/lib/nostr/constants'
-import { NostrSignerPlugin } from 'nostr-signer-capacitor-plugin'
 import { useAccountStore } from '@/store/account'
 import { isNativeApp } from '@/lib/platform'
 import { Button } from '@/components/ui/Button'
@@ -379,25 +378,6 @@ export function SignerLogin({
     const detachQr = autoGenerateQr(el)
     const detachNav = methodListNav(el)
     const detachFit = fitOverlayToViewport(el)
-    // The NIP-55 row launches an Android intent to a signer app; if none is
-    // installed that intent has no target and crashes the app. So only surface
-    // the row once we've confirmed a signer is present — remove it otherwise.
-    let signerCheckCancelled = false
-    if (isNativeApp()) {
-      NostrSignerPlugin.isExternalSignerInstalled()
-        .then(({ installed }) => {
-          if (!signerCheckCancelled && !installed) {
-            el.querySelector('[data-tab="android"]')?.remove()
-            el.querySelector('[data-panel="android"]')?.remove()
-          }
-        })
-        .catch(() => {
-          if (!signerCheckCancelled) {
-            el.querySelector('[data-tab="android"]')?.remove()
-            el.querySelector('[data-panel="android"]')?.remove()
-          }
-        })
-    }
     // A brand-new key created here provably has no kind-10050 relay list, so
     // flag it for the relay onboarding. Capture phase on the container runs
     // before the package's own created-ack handler fires onLogin, so the flag
@@ -411,7 +391,6 @@ export function SignerLogin({
     }
     el.addEventListener('click', markCreated, true)
     return () => {
-      signerCheckCancelled = true
       detachFit()
       detachNav()
       detachQr()
