@@ -567,8 +567,8 @@ export default function SignupWizard({
                           <span className="text-lg font-bold leading-none text-ink">
                             {t.priceSats.toLocaleString()}
                           </span>
-                          <span className="ml-1 text-sm text-gray-500">sats</span>
-                          <span className="block text-[11px] text-gray-400">one-time</span>
+                          <span className="ml-1 text-sm text-gray-500">{t.unit}</span>
+                          <span className="block text-[11px] text-gray-400">{t.billing}</span>
                         </div>
                       </div>
                       {(t.features.length > 0 || t.notIncluded.length > 0) && (
@@ -605,13 +605,17 @@ export default function SignupWizard({
               ) : (
                 <>
                   Get {selectedTier?.name ?? "Mail"}
-                  {selectedTier ? ` — ${selectedTier.priceSats.toLocaleString()} sats` : ""}
+                  {selectedTier ? ` — ${selectedTier.priceSats.toLocaleString()} ${selectedTier.unit}` : ""}
                 </>
               )}
             </button>
-            <p className="mt-2 text-center text-xs text-gray-400">
-              Paid once over Lightning. No card, no recurring charge.
-            </p>
+            {selectedTier && (
+              <p className="mt-2 text-center text-xs text-gray-400">
+                {selectedTier.billing === "one-time"
+                  ? "Paid once. No recurring charge."
+                  : `Billed ${selectedTier.billing}.`}
+              </p>
+            )}
           </div>
         )}
 
@@ -620,6 +624,7 @@ export default function SignupWizard({
             invoice={invoice.invoice}
             hash={invoice.paymentHash}
             amount={invoice.amount}
+            unit={selectedTier?.unit ?? "sats"}
             onPaid={onPaid}
           />
         )}

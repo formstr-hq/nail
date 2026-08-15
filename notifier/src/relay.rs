@@ -19,7 +19,14 @@ const SUB_ID: &str = "mail";
 const BACKOFF_START: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
 
-/// The `REQ` for every gift-wrap addressed to the owner from `since` onward.
+/// The inner rumor kind mailstr mail uses (protocol `KIND_MAIL`). Gift-wraps
+/// carry it as a `k` tag on the outer 1059 (see `sealAndWrap`), so we can filter
+/// mail-only and never wake on a plain NIP-17 DM (also kind 1059) to the same
+/// key. If this crate is ever reused for a non-mail inbox, lift it into config.
+const MAIL_KIND: &str = "1301";
+
+/// The `REQ` for every mailstr gift-wrap addressed to the owner from `since`
+/// onward: kind-1059 wraps p-tagged to us AND `k`-tagged as mail.
 fn make_req(config: &WatchConfig) -> String {
     json!([
         "REQ",
@@ -27,6 +34,7 @@ fn make_req(config: &WatchConfig) -> String {
         {
             "kinds": [1059],
             "#p": [config.owner_pubkey_hex],
+            "#k": [MAIL_KIND],
             "since": config.since_secs,
         }
     ])

@@ -11,11 +11,13 @@ export default function InvoiceQR({
   invoice,
   hash,
   amount,
+  unit,
   onPaid,
 }: {
   invoice: string;
   hash: string;
   amount: number;
+  unit: string;
   onPaid: () => void;
 }) {
   const [status, setStatus] = useState<Status>("pending");
@@ -75,8 +77,8 @@ export default function InvoiceQR({
   return (
     <div className="flex flex-col items-center gap-4 text-center">
       <p className="text-sm text-gray-600">
-        Scan with a Lightning wallet to pay{" "}
-        <span className="font-semibold text-ink">{amount} sats</span>.
+        Scan the QR with your wallet to pay{" "}
+        <span className="font-semibold text-ink">{amount} {unit}</span>.
       </p>
 
       <div className="rounded-2xl border border-black/10 bg-white p-4">

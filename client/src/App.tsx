@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useAccountStore } from '@/store/account'
+import { syncMailNotifications } from '@/lib/notifications'
 import { useSettingsStore } from '@/store/settings'
 import { useMailStore } from '@/store/mail'
 import { useInbox } from '@/hooks/useInbox'
@@ -203,6 +204,13 @@ export default function App() {
   useEffect(() => {
     void init()
   }, [init])
+
+  // Drive background mail notifications (Android) off the active account: start
+  // on login, restart on account switch, stop on logout. No-op on the web.
+  const notifyPubkey = account && active ? account.pubkey : null
+  useEffect(() => {
+    void syncMailNotifications(notifyPubkey)
+  }, [notifyPubkey])
 
   if (!ready) {
     return (
