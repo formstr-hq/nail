@@ -228,6 +228,20 @@ function autoGenerateQr(el: HTMLElement): () => void {
   return () => tab?.removeEventListener('click', onClick)
 }
 
+/**
+ * Turn a raw signer/decryption error into something a person can act on. NIP-49
+ * (ncryptsec) decrypts with an AEAD, so a wrong passphrase surfaces as the
+ * cipher's opaque "invalid tag" (or "invalid MAC"/"unable to decrypt") — which
+ * means exactly one thing here: the passphrase was wrong.
+ */
+function friendlyUnlockError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (/invalid tag|invalid mac|decrypt|padding|poly1305/i.test(msg)) {
+    return 'Incorrect passphrase.'
+  }
+  return msg
+}
+
 /** Passphrase prompt for a persisted ncryptsec account after a reload. */
 function UnlockForm({ onUseAnother }: { onUseAnother: () => void }) {
   const { account, unlockNcryptsec } = useAccountStore()
@@ -242,7 +256,7 @@ function UnlockForm({ onUseAnother }: { onUseAnother: () => void }) {
     try {
       await unlockNcryptsec(passphrase)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(friendlyUnlockError(err))
     } finally {
       setBusy(false)
     }
@@ -351,7 +365,7 @@ export function SignerLogin({
         onLoggedIn?.()
       },
       onCancel,
-      onError: (err) => setError(err.message),
+      onError: (err) => setError(friendlyUnlockError(err)),
     })
     const detachQr = autoGenerateQr(el)
     const detachNav = methodListNav(el)
