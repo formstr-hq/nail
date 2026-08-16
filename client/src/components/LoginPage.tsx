@@ -221,6 +221,89 @@ function removeInapplicableMethod(el: HTMLElement) {
   el.querySelector(`[data-panel="${id}"]`)?.remove()
 }
 
+/**
+ * On native, replace the generic "Signer app" tab with a row per *installed*
+ * NIP-55 signer (Amber, Primal, …) shown upfront in the picker, each with the
+ * app's own logo. Tapping a row signs in through that signer directly — no
+ * extra "choose a signer" step. Async (enumeration is a native round-trip);
+ * returns a canceller for unmount before it resolves.
+ */
+function injectAndroidSigners(
+  el: HTMLElement,
+  deps: { onSuccess: () => void; onError: (msg: string) => void },
+): () => void {
+  let cancelled = false
+  const tabs = el.querySelector<HTMLElement>('.nostr-signer__tabs')
+  const genericTab = el.querySelector('[data-tab="android"]')
+  el.querySelector('[data-panel="android"]')?.remove()
+  if (!tabs) return () => {}
+
+  void nostrSigner
+    .listAndroidSignerApps()
+    .then((apps) => {
+      if (cancelled) return
+      genericTab?.remove()
+      // Place the signer rows first among the "already have a key?" options.
+      let after: Element | null = tabs.querySelector('.nostr-signer__tabs-label')
+      for (const app of apps) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'nostr-signer__tab'
+
+        const icon = document.createElement('span')
+        icon.className = 'nostr-signer__tab-icon'
+        if (app.iconUrl) {
+          const img = document.createElement('img')
+          img.src = app.iconUrl // a data:image/png;base64 URI from the plugin
+          img.alt = ''
+          img.className = 'nostr-signer__signer-logo'
+          icon.appendChild(img)
+        } else {
+          icon.innerHTML = ICON_SVG_OPEN + TAB_COPY.android!.icon + '</svg>'
+        }
+
+        const title = document.createElement('span')
+        title.className = 'nostr-signer__tab-title'
+        title.textContent = `Sign in with ${app.name}`
+        const desc = document.createElement('span')
+        desc.className = 'nostr-signer__tab-desc'
+        desc.textContent = 'NIP-55 signer app'
+        const text = document.createElement('span')
+        text.className = 'nostr-signer__tab-text'
+        text.append(title, desc)
+        btn.append(icon, text)
+
+        btn.addEventListener('click', async () => {
+          deps.onError('')
+          btn.disabled = true
+          try {
+            await nostrSigner.loginWithAndroidSigner({ packageName: app.packageName })
+            deps.onSuccess()
+          } catch (err) {
+            btn.disabled = false
+            deps.onError(friendlyUnlockError(err))
+          }
+        })
+
+        if (after && after.parentElement === tabs) {
+          after.after(btn)
+        } else {
+          tabs.appendChild(btn)
+        }
+        after = btn
+      }
+    })
+    .catch(() => {
+      // No signers, or enumeration failed — drop the option rather than show a
+      // dead row.
+      if (!cancelled) genericTab?.remove()
+    })
+
+  return () => {
+    cancelled = true
+  }
+}
+
 /** Auto-generate the nostrconnect QR when the Remote (QR) tab opens. */
 function autoGenerateQr(el: HTMLElement): () => void {
   const tab = el.querySelector<HTMLButtonElement>('[data-tab="nostrconnect"]')
@@ -375,6 +458,15 @@ export function SignerLogin({
     // After the package has wired its listeners, so removing an element can't
     // null out one of its queries (see removeInapplicableMethod).
     removeInapplicableMethod(el)
+    const detachSigners = isNativeApp()
+      ? injectAndroidSigners(el, {
+          onSuccess: () => {
+            refresh()
+            onLoggedIn?.()
+          },
+          onError: setError,
+        })
+      : () => {}
     const detachQr = autoGenerateQr(el)
     const detachNav = methodListNav(el)
     const detachFit = fitOverlayToViewport(el)
@@ -391,6 +483,7 @@ export function SignerLogin({
     }
     el.addEventListener('click', markCreated, true)
     return () => {
+      detachSigners()
       detachFit()
       detachNav()
       detachQr()

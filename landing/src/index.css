@@ -355,10 +355,16 @@ div.nostr-signer__root {
 .nostr-signer__root label[for='nostr-signer-nc-perms'],
 .nostr-signer__root label[for='nostr-signer-bunker-perms'],
 .nostr-signer__root .nostr-signer__panel--nostrconnect .nostr-signer__input--relays,
-.nostr-signer__root label[for='nostr-signer-nc-relays'],
-.nostr-signer__root .nostr-signer__tab--android,
-.nostr-signer__root .nostr-signer__panel--android {
+.nostr-signer__root label[for='nostr-signer-nc-relays'] {
   display: none;
+}
+
+/* Installed NIP-55 signer app logos (injected rows) fill the icon chip. */
+.nostr-signer__root .nostr-signer__signer-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: inherit;
 }
 
 .nostr-signer__root .nostr-signer__hint,

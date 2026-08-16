@@ -3,6 +3,7 @@ import { AtSign, Check, Loader2, PartyPopper, X } from "lucide-react";
 import { renderLoginHtml, attachLoginListeners } from "@formstr/signer/ui";
 import "@formstr/signer/styles.css";
 import { signer, pool, NOSTRCONNECT_RELAYS } from "../lib/signer";
+import { isNativeApp } from "../lib/platform";
 
 /*
  * The login-UI helpers below (TAB_COPY, tuneLoginUi, methodListNav,
@@ -22,6 +23,11 @@ const TAB_COPY: Record<string, { title: string; desc: string; icon: string }> =
       title: "Create a new account",
       desc: "Fresh key, protected by a passphrase",
       icon: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/>',
+    },
+    android: {
+      title: "Signer app",
+      desc: "Amber or another NIP-55 signer",
+      icon: '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
     },
     extension: {
       title: "Browser extension",
@@ -45,8 +51,10 @@ const TAB_COPY: Record<string, { title: string; desc: string; icon: string }> =
     },
   };
 
-/** Order of the "already have a key?" rows under the create card. */
-const SECONDARY_TABS = ["extension", "ncryptsec", "bunker", "nostrconnect"];
+/** Order of the "already have a key?" rows under the create card. `android`
+ *  (NIP-55) shows only in the native app and `extension` only on the web —
+ *  removeInapplicableMethod drops whichever doesn't apply. */
+const SECONDARY_TABS = ["android", "extension", "ncryptsec", "bunker", "nostrconnect"];
 
 const ICON_SVG_OPEN =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
@@ -61,12 +69,20 @@ const ICON_SVG_OPEN =
  * card supplies the heading, so no brand header here).
  */
 function tuneLoginUi(el: HTMLElement) {
-  el.querySelector('[data-tab="android"]')?.remove();
-  el.querySelector('[data-panel="android"]')?.remove();
   const relaysInput = el.querySelector<HTMLInputElement>(
     ".nostr-signer__input--relays",
   );
   if (relaysInput) relaysInput.value = NOSTRCONNECT_RELAYS.join(", ");
+
+  // Mobile keyboards autocapitalize/autocorrect by default, which can silently
+  // alter a passphrase and make NIP-49 fail with an opaque "invalid tag".
+  el.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach(
+    (input) => {
+      input.setAttribute("autocapitalize", "none");
+      input.setAttribute("autocorrect", "off");
+      input.setAttribute("spellcheck", "false");
+    },
+  );
 
   el.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((tab) => {
     const copy = TAB_COPY[tab.dataset.tab ?? ""];
@@ -143,6 +159,99 @@ function autoGenerateQr(el: HTMLElement): () => void {
   };
   tab?.addEventListener("click", onClick);
   return () => tab?.removeEventListener("click", onClick);
+}
+
+/** NIP-49 decrypts with an AEAD, so a wrong passphrase surfaces as the cipher's
+ *  opaque "invalid tag"; translate that to something a person can act on. */
+function friendlyUnlockError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/invalid tag|invalid mac|decrypt|padding|poly1305/i.test(msg)) {
+    return "Incorrect passphrase.";
+  }
+  return msg;
+}
+
+/** Drop the sign-in method that doesn't apply to this platform: NIP-55 signer
+ *  apps only on native, a NIP-07 browser extension only on the web. MUST run
+ *  after attachLoginListeners — the package wires the extension button
+ *  unconditionally, so removing it earlier nulls that query and crashes. */
+function removeInapplicableMethod(el: HTMLElement) {
+  const id = isNativeApp() ? "extension" : "android";
+  el.querySelector(`[data-tab="${id}"]`)?.remove();
+  el.querySelector(`[data-panel="${id}"]`)?.remove();
+}
+
+/** On native, replace the generic "Signer app" tab with a row per installed
+ *  NIP-55 signer, shown upfront with the app's own logo. Async; returns a
+ *  canceller. */
+function injectAndroidSigners(
+  el: HTMLElement,
+  deps: { onSuccess: () => void; onError: (msg: string) => void },
+): () => void {
+  let cancelled = false;
+  const tabs = el.querySelector<HTMLElement>(".nostr-signer__tabs");
+  const genericTab = el.querySelector('[data-tab="android"]');
+  el.querySelector('[data-panel="android"]')?.remove();
+  if (!tabs) return () => {};
+
+  void signer
+    .listAndroidSignerApps()
+    .then((apps) => {
+      if (cancelled) return;
+      genericTab?.remove();
+      let after: Element | null = tabs.querySelector(".nostr-signer__tabs-label");
+      for (const app of apps) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "nostr-signer__tab";
+
+        const icon = document.createElement("span");
+        icon.className = "nostr-signer__tab-icon";
+        if (app.iconUrl) {
+          const img = document.createElement("img");
+          img.src = app.iconUrl; // data:image/png;base64 URI from the plugin
+          img.alt = "";
+          img.className = "nostr-signer__signer-logo";
+          icon.appendChild(img);
+        } else {
+          icon.innerHTML = ICON_SVG_OPEN + TAB_COPY.android!.icon + "</svg>";
+        }
+
+        const title = document.createElement("span");
+        title.className = "nostr-signer__tab-title";
+        title.textContent = `Sign in with ${app.name}`;
+        const desc = document.createElement("span");
+        desc.className = "nostr-signer__tab-desc";
+        desc.textContent = "NIP-55 signer app";
+        const text = document.createElement("span");
+        text.className = "nostr-signer__tab-text";
+        text.append(title, desc);
+        btn.append(icon, text);
+
+        btn.addEventListener("click", async () => {
+          deps.onError("");
+          btn.disabled = true;
+          try {
+            await signer.loginWithAndroidSigner({ packageName: app.packageName });
+            deps.onSuccess();
+          } catch (err) {
+            btn.disabled = false;
+            deps.onError(friendlyUnlockError(err));
+          }
+        });
+
+        if (after && after.parentElement === tabs) after.after(btn);
+        else tabs.appendChild(btn);
+        after = btn;
+      }
+    })
+    .catch(() => {
+      if (!cancelled) genericTab?.remove();
+    });
+
+  return () => {
+    cancelled = true;
+  };
 }
 import { config } from "../lib/config";
 import {
@@ -276,9 +385,20 @@ export default function SignupWizard({
           const account = signer.getActiveAccount();
           if (account) void proceedAs(account.pubkey);
         },
-        onError: (err: unknown) =>
-          setError(err instanceof Error ? err.message : String(err)),
+        onError: (err: unknown) => setError(friendlyUnlockError(err)),
       });
+      // After attach (so removing an element can't null a package query), then
+      // surface installed NIP-55 signers upfront on native.
+      removeInapplicableMethod(el);
+      const detachSigners = isNativeApp()
+        ? injectAndroidSigners(el, {
+            onSuccess: () => {
+              const account = signer.getActiveAccount();
+              if (account) void proceedAs(account.pubkey);
+            },
+            onError: setError,
+          })
+        : () => {};
       const detachQr = autoGenerateQr(el);
       const detachNav = methodListNav(el);
       // Flag a freshly-created key for the mail app's relay onboarding. Capture
@@ -299,6 +419,7 @@ export default function SignupWizard({
       };
       el.addEventListener("click", markCreated, true);
       detach = () => {
+        detachSigners();
         detachNav();
         detachQr();
         el.removeEventListener("click", markCreated, true);
