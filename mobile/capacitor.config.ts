@@ -13,6 +13,15 @@ const config: CapacitorConfig = {
     initialFocus: false,
   },
   plugins: {
+    // Route fetch/XHR through the native HTTP stack. The WebView's origin is
+    // https://localhost, and api.formstr.app rejects that CORS origin (returns
+    // 500, no ACAO header), so every browser-context API call fails. Native
+    // requests carry no browser Origin and aren't subject to CORS, so the same
+    // fetch() calls in client/landing just work. WebSocket relay connections
+    // are unaffected (not CORS-gated).
+    CapacitorHttp: {
+      enabled: true,
+    },
     StatusBar: {
       // Draw the app behind a transparent status bar (edge-to-edge) and let CSS
       // safe-area insets pad the content. This is the only approach that works
