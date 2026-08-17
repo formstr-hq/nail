@@ -40,6 +40,10 @@ services:
       - NIP05_BASE_URL=http://host.docker.internal:4500
       - POSTFIX_HOST=host.docker.internal
       - POSTFIX_PORT=25
+      # Internal mail-send API — reachable on nail-network by trusted callers
+      # (e.g. formstr-backend for welcome mail). Unset the key to disable it.
+      - SEND_API_KEY=${SEND_API_KEY}
+      - SEND_API_PORT=2500
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
