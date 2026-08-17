@@ -1,7 +1,6 @@
 package com.formstr.mail.notify
 
 import android.Manifest
-import android.content.Context
 import androidx.work.Constraints
 import androidx.work.Data
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -52,14 +51,9 @@ class NotifierPlugin : Plugin() {
             return
         }
 
-        // Baseline `since` to now on first enable, so we only alert on mail that
-        // arrives *after* the user turned notifications on — never the backlog.
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val sinceKey = "since_$pubkey"
-        if (!prefs.contains(sinceKey)) {
-            prefs.edit().putLong(sinceKey, System.currentTimeMillis() / 1000).apply()
-        }
-
+        // The backlog baseline (so enabling never dumps the existing inbox) is
+        // handled by MailPollWorker's first "seeding" poll — see its `seeded_`
+        // flag — because that's where wraps are actually read.
         val data = Data.Builder()
             .putString(MailPollWorker.KEY_PUBKEY, pubkey)
             .putStringArray(MailPollWorker.KEY_RELAYS, relays.toTypedArray())
@@ -95,6 +89,5 @@ class NotifierPlugin : Plugin() {
 
     companion object {
         private const val WORK_NAME = "mail-poll"
-        private const val PREFS = "notifier"
     }
 }

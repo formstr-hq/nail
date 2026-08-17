@@ -33,9 +33,10 @@ pub struct WatchConfig {
     pub owner_pubkey_hex: String,
     /// The owner's kind-10050 DM relays (wss:// URLs). Watched in parallel.
     pub relays: Vec<String>,
-    /// Only report wraps created at or after this Unix time (seconds). The host
-    /// persists the newest `created_at` it has seen and passes it back on the
-    /// next start, so a restart does not re-notify old mail.
+    /// Only report wraps created at or after this Unix time (seconds). NIP-59
+    /// backdates wrap timestamps by up to two days, so this is a coarse fetch
+    /// bound, not a novelty watermark: the host passes `now - ~2 days` and
+    /// de-duplicates genuinely-new arrivals by event id on its side.
     pub since_secs: u64,
 }
 
