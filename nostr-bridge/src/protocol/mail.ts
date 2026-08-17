@@ -76,7 +76,14 @@ export async function sealAndWrap(
     {
       kind: KIND_GIFTWRAP,
       created_at: randomPast(now),
-      tags: [["p", recipientPubkey]],
+      // `p` routes the wrap; `k` marks the *inner* kind so a recipient can tell
+      // mailstr mail (1301) from other NIP-59 gift-wraps (e.g. NIP-17 DMs, also
+      // kind 1059) WITHOUT unwrapping — which is what lets the background
+      // notifier filter mail-only (`#k`) instead of pinging on every DM. The
+      // only thing this leaks to a relay observer is "this wrap is mail", and
+      // the address↔npub link is already public via NIP-05; sender, content
+      // and true timing stay hidden.
+      tags: [["p", recipientPubkey], ["k", String(rumor.kind)]],
       content: encrypt(
         JSON.stringify(seal),
         getConversationKey(ephemeralSk, recipientPubkey),
