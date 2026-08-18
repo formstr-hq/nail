@@ -7,7 +7,7 @@
  *   RECIPIENT_EMAIL=user@mailstr.app \
  *   RECIPIENT_NSEC=nsec1… \
  *   SMTP_HOST=mail.mailstr.app \
- *   RELAY_URL=wss://relay.primal.net \
+ *   RELAY_URL=wss://relay.damus.io \
  *   tsx scripts/send-and-listen.ts
  *
  * Optional:
@@ -33,7 +33,7 @@ const SMTP_HOST = process.env.SMTP_HOST ?? "localhost";
 const SMTP_PORT = Number(process.env.SMTP_PORT ?? 25);
 const SMTP_USER = process.env.SMTP_USER;
 const SMTP_PASS = process.env.SMTP_PASS;
-const RELAY_URL = process.env.RELAY_URL ?? "wss://relay.primal.net";
+const RELAY_URL = process.env.RELAY_URL ?? "wss://relay.damus.io";
 const FROM_EMAIL = process.env.FROM_EMAIL ?? `test@${SMTP_HOST}`;
 const TIMEOUT_MS = Number(process.env.TIMEOUT_MS ?? 180_000);
 
