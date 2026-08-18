@@ -134,8 +134,9 @@ export async function publishMail(params: {
   relays: string[];
 }): Promise<boolean> {
   const wrap = await buildInboundWrap(params.raw, params.recipientPubkey, params.signer);
+  const relays = [...new Set(params.relays)];
   const results = await Promise.all(
-    params.relays.map((relay) => publishToRelay(relay, wrap, params.signer)),
+    relays.map((relay) => publishToRelay(relay, wrap, params.signer)),
   );
   return results.some(Boolean);
 }

@@ -2,7 +2,12 @@ import { LRUCache } from "lru-cache";
 import type { Event } from "nostr-tools";
 import { SimplePool } from "nostr-tools/pool";
 import { KIND_DM_RELAYS } from "./protocol/constants.js";
-import { withHardcodedRelay } from "./config.js";
+import { FIXED_RELAY } from "./config.js";
+
+/** Append the fixed relay to a recipient's DM relays (skipped when unset). */
+function withFixedRelay(relays: string[]): string[] {
+  return FIXED_RELAY ? [...new Set([...relays, FIXED_RELAY])] : relays;
+}
 
 export class UserResolver {
   private cache: LRUCache<string, { relays: string[] }>;
@@ -45,14 +50,11 @@ export class UserResolver {
     }
 
     const latest = events.sort((a, b) => b.created_at - a.created_at)[0];
-    if (!latest) return withHardcodedRelay(this.defaultRelays);
+    if (!latest) return withFixedRelay(this.defaultRelays);
 
     const relays = latest.tags
       .filter((t) => t[0] === "relay" && t[1])
       .map((t) => t[1]);
-    // Always union in the hardcoded reliability relay (relay.primal.net) so
-    // outbound mail also reaches it, even when the recipient's own 10050 names
-    // other relays. See withHardcodedRelay for the e2e-override escape hatch.
-    return withHardcodedRelay(relays.length > 0 ? relays : this.defaultRelays);
+    return withFixedRelay(relays.length > 0 ? relays : this.defaultRelays);
   }
 }

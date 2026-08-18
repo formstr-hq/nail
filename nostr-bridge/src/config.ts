@@ -19,24 +19,10 @@ function parsePrivkey(envVar: string): Uint8Array {
 
 const bridgePrivkey = parsePrivkey("NOSTR_BRIDGE_NSEC");
 
-// A relay we always send to and listen on, no matter what a recipient's own
-// kind-10050 (NIP-17) list says. Per-recipient resolution still runs; this is
-// unioned into the result so outbound mail is also published here and the
-// bridge's kind-1059 subscription also reads from here. A reliability measure
-// until we run our own relay.
-//
-// Disabled when the operator points the bridge at explicit relays via env
-// (BOOTSTRAP_RELAYS / BRIDGE_RELAYS) — the e2e suite uses a single local mock
-// relay and must stay isolated from the public network.
-export const HARDCODED_RELAY = "wss://relay.primal.net";
-const RELAY_OVERRIDE_ACTIVE = Boolean(
-  process.env.BOOTSTRAP_RELAYS ?? process.env.BRIDGE_RELAYS,
-);
-
-export function withHardcodedRelay(relays: string[]): string[] {
-  if (RELAY_OVERRIDE_ACTIVE) return relays;
-  return [...new Set([...relays, HARDCODED_RELAY])];
-}
+// A relay always appended to a recipient's resolved DM relays when forwarding
+// mail, so outbound publishes also land here. Set via env; when empty the
+// behaviour is skipped. A reliability measure until we run our own relay.
+export const FIXED_RELAY = (process.env.FIXED_RELAY ?? "").trim();
 
 export const config = {
   lmtpPort: Number(process.env.LMTP_PORT ?? 2400),
@@ -47,12 +33,10 @@ export const config = {
   bridgePrivkey,
   bridgePubkey: getPublicKey(bridgePrivkey),
   nip05BaseUrl: process.env.NIP05_BASE_URL,
-  bootstrapRelays: withHardcodedRelay(
-    (process.env.BOOTSTRAP_RELAYS ?? "wss://relay.primal.net,wss://nos.lol")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-  ),
+  bootstrapRelays: (process.env.BOOTSTRAP_RELAYS ?? "wss://relay.primal.net,wss://nos.lol")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
   defaultRelayUrl: process.env.DEFAULT_RELAY_URL ?? "wss://relay.primal.net",
   relayCacheMax: Number(process.env.RELAY_CACHE_MAX ?? 1000),
   relayCacheTtlMs: Number(process.env.RELAY_CACHE_TTL_MS ?? 3600000),
@@ -69,12 +53,10 @@ export const config = {
     .filter(Boolean),
 
   // Relays the bridge itself listens and publishes its own 10050/kind-0 on.
-  bridgeRelays: withHardcodedRelay(
-    (process.env.BRIDGE_RELAYS ?? process.env.BOOTSTRAP_RELAYS ?? "wss://relay.primal.net,wss://nos.lol")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-  ),
+  bridgeRelays: (process.env.BRIDGE_RELAYS ?? process.env.BOOTSTRAP_RELAYS ?? "wss://relay.primal.net,wss://nos.lol")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean),
 };
 
 // Fail fast rather than silently running as an open relay: with no local
