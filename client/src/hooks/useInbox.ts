@@ -4,7 +4,7 @@ import { useMailStore } from '@/store/mail'
 import { getLocalRelay, syncAccountRelays } from '@/lib/nostr/localRelay'
 import { decodeGiftWrap } from '@/lib/mail/receive'
 import { protocolSigner } from '@/lib/nostr/protocol-signer'
-import { KIND_GIFTWRAP, DEFAULT_RELAYS } from '@/lib/nostr/constants'
+import { KIND_GIFTWRAP, DEFAULT_RELAYS, withHardcodedRelay } from '@/lib/nostr/constants'
 import type { Event, Filter } from 'nostr-tools'
 
 /**
@@ -119,7 +119,7 @@ export function useInbox(bridgePubkey: string | null) {
         sub.unobserve()
       }
       if (alive) {
-        setStatus({ phase: 'live', relays: DEFAULT_RELAYS, decoding: queue.length + running })
+        setStatus({ phase: 'live', relays: withHardcodedRelay(DEFAULT_RELAYS), decoding: queue.length + running })
       }
     } catch (err) {
       console.error(err)

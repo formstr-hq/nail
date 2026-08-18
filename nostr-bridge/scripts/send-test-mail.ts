@@ -11,7 +11,7 @@
  *   tsx scripts/send-test-mail.ts
  *
  * Optional env vars:
- *   RELAY_URL=wss://relay.damus.io   (default: wss://relay.<BRIDGE_DOMAIN>)
+ *   RELAY_URL=wss://relay.primal.net   (default: wss://relay.<BRIDGE_DOMAIN>)
  *   SUBJECT="Hello"                  (default: "Test mail")
  *   BODY="World"                     (default: current ISO timestamp)
  *   SENDER_NSEC=nsec1…               (default: random ephemeral key)
@@ -32,7 +32,7 @@ const MAIL_KIND = 1301;
 
 // --- config ---
 const BRIDGE_DOMAIN = process.env.BRIDGE_DOMAIN ?? "mailstr.app";
-const RELAY_URL = process.env.RELAY_URL ?? `wss://relay.damus.io`;
+const RELAY_URL = process.env.RELAY_URL ?? `wss://relay.primal.net`;
 const FROM = process.env.FROM ?? `_test@${BRIDGE_DOMAIN}`;
 const TO = process.env.TO;
 const SUBJECT = process.env.SUBJECT ?? "This has been sent using the bridge";

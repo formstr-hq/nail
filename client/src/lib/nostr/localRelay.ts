@@ -1,7 +1,7 @@
 import { LocalRelayClient, workerChannel } from '@formstr/local-relay'
 import type { Event, Filter } from 'nostr-tools'
 import { useAccountStore } from '@/store/account'
-import { DEFAULT_RELAYS, KIND_DM_RELAYS, KIND_NIP65_RELAYS } from './constants'
+import { DEFAULT_RELAYS, KIND_DM_RELAYS, KIND_NIP65_RELAYS, withHardcodedRelay } from './constants'
 
 /**
  * The session's single worker-backed local relay.
@@ -48,7 +48,9 @@ export function getLocalRelay(): LocalRelayClient {
   })
   // A fallback read set until the account's own NIP-17 inbox relays (kind
   // 10050) are known; the kind-1059 DM stream is routed to those specifically.
-  client.setUserRelays(DEFAULT_RELAYS)
+  // Union in the hardcoded reliability relay so the read floor always includes
+  // relay.primal.net even before the account's own lists are known.
+  client.setUserRelays(withHardcodedRelay(DEFAULT_RELAYS))
   return client
 }
 
@@ -78,14 +80,18 @@ export function syncAccountRelays(
   const relay = getLocalRelay()
   relay.setActiveAccount(pubkey)
 
-  const readRelays = new Set(DEFAULT_RELAYS)
+  const readRelays = new Set(withHardcodedRelay(DEFAULT_RELAYS))
   const dmRelays = new Set<string>()
 
   const report = () => {
     if (!onRelays) return
     // DM stream targets the 10050 set; until one is known it falls back to the
     // read floor so mail still arrives. Match the worker's dmReadRelays() rule.
-    onRelays(dmRelays.size ? [...dmRelays] : [...readRelays])
+    // Either way the hardcoded reliability relay (relay.primal.net) is in the
+    // reported set, matching what the worker actually reads from.
+    onRelays(
+      withHardcodedRelay(dmRelays.size ? [...dmRelays] : [...readRelays]),
+    )
   }
 
   return relay.observe(
@@ -94,13 +100,13 @@ export function syncAccountRelays(
       onEvent: (event: Event) => {
         if (event.kind === KIND_DM_RELAYS) {
           for (const t of event.tags) if (t[0] === 'relay' && t[1]) dmRelays.add(t[1])
-          relay.setDmRelays([...dmRelays])
+          relay.setDmRelays(withHardcodedRelay([...dmRelays]))
         } else {
           // NIP-65 `r` tags: unmarked = read+write, "read" = an inbox relay.
           for (const t of event.tags) {
             if (t[0] === 'r' && t[1] && (!t[2] || t[2] === 'read')) readRelays.add(t[1])
           }
-          relay.setUserRelays([...readRelays])
+          relay.setUserRelays(withHardcodedRelay([...readRelays]))
         }
         report()
       },

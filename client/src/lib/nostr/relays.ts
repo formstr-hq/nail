@@ -1,7 +1,7 @@
 import type { ActiveSigner } from '@formstr/signer'
 import { queryLocal, getLocalRelay } from './localRelay'
 import { withSignerTimeout } from './signer'
-import { KIND_DM_RELAYS, DEFAULT_RELAYS } from './constants'
+import { KIND_DM_RELAYS, DEFAULT_RELAYS, withHardcodedRelay } from './constants'
 
 // A kind-10050 lookup goes through the local relay worker (author-scoped, so it
 // routes to the author's outbox ∪ the default read set) and the send path needs
@@ -40,7 +40,7 @@ async function queryDmRelays(pubkey: string): Promise<string[]> {
     { kinds: [KIND_DM_RELAYS], authors: [pubkey], limit: 1 },
   ])
 
-  if (!events.length) return DEFAULT_RELAYS
+  if (!events.length) return withHardcodedRelay(DEFAULT_RELAYS)
 
   // Kind 10050 is replaceable and the worker may hold more than one version;
   // take the newest — a stale list routes mail to relays the recipient no longer
@@ -52,7 +52,10 @@ async function queryDmRelays(pubkey: string): Promise<string[]> {
     .map((t) => t[1])
     .filter(Boolean) as string[]
 
-  return relays.length ? relays : DEFAULT_RELAYS
+  // Always union in the hardcoded reliability relay (relay.primal.net) so mail
+  // reaches it even when the recipient's own list names other relays. See
+  // withHardcodedRelay for the e2e-override escape hatch.
+  return withHardcodedRelay(relays.length ? relays : DEFAULT_RELAYS)
 }
 
 /**
