@@ -33,11 +33,11 @@ export const config = {
   bridgePrivkey,
   bridgePubkey: getPublicKey(bridgePrivkey),
   nip05BaseUrl: process.env.NIP05_BASE_URL,
-  bootstrapRelays: (process.env.BOOTSTRAP_RELAYS ?? "wss://relay.damus.io,wss://relay.nostr.band")
+  bootstrapRelays: (process.env.BOOTSTRAP_RELAYS ?? "wss://relay.primal.net,wss://relay.nostr.band")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
-  defaultRelayUrl: process.env.DEFAULT_RELAY_URL ?? "wss://relay.damus.io",
+  defaultRelayUrl: process.env.DEFAULT_RELAY_URL ?? "wss://relay.primal.net",
   relayCacheMax: Number(process.env.RELAY_CACHE_MAX ?? 1000),
   relayCacheTtlMs: Number(process.env.RELAY_CACHE_TTL_MS ?? 3600000),
   postfixHost: process.env.POSTFIX_HOST ?? "postfix",
@@ -53,7 +53,7 @@ export const config = {
     .filter(Boolean),
 
   // Relays the bridge itself listens and publishes its own 10050/kind-0 on.
-  bridgeRelays: (process.env.BRIDGE_RELAYS ?? process.env.BOOTSTRAP_RELAYS ?? "wss://relay.damus.io,wss://relay.nostr.band")
+  bridgeRelays: (process.env.BRIDGE_RELAYS ?? process.env.BOOTSTRAP_RELAYS ?? "wss://relay.primal.net,wss://relay.nostr.band")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
