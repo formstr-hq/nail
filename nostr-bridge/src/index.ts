@@ -7,6 +7,7 @@ import { createLmtpServer } from "./lmtp-server.js";
 import { UserResolver } from "./user-resolver.js";
 import { createPostfixTransport } from "./smtp-injector.js";
 import { startNostrListener } from "./nostr-listener.js";
+import { createSendApp } from "./send-service.js";
 
 useWebSocketImplementation(WebSocket);
 
@@ -23,6 +24,23 @@ lmtpServer.listen(config.lmtpPort, () => {
 });
 
 const postfixTransport = createPostfixTransport(config.postfixHost, config.postfixPort);
+
+// Internal mail-send API — only started when a key is configured, so a
+// deployment that never wires it up stays closed rather than open by default.
+if (config.sendApiKey) {
+  const sendApp = createSendApp({
+    apiKey: config.sendApiKey,
+    signer: keySigner(config.bridgePrivkey),
+    userResolver,
+    localDomains: config.localDomains,
+    nip05BaseUrl: config.nip05BaseUrl,
+  });
+  sendApp.listen(config.sendApiPort, () => {
+    console.log(`nostr-bridge: send API listening on ${config.sendApiPort}`);
+  });
+} else {
+  console.log("nostr-bridge: send API disabled (SEND_API_KEY unset)");
+}
 
 startNostrListener(postfixTransport).catch((err) => {
   console.error("nostr-bridge: nostr listener failed to start:", err);

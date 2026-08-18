@@ -4,10 +4,12 @@
     <loc>https://mailstr.app/</loc>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
+    <lastmod>2026-08-18</lastmod>
   </url>
   <url>
     <loc>https://mailstr.app/privacy-policy</loc>
     <changefreq>monthly</changefreq>
     <priority>0.3</priority>
+    <lastmod>2026-08-18</lastmod>
   </url>
 </urlset>

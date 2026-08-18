@@ -87,8 +87,14 @@ export function useInbox(bridgePubkey: string | null) {
     try {
       // Reactively track this account's read (10002) and DM inbox (10050) relays;
       // the worker reopens the kind-1059 stream on the DM relays as they arrive.
-      // No brittle one-shot lookup blocking the critical path.
-      const relaysHandle = syncAccountRelays(account.pubkey)
+      // No brittle one-shot lookup blocking the critical path. The callback
+      // surfaces the effective fetch set (10050, falling back to the read floor)
+      // so the relay count shown in the UI tracks what we actually read from,
+      // not the static default.
+      const relaysHandle = syncAccountRelays(account.pubkey, (relays) => {
+        if (!alive) return
+        setStatus((s) => (s.phase === 'live' ? { ...s, relays } : s))
+      })
 
       const filter: Filter = {
         kinds: [KIND_GIFTWRAP],

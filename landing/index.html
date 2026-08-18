@@ -3,6 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
 
     <!-- Flag JS as available before first paint, so scroll-reveal styles only
          hide content when JS can animate it back in. No-JS users and crawlers
@@ -14,14 +16,30 @@
     <!-- IMPORTANT: set this to the real deployed origin (canonical, OG & sitemap) -->
     <link rel="canonical" href="https://mailstr.app/" />
 
-    <title>Mail by Formstr — Email only your key can open. you@mailstr.app</title>
+    <title>
+      Mail by Formstr — Email only your key can open. you@mailstr.app
+    </title>
     <meta
       name="description"
-      content="Claim you@mailstr.app and mail to it is encrypted to your key and stored on relays you choose. Whoever routes your mail can't read it, and there's no password to steal. Pay once with Lightning."
+      content="Claim you@mailstr.app and mail to it is encrypted to your key and stored on relays you choose. Pay once with Lightning."
     />
     <meta name="theme-color" content="#0b0b0c" />
-    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="color-scheme" content="light" />
+    <meta
+      name="robots"
+      content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1, max-image-index:large"
+    />
+    <meta
+      name="googlebot"
+      content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1, max-image-index:large"
+    />
+    <meta name="bingbot" content="index, follow" />
     <meta name="author" content="Formstr" />
+    <meta name="application-name" content="Mail by Formstr" />
+    <meta name="apple-mobile-web-app-title" content="Mail by Formstr" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="format-detection" content="telephone=no" />
     <meta
       name="keywords"
       content="Mail by Formstr, Mailstr, Nostr, Nostr email, email bridge, NIP-05, encrypted email, decentralized email, private email, Lightning payment, mailstr.app, Formstr"
@@ -35,34 +53,47 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Mail by Formstr" />
     <meta property="og:url" content="https://mailstr.app/" />
+    <meta property="og:determiner" content="" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:locale:alternate" content="en_GB" />
     <meta
       property="og:title"
       content="Mail by Formstr — Email only your key can open. you@mailstr.app"
     />
     <meta
       property="og:description"
-      content="Mail to you@mailstr.app is encrypted to your key and stored on relays you choose. Whoever routes it can't read it, and there's no password. Pay once with Lightning."
+      content="Mail to you@mailstr.app is encrypted to your key and stored on relays you choose. Pay once with Lightning."
     />
     <meta property="og:image" content="https://mailstr.app/og-image.png" />
+    <meta
+      property="og:image:secure_url"
+      content="https://mailstr.app/og-image.png"
+    />
+    <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta
       property="og:image:alt"
       content="Mail by Formstr — email only your key can open. Mail to you@mailstr.app is encrypted to your key and stored on relays you choose."
     />
-    <meta property="og:locale" content="en_US" />
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@formstr" />
+    <meta name="twitter:creator" content="@formstr" />
     <meta
       name="twitter:title"
       content="Mail by Formstr — Email only your key can open. you@mailstr.app"
     />
     <meta
       name="twitter:description"
-      content="Mail to you@mailstr.app is encrypted to your key and stored on relays you choose. Whoever routes it can't read it, and there's no password."
+      content="Mail to you@mailstr.app is encrypted to your key and stored on relays you choose."
     />
     <meta name="twitter:image" content="https://mailstr.app/og-image.png" />
+    <meta
+      name="twitter:image:alt"
+      content="Mail by Formstr — email only your key can open."
+    />
 
     <!-- fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -82,15 +113,38 @@
             "@id": "https://mailstr.app/#org",
             "name": "Formstr",
             "url": "https://mailstr.app/",
+            "logo": "https://mailstr.app/favicon.svg",
             "description": "Decentralized, privacy-first productivity tools built on the Nostr protocol.",
-            "sameAs": ["https://github.com/formstr-hq", "https://formstr.app", "https://about.formstr.app"]
+            "sameAs": [
+              "https://github.com/formstr-hq",
+              "https://formstr.app",
+              "https://about.formstr.app"
+            ]
           },
           {
             "@type": "WebSite",
             "@id": "https://mailstr.app/#website",
             "url": "https://mailstr.app/",
             "name": "Mail by Formstr",
-            "publisher": { "@id": "https://mailstr.app/#org" }
+            "inLanguage": "en-US",
+            "publisher": { "@id": "https://mailstr.app/#org" },
+            "potentialAction": {
+              "@type": "SearchAction",
+              "target": {
+                "@type": "EntryPoint",
+                "urlTemplate": "https://mailstr.app/?buy=1&q={query}"
+              },
+              "query-input": "required name=query"
+            }
+          },
+          {
+            "@type": "WebPage",
+            "@id": "https://mailstr.app/#webpage",
+            "url": "https://mailstr.app/",
+            "name": "Mail by Formstr — Email only your key can open",
+            "isPartOf": { "@id": "https://mailstr.app/#website" },
+            "inLanguage": "en-US",
+            "description": "Claim you@mailstr.app and mail sent to it is encrypted to your key and stored on relays you choose. Pay once with Lightning."
           },
           {
             "@type": "SoftwareApplication",
@@ -98,7 +152,29 @@
             "applicationCategory": "CommunicationApplication",
             "operatingSystem": "Web",
             "url": "https://mailstr.app",
-            "description": "An email service where mail to you@mailstr.app is encrypted to your key and stored on relays you choose — the routing bridge can't read it, and there's no password. NIP-05 identity included. Paid once via Lightning."
+            "inLanguage": "en-US",
+            "isAccessibleForFree": false,
+            "description": "An email service where mail to you@mailstr.app is encrypted to your key and stored on relays you choose — the routing bridge can't read it, and there's no password. NIP-05 identity included. Paid once via Lightning.",
+            "featureList": [
+              "End-to-end encrypted mail to your key",
+              "Mail stored on relays you choose",
+              "Sign in with your own Nostr key (NIP-07/46/49/55)",
+              "NIP-05 identity at you@mailstr.app",
+              "Pay once with Lightning"
+            ],
+            "audience": {
+              "@type": "Audience",
+              "audienceType": "Privacy-conscious Nostr users"
+            },
+            "offers": {
+              "@type": "Offer",
+              "price": "2100",
+              "priceCurrency": "SATS",
+              "description": "One-time Lightning payment; no subscription.",
+              "availability": "https://schema.org/InStock"
+            },
+            "publisher": { "@id": "https://mailstr.app/#org" },
+            "screenshot": "https://mailstr.app/og-image.png"
           }
         ]
       }
@@ -110,8 +186,7 @@
       <h1>Mail by Formstr — email only your key can open</h1>
       <p>
         Claim you@mailstr.app and mail sent to it is encrypted to your key and
-        stored on relays you choose. Whoever routes your mail can't read it, and
-        there's no password to steal. Pay once with Lightning. Signing up
+        stored on relays you choose. Pay once with Lightning. Signing up
         requires JavaScript; enable it to claim your address.
       </p>
       <ul>

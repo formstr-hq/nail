@@ -64,13 +64,29 @@ export function getLocalRelay(): LocalRelayClient {
  * set, so the mailbox starts reading from the account's actual DM inbox relays as
  * soon as its 10050 is known — no timeout can cut that off. Returns the standing
  * interest's handle so the caller can drop it on teardown.
+ *
+ * `onRelays` reports the effective relay set the kind-1059 DM stream reads from,
+ * mirroring the worker's `dmReadRelays()` rule: the account's NIP-17 inbox
+ * (10050) relays once any are known, falling back to the read floor (10002 ∪
+ * defaults) until then. Fired on every change so a UI can show the count the
+ * mailbox is actually fetching from, not a static default.
  */
-export function syncAccountRelays(pubkey: string): { unobserve: () => void } {
+export function syncAccountRelays(
+  pubkey: string,
+  onRelays?: (relays: string[]) => void,
+): { unobserve: () => void } {
   const relay = getLocalRelay()
   relay.setActiveAccount(pubkey)
 
   const readRelays = new Set(DEFAULT_RELAYS)
   const dmRelays = new Set<string>()
+
+  const report = () => {
+    if (!onRelays) return
+    // DM stream targets the 10050 set; until one is known it falls back to the
+    // read floor so mail still arrives. Match the worker's dmReadRelays() rule.
+    onRelays(dmRelays.size ? [...dmRelays] : [...readRelays])
+  }
 
   return relay.observe(
     [{ kinds: [KIND_NIP65_RELAYS, KIND_DM_RELAYS], authors: [pubkey] }],
@@ -86,6 +102,7 @@ export function syncAccountRelays(pubkey: string): { unobserve: () => void } {
           }
           relay.setUserRelays([...readRelays])
         }
+        report()
       },
     },
   )

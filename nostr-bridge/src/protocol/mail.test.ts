@@ -58,6 +58,9 @@ describe("round trip", () => {
     const wrap = await sealAndWrap(rumor, bob.pk, alice.signer);
     expect(wrap.kind).toBe(KIND_GIFTWRAP);
     expect(wrap.tags).toContainEqual(["p", bob.pk]);
+    // `k` exposes the inner kind so mail can be told from other 1059s (DMs)
+    // without unwrapping — the background notifier filters on this.
+    expect(wrap.tags).toContainEqual(["k", String(KIND_MAIL)]);
     expect(wrap.pubkey).not.toBe(alice.pk); // ephemeral
   });
 

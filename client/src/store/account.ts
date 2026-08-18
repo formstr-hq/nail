@@ -15,6 +15,7 @@ interface AccountState {
   unlockNcryptsec: (passphrase: string) => Promise<void>
   switchTo: (pubkey: string) => Promise<void>
   logout: () => Promise<void>
+  removeAccount: (pubkey: string) => Promise<void>
 }
 
 let initialized = false
@@ -174,6 +175,21 @@ export const useAccountStore = create<AccountState>()((set, get) => ({
   logout: async () => {
     await nostrSigner.logout()
     useMailStore.getState().clear()
+    get().refresh()
+  },
+
+  /**
+   * Forget a stored account, active or not.
+   *
+   * `logout(pubkey)` deletes exactly that account from storage. Only the active
+   * account's mail lives in the mail store, so we clear it only when the
+   * removed account was the active one — removing a background account leaves
+   * the current inbox untouched.
+   */
+  removeAccount: async (pubkey) => {
+    const wasActive = pubkey === get().account?.pubkey
+    await nostrSigner.logout(pubkey)
+    if (wasActive) useMailStore.getState().clear()
     get().refresh()
   },
 }))

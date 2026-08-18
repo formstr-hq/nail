@@ -21,6 +21,10 @@ const bridgePrivkey = parsePrivkey("NOSTR_BRIDGE_NSEC");
 
 export const config = {
   lmtpPort: Number(process.env.LMTP_PORT ?? 2400),
+  // Internal mail-send API (welcome mail, receipts, ...). Disabled unless a key
+  // is set — an unauthenticated sender would let anyone originate mail as us.
+  sendApiKey: process.env.SEND_API_KEY,
+  sendApiPort: Number(process.env.SEND_API_PORT ?? 2500),
   bridgePrivkey,
   bridgePubkey: getPublicKey(bridgePrivkey),
   nip05BaseUrl: process.env.NIP05_BASE_URL,
