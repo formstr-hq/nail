@@ -87,23 +87,28 @@ export function ComposeModal({
   const defaultAddress = account ? `${account.npub}@${BRIDGE_DOMAIN}` : ''
 
   // App-wide From, fully derived from the inbox the user is viewing (the
-  // sidebar's active alias), falling back to the saved sender address then the
-  // npub. Deriving it — rather than seeding a `useState` once at mount — is the
-  // fix for the composer/sidebar handle mismatch: `selfAddresses` (owned
-  // addresses), `settings.senderAddress`, and `inboxFilter` all resolve/change
-  // *after* the composer opens, and a frozen seed left the From showing a
-  // different handle than the sidebar. An explicit pick writes through to
-  // `inboxFilter` (the select's onChange, silent setter), so this expression
-  // tracks the user's choice too and the two never disagree. It is the npub
-  // that used to silently bounce off the bridge; the guard below blocks that.
+  // sidebar's active alias), falling back to the saved sender address, then an
+  // owned alias, then the npub. Deriving it — rather than seeding a `useState`
+  // once at mount — is the fix for the composer/sidebar handle mismatch:
+  // `selfAddresses` (owned addresses), `settings.senderAddress`, and
+  // `inboxFilter` all resolve/change *after* the composer opens, and a frozen
+  // seed left the From showing a different handle than the sidebar. An explicit
+  // pick writes through to `inboxFilter` (the select's onChange, silent
+  // setter), so this expression tracks the user's choice too and the two never
+  // disagree. It is the npub that used to silently bounce off the bridge; the
+  // guard below blocks that. An alias is preferred over the npub as the bare
+  // default because the npub bounces at the bridge for legacy recipients while
+  // an alias works for both — an explicit npub pick (switcher → inboxFilter, or
+  // saved sender) still wins via the branches above.
   const fromAddress = useMemo(() => {
     if (inboxFilter) {
       const match = selfAddresses.find((a) => a.toLowerCase() === inboxFilter)
       if (match) return match
     }
     if (settings.senderAddress) return settings.senderAddress
+    if (ownedAliases.length > 0) return ownedAliases[0]
     return defaultAddress || selfAddresses[0] || ''
-  }, [inboxFilter, selfAddresses, settings.senderAddress, defaultAddress])
+  }, [inboxFilter, selfAddresses, settings.senderAddress, defaultAddress, ownedAliases])
   // Selected alias first, the rest in selfAddresses order (npub next, then
   // owned aliases) — so the dropdown leads with the active sender.
   const fromOptions = useMemo(() => {
@@ -425,13 +430,20 @@ export function ComposeModal({
             <div className="eyebrow">From</div>
             <select
               value={fromAddress}
+              // The closed select shows the selected address verbatim, and an
+              // npub (npub1…@domain) is far wider than a phone's From column —
+              // without truncation it overflows the box and draws over the Send
+              // button. truncate clips it with an ellipsis in Chromium's WebView
+              // (Capacitor); the dropdown options below still show the full
+              // address, and title carries it for long-press/hover.
+              title={fromAddress}
               onChange={(e) => {
                 // The From is derived from inboxFilter, so a pick is expressed by
                 // updating the filter — which mirrors the choice into the sidebar
                 // highlight (app-wide) without clearing the open message.
                 setInboxFilter(e.target.value, true)
               }}
-              className="mt-0.5 w-full max-w-full bg-transparent font-mono text-[10.5px] text-foreground focus:outline-none"
+              className="mt-0.5 w-full max-w-full truncate bg-transparent font-mono text-[10.5px] text-foreground focus:outline-none"
             >
               {fromOptions.map((a) => (
                 <option key={a} value={a} className="font-mono">
