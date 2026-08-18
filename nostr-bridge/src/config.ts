@@ -33,7 +33,7 @@ export const config = {
   bridgePrivkey,
   bridgePubkey: getPublicKey(bridgePrivkey),
   nip05BaseUrl: process.env.NIP05_BASE_URL,
-  bootstrapRelays: (process.env.BOOTSTRAP_RELAYS ?? "wss://relay.primal.net,wss://relay.nostr.band")
+  bootstrapRelays: (process.env.BOOTSTRAP_RELAYS ?? "wss://relay.primal.net,wss://nos.lol")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
@@ -53,7 +53,7 @@ export const config = {
     .filter(Boolean),
 
   // Relays the bridge itself listens and publishes its own 10050/kind-0 on.
-  bridgeRelays: (process.env.BRIDGE_RELAYS ?? process.env.BOOTSTRAP_RELAYS ?? "wss://relay.primal.net,wss://relay.nostr.band")
+  bridgeRelays: (process.env.BRIDGE_RELAYS ?? process.env.BOOTSTRAP_RELAYS ?? "wss://relay.primal.net,wss://nos.lol")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
