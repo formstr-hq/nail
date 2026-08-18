@@ -85,6 +85,17 @@ function setTitle(html, title) {
   return html.replace(/<title>[^<]*<\/title>/i, `<title>${title}</title>`);
 }
 
+// Replace <link rel="canonical" href="…">. The template ships with the
+// landing's canonical; every other route needs its own or search engines
+// treat the page as a duplicate of the home page.
+function setCanonical(html, href) {
+  if (href == null) return html;
+  return html.replace(
+    /<link\s+rel="canonical"[^>]*>/i,
+    `<link rel="canonical" href="${href}" />`,
+  );
+}
+
 // Replace the JSON-LD <script type="application/ld+json"> … </script> block.
 function setJsonLd(html, graph) {
   const block = `<script type="application/ld+json">\n      ${JSON.stringify(
@@ -149,6 +160,11 @@ for (const route of routes) {
       "og:url",
       `https://mailstr.app${route.path}`,
     );
+  }
+  // Every route that isn't the landing needs its own canonical, or
+  // search engines treat it as a duplicate of the home page.
+  if (route.path !== "/") {
+    html = setCanonical(html, `https://mailstr.app${route.path}/`);
   }
 
   if (route.jsonLd) {

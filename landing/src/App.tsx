@@ -223,8 +223,15 @@ function Home() {
 }
 
 function App({ url }: { url?: string }) {
-  const path =
+  const rawPath =
     url ?? (typeof window !== "undefined" ? window.location.pathname : "/");
+  // nginx serves the prerendered directory with a trailing slash, so the
+  // client path can be "/privacy-policy/" while the route table below is
+  // "/privacy-policy". Normalize by stripping a single trailing slash
+  // (except for the root itself) so hydration matches the prerendered tree.
+  const path = rawPath.length > 1 && rawPath.endsWith("/")
+    ? rawPath.slice(0, -1)
+    : rawPath;
   if (path === "/privacy-policy") return <PrivacyPolicy />;
   return <Home />;
 }
