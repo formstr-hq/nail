@@ -8,6 +8,13 @@ export default defineConfig({
   base: process.env.CLIENT_BASE_PATH ?? "/",
   plugins: [react()],
   server: {
+    // Vite 6 rejects requests whose Host header isn't on an allowlist. For
+    // network testing under a custom hostname (e.g. a Yggdrasil DNS name),
+    // set VITE_ALLOWED_HOSTS to a comma-separated list; unset = current
+    // behaviour (localhost only). Not hardcoded so the repo stays generic.
+    allowedHosts: process.env.VITE_ALLOWED_HOSTS
+      ? process.env.VITE_ALLOWED_HOSTS.split(",").map((h) => h.trim()).filter(Boolean)
+      : undefined,
     // The e2e run starts the dev server headless where the file watcher is
     // pure overhead (and exhausts inotify instances in sandboxed CI). Disable
     // it there; normal `pnpm dev` keeps HMR.
