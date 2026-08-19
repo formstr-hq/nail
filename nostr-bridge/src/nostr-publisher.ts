@@ -1,8 +1,8 @@
-import WebSocket from "ws";
 import type { Event } from "nostr-tools";
 import { buildMailRumor, sealAndWrap } from "./protocol/mail.js";
 import type { ProtocolSigner } from "./protocol/types.js";
 import { KIND_CLIENT_AUTH } from "./protocol/constants.js";
+import { RelayWebSocket as WebSocket } from "./relay-socket.js";
 
 /** A relay declining a write until we authenticate (NIP-42). */
 function isAuthRequired(reason: unknown): boolean {
