@@ -39,18 +39,23 @@ fn client_request(url: &str) -> Result<Request<()>, tokio_tungstenite::tungsteni
 
 /// The `REQ` for every gift-wrap addressed to the owner from `since` onward.
 ///
-/// Mail wraps now carry a `["k","1301"]` tag (see `sealAndWrap`), so we *could*
-/// filter `#k` to skip non-mail 1059s (e.g. NIP-17 DMs). We deliberately don't
-/// yet: mail sent before the tag existed has no `k`, and filtering on it would
-/// silently drop those. Once tagged mail is ubiquitous we can add
-/// `"#k": ["1301"]` here and lose nothing.
-fn make_req(config: &WatchConfig) -> String {
+/// `kinds: [1059]` is NIP-59 gift-wraps. `["k","1301"]` is the mailstr mail
+/// marker set by the bridge's `sealAndWrap` (see `nostr-bridge/src/protocol/mail.ts`),
+/// which lets us filter out other 1059 gift-wraps on the owner's relays —
+/// chiefly NIP-17 DMs that share the same kind. Mail sent before the bridge
+/// shipped the tag carries no `k`; those would be silently dropped, but they
+/// also never had a working notifier before that point (the old build never
+/// raised anything anyway), so we accept the cut-over. Once an old untagged
+/// wrap would have produced no notification in either world, dropping it now
+/// costs us nothing.
+pub(crate) fn make_req(config: &WatchConfig) -> String {
     json!([
         "REQ",
         SUB_ID,
         {
             "kinds": [1059],
             "#p": [config.owner_pubkey_hex],
+            "#k": ["1301"],
             "since": config.since_secs,
         }
     ])

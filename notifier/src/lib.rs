@@ -222,6 +222,7 @@ impl Drop for Watcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{json, Value};
 
     #[derive(Default)]
     struct Recorder {
@@ -296,5 +297,29 @@ mod tests {
         s.set_relay_connected(false); // 1 -> 0: edge
 
         assert_eq!(*rec.connectivity.lock().unwrap(), vec![true, false]);
+    }
+
+    #[test]
+    fn req_filters_to_mail_wraps_only() {
+        // Make sure the REQ we send asks relays for kind-1059 gift-wraps *and*
+        // only those carrying the mailstr `k=1301` tag. Without `#k`, every
+        // NIP-17 DM addressed to the owner would also be returned and trigger
+        // a notification, which is not what the worker is for.
+        let cfg = WatchConfig {
+            owner_pubkey_hex: "ff".repeat(32),
+            relays: vec![],
+            since_secs: 1_700_000_000,
+        };
+        let req: Value = serde_json::from_str(&crate::relay::make_req(&cfg)).unwrap();
+        let filter = &req[2];
+
+        assert_eq!(filter["kinds"], json!([1059]));
+        assert_eq!(filter["#p"], json!(["ff".repeat(32)]));
+        assert_eq!(
+            filter["#k"],
+            json!(["1301"]),
+            "REQ must filter to mail wraps so NIP-17 DMs are ignored"
+        );
+        assert_eq!(filter["since"], json!(1_700_000_000u64));
     }
 }
