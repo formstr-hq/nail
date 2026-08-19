@@ -19,6 +19,15 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"
 # WebSocket client. rustls (pure Rust, webpki roots) so there is no OpenSSL to
 # cross-compile for the Android NDK targets — the whole point of the TLS choice.
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+# rustls 0.23 needs an explicit process-level CryptoProvider (`ring` or
+# `aws-lc-rs`) before any TLS handshake. tokio-tungstenite's webpki-roots
+# feature bundles root certs but selects *no* crypto backend, so without this
+# `connect_async` panics at runtime ("Could not automatically determine the
+# process-level CryptoProvider") — on Android that surfaced as zero
+# gift-wraps and zero notifications, with no visible error. We enable exactly
+# one backend — `ring` (cross-compiles cleanly to the NDK targets) — and
+# install it up front from `poll_once`/`Watcher::start` (see lib.rs).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

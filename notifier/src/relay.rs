@@ -11,6 +11,8 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::Notify;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::Request;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::{Shared, WatchConfig};
@@ -18,6 +20,22 @@ use crate::{Shared, WatchConfig};
 const SUB_ID: &str = "mail";
 const BACKOFF_START: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
+
+/// A browser-like User-Agent sent on every WebSocket upgrade. Some relays sit
+/// behind Cloudflare and reject the default client UA (e.g. relay.0xchat.com
+/// answers the upgrade with HTTP 403, relay.damus.io with 503). The rejection
+/// is at the TLS/HTTP layer, before any Nostr frame — so NIP-42 AUTH can't run
+/// (the socket never opens) and, separately, this key-free crate holds no
+/// signing key to produce an AUTH event anyway. Spoofing a browser UA gets
+/// past the CDN gate; matches the bridge's `relay-socket.ts` UA exactly.
+const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
+
+/// Build the WebSocket upgrade request for `url` with the browser User-Agent.
+fn client_request(url: &str) -> Result<Request<()>, tokio_tungstenite::tungstenite::Error> {
+    let mut req = url.into_client_request()?;
+    req.headers_mut().insert("User-Agent", USER_AGENT.parse().unwrap());
+    Ok(req)
+}
 
 /// The `REQ` for every gift-wrap addressed to the owner from `since` onward.
 ///
@@ -78,7 +96,14 @@ pub(crate) fn parse_frame(text: &str) -> Frame {
 /// timeout; a slow or unreachable relay simply yields whatever it sent so far.
 pub(crate) async fn poll_relay(url: &str, config: &WatchConfig) -> Vec<(String, u64, String)> {
     let mut out = Vec::new();
-    let stream = match tokio_tungstenite::connect_async(url).await {
+    let req = match client_request(url) {
+        Ok(req) => req,
+        Err(err) => {
+            log::warn!("[notifier] poll request build {url} failed: {err}");
+            return out;
+        }
+    };
+    let stream = match tokio_tungstenite::connect_async(req).await {
         Ok((stream, _)) => stream,
         Err(err) => {
             log::warn!("[notifier] poll connect {url} failed: {err}");
@@ -141,7 +166,14 @@ enum RunOutcome {
 }
 
 async fn run_once(url: &str, shared: &Arc<Shared>, shutdown: &Notify) -> RunOutcome {
-    let stream = match tokio_tungstenite::connect_async(url).await {
+    let req = match client_request(url) {
+        Ok(req) => req,
+        Err(err) => {
+            log::warn!("[notifier] request build {url} failed: {err}");
+            return RunOutcome::Disconnected;
+        }
+    };
+    let stream = match tokio_tungstenite::connect_async(req).await {
         Ok((stream, _resp)) => stream,
         Err(err) => {
             log::warn!("[notifier] connect {url} failed: {err}");

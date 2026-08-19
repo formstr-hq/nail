@@ -17,7 +17,7 @@
 //! no runtime of their own.
 
 use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Once};
 
 use tokio::runtime::Runtime;
 use tokio::sync::Notify;
@@ -25,6 +25,16 @@ use tokio::sync::Notify;
 mod relay;
 
 uniffi::setup_scaffolding!();
+
+/// Install rustls's process-level crypto provider (`ring`) exactly once.
+/// See the `rustls` Cargo feature note — without this, `connect_async` panics
+/// inside the relay task and every poll silently returns zero gift-wraps.
+static CRYPTO_INIT: Once = Once::new();
+fn ensure_crypto_provider() {
+    CRYPTO_INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
 
 /// What to watch. All fields are public data — no secret ever crosses here.
 #[derive(Debug, Clone, uniffi::Record)]
@@ -58,6 +68,7 @@ pub struct GiftWrap {
 /// decrypts — the battery-friendly counterpart to the always-on [`Watcher`].
 #[uniffi::export]
 pub fn poll_once(config: WatchConfig, timeout_secs: u64) -> Vec<GiftWrap> {
+    ensure_crypto_provider();
     let runtime = Runtime::new().expect("build tokio runtime");
     runtime.block_on(async move {
         let per_relay = std::time::Duration::from_secs(timeout_secs.max(1));
@@ -167,6 +178,7 @@ impl Watcher {
     /// immediately; arrivals surface through `delegate`.
     #[uniffi::constructor]
     pub fn start(config: WatchConfig, delegate: Box<dyn NotifierDelegate>) -> Arc<Self> {
+        ensure_crypto_provider();
         let shutdown = Arc::new(Notify::new());
         let shared = Arc::new(Shared {
             config,

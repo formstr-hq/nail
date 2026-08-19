@@ -36,8 +36,29 @@ class MailPollWorker(context: Context, params: WorkerParameters) : Worker(contex
     override fun doWork(): Result {
         val pubkey = inputData.getString(KEY_PUBKEY)
         val relays = inputData.getStringArray(KEY_RELAYS)?.toList()
-        if (pubkey.isNullOrEmpty() || relays.isNullOrEmpty()) return Result.success()
+        // Log unconditionally — this worker runs in the background with no UI, so
+        // without these lines there is literally no way to tell from logcat
+        // whether it ran, what it was asked to do, or why it returned early.
+        android.util.Log.i(TAG, "doWork start: pubkey=${pubkey?.take(8)} relays=${relays?.size} ${relays?.joinToString { it }}")
+        if (pubkey.isNullOrEmpty() || relays.isNullOrEmpty()) {
+            android.util.Log.w(TAG, "doWork early-return: empty pubkey or relays (pubkey=${pubkey?.length} relays=${relays?.size})")
+            return Result.success()
+        }
 
+        return try {
+            doPoll(pubkey, relays)
+        } catch (t: Throwable) {
+            // The one-shot polls were showing up as FAILED in the WorkManager DB
+            // with zero log output — the exception was swallowed. Surface it.
+            android.util.Log.e(TAG, "doWork threw, recording as failure for visibility", t)
+            // Return success, not failure: a periodic worker that returns failure
+            // is terminated by WorkManager (no further runs). We want the poll to
+            // keep retrying on its schedule; the log above is the diagnostic.
+            Result.success()
+        }
+    }
+
+    private fun doPoll(pubkey: String, relays: List<String>): Result {
         val prefs = applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         // Fetch the whole backdating window every poll; the seen-id set below,
         // not the timestamp, is what makes a wrap "new".
@@ -48,6 +69,7 @@ class MailPollWorker(context: Context, params: WorkerParameters) : Worker(contex
             WatchConfig(ownerPubkeyHex = pubkey, relays = relays, sinceSecs = pollSince.toULong()),
             POLL_TIMEOUT_SECS,
         )
+        android.util.Log.i(TAG, "pollOnce returned ${wraps.size} wrap(s) since=$pollSince")
 
         val seen = prefs.getStringSet(keySeen(pubkey), emptySet())!!.toMutableSet()
         // The first poll after enabling only records the existing backlog into
@@ -60,11 +82,12 @@ class MailPollWorker(context: Context, params: WorkerParameters) : Worker(contex
             if (isNew && seeded) {
                 notifyNewMail(wrap.id)
                 newCount++
+                android.util.Log.i(TAG, "new mail notified: ${wrap.id.take(12)}")
+            } else if (isNew) {
+                android.util.Log.i(TAG, "new wrap seeded into seen (no alert): ${wrap.id.take(12)}")
             }
         }
-        if (newCount > 0) {
-            android.util.Log.i("notifier", "polled ${wraps.size} wraps, $newCount new")
-        }
+        android.util.Log.i(TAG, "poll done: ${wraps.size} wraps, $newCount notified, seeded=$seeded seen=${seen.size}")
 
         // Bound the seen-set so it can't grow without limit.
         val trimmed = if (seen.size > SEEN_CAP) seen.toList().takeLast(SEEN_CAP).toSet() else seen
@@ -115,6 +138,7 @@ class MailPollWorker(context: Context, params: WorkerParameters) : Worker(contex
         const val KEY_PUBKEY = "pubkey"
         const val KEY_RELAYS = "relays"
 
+        private const val TAG = "notifier"
         private const val CHANNEL_MAIL = "mail-new"
         private const val PREFS = "notifier"
         // NIP-59 backdates wrap timestamps up to two days; fetch that whole

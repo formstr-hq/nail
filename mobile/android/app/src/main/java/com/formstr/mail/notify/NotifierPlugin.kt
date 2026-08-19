@@ -36,6 +36,7 @@ class NotifierPlugin : Plugin() {
     fun start(call: PluginCall) {
         val pubkey = call.getString("pubkey")
         if (pubkey.isNullOrEmpty()) {
+            android.util.Log.w(TAG, "start rejected: pubkey missing")
             call.reject("pubkey is required")
             return
         }
@@ -46,10 +47,15 @@ class NotifierPlugin : Plugin() {
                 relaysArray.optString(i)?.takeIf { it.isNotEmpty() }?.let { relays.add(it) }
             }
         }
-        if (relays.isEmpty()) {
-            call.reject("at least one relay is required")
-            return
-        }
+        // Hardcoded fallback relay (mirrors the client's HARDCODED_RELAY). The
+        // notifier's native rustls socket is Cloudflare-fragile on some popular
+        // DM relays — the UA spoof in the crate gets most past, but a relay can
+        // still be down or a user can have an empty/partial kind-10050 list. We
+        // always also poll primal: the bridge force-publishes every mail there,
+        // and it accepts rustls, so it is a guaranteed-readable copy. Deduped
+        // against whatever JS passed in.
+        if (!relays.contains(HARDCODED_RELAY)) relays.add(HARDCODED_RELAY)
+        android.util.Log.i(TAG, "start: pubkey=${pubkey.take(8)} relays=${relays.size} ${relays.joinToString { it }}")
 
         // The backlog baseline (so enabling never dumps the existing inbox) is
         // handled by MailPollWorker's first "seeding" poll — see its `seeded_`
@@ -88,6 +94,8 @@ class NotifierPlugin : Plugin() {
     }
 
     companion object {
+        private const val TAG = "notifier"
         private const val WORK_NAME = "mail-poll"
+        private const val HARDCODED_RELAY = "wss://relay.primal.net"
     }
 }
