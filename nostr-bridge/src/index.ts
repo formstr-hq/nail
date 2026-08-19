@@ -1,4 +1,3 @@
-import WebSocket from "ws";
 import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
 import { config } from "./config.js";
 import { keySigner } from "./protocol/key-signer.js";
@@ -8,8 +7,9 @@ import { UserResolver } from "./user-resolver.js";
 import { createPostfixTransport } from "./smtp-injector.js";
 import { startNostrListener } from "./nostr-listener.js";
 import { createSendApp } from "./send-service.js";
+import { RelayWebSocket } from "./relay-socket.js";
 
-useWebSocketImplementation(WebSocket);
+useWebSocketImplementation(RelayWebSocket);
 
 const userResolver = new UserResolver(
   config.bootstrapRelays,
