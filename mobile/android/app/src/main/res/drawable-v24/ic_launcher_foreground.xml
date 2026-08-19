@@ -1,41 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Mail by Form* brand mark (mirrors landing/public/favicon.svg): a black
-     envelope with a paper flap and a paper disc + red spark.
-     The 64-unit artwork is scaled 1.125x and offset by 18 so it sits inside
-     the adaptive-icon safe zone (central 72 of the 108 canvas). Lives in
-     drawable-v24 because adaptive icons (API 26+) resolve @drawable to the
-     highest qualifier — a plain drawable/ copy would be shadowed by this one. -->
+<!-- Mail by Form* app mark — adaptive-icon foreground (API 26+).
+
+     Design: a white envelope (the universal 'mail' gesture) with one bold red
+     wax seal sitting on the lower-right of the envelope flap, on a black
+     background provided by @drawable/ic_launcher_background.
+
+     Why this and not the previous mark: the old design had a tiny red spark
+     inside a white disc that ate the envelope's top-right corner, which read
+     as 'clipped' and let the white flap and the white disc fight each other
+     for the eye. A single, generously-sized red circle on the envelope flap
+     gives the icon one clear focal point and lets the eye read 'envelope'
+     first, then the red accent — 'calm paper, loud ink' at icon scale.
+
+     Geometry matches scripts/render-app-icon.py (the PNG-fallback source of
+     truth), so adaptive and raster render identically. Drawn at the native
+     108×108 viewport with all art inside the central safe zone (y=21..87), so
+     no launcher mask ever clips the mark. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <group
-        android:scaleX="1.125"
-        android:scaleY="1.125"
-        android:translateX="18"
-        android:translateY="18">
-        <!-- envelope body -->
-        <path
-            android:pathData="M12,12 H52 A8,8 0 0 1 60,20 V44 A8,8 0 0 1 52,52 H12 A8,8 0 0 1 4,44 V20 A8,8 0 0 1 12,12 Z"
-            android:fillColor="#FF0B0B0C"/>
-        <!-- flap -->
-        <path
-            android:pathData="M8,18 L32,38 L56,18"
-            android:strokeColor="#F4F4F3"
-            android:strokeWidth="4.5"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round"/>
-        <!-- disc -->
-        <path
-            android:pathData="M40,14 A10,10 0 1 1 60,14 A10,10 0 1 1 40,14 Z"
-            android:fillColor="#F4F4F3"/>
-        <!-- spark -->
-        <path
-            android:pathData="M50,8.5 L50,19.5 M45.2,11.25 L54.8,16.75 M45.2,16.75 L54.8,11.25"
-            android:strokeColor="#E5484D"
-            android:strokeWidth="2.4"
-            android:strokeLineCap="round"/>
-    </group>
+
+    <!-- Envelope body — white, with rounded corners. Centered vertically
+         inside the safe zone. 64 wide × 48 tall. -->
+    <path
+        android:fillColor="#F4F4F3"
+        android:pathData="M28,30 H80 A6,6 0 0 1 86,36 V72 A6,6 0 0 1 80,78 H28 A6,6 0 0 1 22,72 V36 A6,6 0 0 1 28,30 Z" />
+
+    <!-- Envelope flap — black V stroke (so it shows against the white body).
+         From the top corners down to the bottom-center. -->
+    <path
+        android:strokeColor="#0B0B0C"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M22,36 L54,64 L86,36" />
+
+    <!-- Wax seal — single bold red circle, on the lower-right of the
+         envelope flap where it visually anchors the mark. -->
+    <path
+        android:fillColor="#E5484D"
+        android:pathData="M68,60 m-10,0 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0" />
 </vector>
