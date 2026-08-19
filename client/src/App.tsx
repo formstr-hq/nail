@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useAccountStore } from '@/store/account'
 import { syncMailNotifications } from '@/lib/notifications'
+import { installAndroidBackHandler } from '@/lib/androidBack'
 import { useSettingsStore } from '@/store/settings'
 import { useMailStore } from '@/store/mail'
 import { useInbox } from '@/hooks/useInbox'
@@ -41,6 +42,56 @@ function MailApp() {
     if (!account || !active) return
     load(account.pubkey, active).catch(console.error)
   }, [account, active, load])
+
+  // Intercept the Android system back button so it walks the in-app stack
+  // (open overlays → reading email → root) instead of popping WebView history
+  // — at the root of the client, the first history entry is the landing page,
+  // so the default behaviour bounces the user out of the app. The listener
+  // reads each overlay's state via the snapshot it closes over, so it sees
+  // fresh values on every press without re-binding on every change.
+  const handleBack = useCallback((): boolean => {
+    // 1. Compose modal is open → close it (or restore it if minimized).
+    if (compose) {
+      if (composeMinimized) {
+        setComposeMinimized(false)
+      } else {
+        closeCompose()
+      }
+      return true
+    }
+    // 2. Settings modal is open → close it.
+    if (settingsSection) {
+      setSettingsSection(null)
+      return true
+    }
+    // 3. Add-account signer modal is open → cancel it.
+    if (addingAccount) {
+      setAddingAccount(false)
+      return true
+    }
+    // 4. Mobile nav drawer is open → close it.
+    if (navOpen) {
+      setNavOpen(false)
+      return true
+    }
+    // 5. Reading an email → return to the inbox.
+    if (selectedId) {
+      setSelected(null)
+      return true
+    }
+    // 6. Root of the client: do nothing. Returning false leaves the gesture
+    //    unhandled. At the root there's no history to pop, so the OS's next
+    //    press exits the app — that's the desired behavior, not a bounce to
+    //    landing.
+    return false
+  }, [compose, composeMinimized, settingsSection, addingAccount, navOpen, selectedId])
+
+  useEffect(() => {
+    const dispose = installAndroidBackHandler(handleBack)
+    return () => {
+      void dispose.then((d) => d())
+    }
+  }, [handleBack])
 
   // Every address this account owns: the default npub mailbox, a configured
   // sender address, and any NIP-05 aliases — deduped, case-insensitively,
