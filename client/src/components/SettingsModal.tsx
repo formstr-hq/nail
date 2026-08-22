@@ -453,11 +453,21 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
                       {/* Purchasing lives in the landing app (the tier/invoice/payment
                     flow only exists there); we deep-link with ?buy=1, which
                     opens its wizard in purchase mode and suppresses its own
-                    returning-owner redirect so it can't bounce back here. */}
+                    returning-owner redirect so it can't bounce back here.
+                    We also stash the intent in shared same-origin storage: the
+                    Android webview can drop the query string when opening the
+                    link, in which case the landing reads this flag instead. */}
                       <a
                         href={buyAddressUrl()}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={() => {
+                          try {
+                            localStorage.setItem('mailstr.buyIntent', '1')
+                          } catch {
+                            // storage unavailable — the ?buy=1 param alone carries it
+                          }
+                        }}
                         className="mt-1 inline-flex h-8 items-center justify-center gap-2 self-start whitespace-nowrap rounded-md border border-primary bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors duration-[120ms] hover:bg-primary/90"
                       >
                         <PlusIcon className="h-4 w-4" />

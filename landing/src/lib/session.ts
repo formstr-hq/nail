@@ -36,8 +36,31 @@ export function redirectToMails() {
 export function hasBuyIntent(
   search = typeof window !== "undefined" ? window.location.search : "",
 ): boolean {
-  return new URLSearchParams(search).get("buy") === "1";
+  if (new URLSearchParams(search).get("buy") === "1") return true;
+  // Fallback for contexts where the `?buy=1` query didn't survive — notably the
+  // Android webview opening the client's Buy link in a fresh window, where the
+  // query can be dropped and the landing loads with no intent. The client
+  // stashes the same intent in shared same-origin storage right before
+  // navigating here, so the wizard still opens in purchase mode (and never
+  // bounces an owner to their inbox on sign-in). Consumed by clearBuyIntent()
+  // once the wizard mounts, so it can't leak into a later organic visit.
+  try {
+    return typeof window !== "undefined" && localStorage.getItem(BUY_INTENT_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
+
+/** Consume the stashed buy intent once it has opened the wizard. */
+export function clearBuyIntent(): void {
+  try {
+    localStorage.removeItem(BUY_INTENT_KEY);
+  } catch {
+    // storage unavailable — nothing to clear
+  }
+}
+
+const BUY_INTENT_KEY = "mailstr.buyIntent";
 
 /**
  * Synchronous: is there a persisted account a silent resume could unlock?

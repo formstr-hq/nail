@@ -86,8 +86,8 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
   return (
     <aside className="flex h-full w-full flex-col border-r border-border bg-surface-nav">
       <div className="flex items-center gap-2 px-4 pb-3 pt-4">
-        <BrandGlyph size={20} />
-        <span className="text-sm font-semibold tracking-tight">Mail</span>
+        <BrandGlyph size={24} />
+        <span className="text-base font-semibold tracking-tight">Mail</span>
         <span className="flex-1" />
         <ThemeToggle />
       </div>
@@ -115,7 +115,7 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
           <nav aria-label="Inboxes" className="flex flex-col gap-px px-2">
             <div className="eyebrow px-2 pb-1.5">Inboxes</div>
             <InboxOption
-              icon={<InboxIcon className="h-3.5 w-3.5 flex-none" />}
+              icon={<InboxIcon className="h-4 w-4 flex-none" />}
               label="All mail"
               active={inboxFilter === null}
               onClick={() => setInboxFilter(null)}
@@ -123,7 +123,7 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
             {aliases.map((address) => (
               <InboxOption
                 key={address}
-                icon={<AtSignIcon className="h-3.5 w-3.5 flex-none" />}
+                icon={<AtSignIcon className="h-4 w-4 flex-none" />}
                 label={address}
                 mono
                 active={inboxFilter === address.toLowerCase()}
@@ -144,7 +144,7 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
                 onClick={() => setFolder(f.id)}
                 aria-current={active ? 'page' : undefined}
                 className={[
-                  'flex items-center justify-between rounded-md border-l-2 px-2.5 py-1.5 text-[13px]',
+                  'flex items-center justify-between rounded-md border-l-2 px-3 py-2.5 text-[15px]',
                   'transition-colors duration-[120ms]',
                   active
                     ? 'border-l-primary bg-accent font-semibold text-foreground'
@@ -155,7 +155,7 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
                 {f.id === 'inbox' && unread > 0 && (
                   <span
                     className={[
-                      'font-mono text-[10px] font-semibold tabular-nums',
+                      'font-mono text-[11px] font-semibold tabular-nums',
                       active ? 'text-primary' : 'text-subtle',
                     ].join(' ')}
                   >
@@ -177,12 +177,12 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
             target="_blank"
             rel="noopener noreferrer"
             className={[
-              'flex items-center gap-2 rounded-md border-l-2 border-l-transparent px-2.5 py-1.5',
-              'text-[13px] text-muted-foreground transition-colors duration-[120ms]',
+              'flex items-center gap-2 rounded-md border-l-2 border-l-transparent px-3 py-2.5',
+              'text-[15px] text-muted-foreground transition-colors duration-[120ms]',
               'hover:bg-accent/60 hover:text-foreground',
             ].join(' ')}
           >
-            <CalendarIcon className="h-3.5 w-3.5 flex-none text-subtle" />
+            <CalendarIcon className="h-4 w-4 flex-none text-subtle" />
             <span>Calendar</span>
           </a>
         </nav>
@@ -230,7 +230,7 @@ function InboxOption({
       aria-current={active ? 'true' : undefined}
       title={label}
       className={[
-        'flex items-center gap-2 rounded-md border-l-2 px-2.5 py-1.5 text-left',
+        'flex items-center gap-2 rounded-md border-l-2 px-3 py-2.5 text-left',
         'transition-colors duration-[120ms]',
         active
           ? 'border-l-primary bg-accent font-semibold text-foreground'
@@ -238,7 +238,7 @@ function InboxOption({
       ].join(' ')}
     >
       <span className={active ? 'text-primary' : 'text-subtle'}>{icon}</span>
-      <span className={['min-w-0 flex-1 truncate', mono ? 'font-mono text-[11px]' : 'text-[13px]'].join(' ')}>
+      <span className={['min-w-0 flex-1 truncate', mono ? 'font-mono text-[13px]' : 'text-[15px]'].join(' ')}>
         {label}
       </span>
     </button>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AtSign, Check, Loader2, PartyPopper, X } from "lucide-react";
 import { renderLoginHtml, attachLoginListeners } from "@formstr/signer/ui";
 import "@formstr/signer/styles.css";
@@ -318,6 +318,9 @@ export default function SignupWizard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loginRef = useRef<HTMLDivElement>(null);
+  // "Use a different key" escape hatch: drops back to the full signer UI.
+  const [skipUnlock, setSkipUnlock] = useState(false);
+  const [passphrase, setPassphrase] = useState("");
 
   const proceedAs = useCallback(async (pk: string) => {
     setPubkey(pk);
@@ -354,10 +357,47 @@ export default function SignupWizard({
     setStep("name");
   }, [purchaseMode]);
 
+  /**
+   * An ncryptsec key is encrypted at rest, so the silent resume below always
+   * fails for it and this tab (a fresh window with no in-memory key) can't sign
+   * — which is why buying an address used to demand a full sign-in despite the
+   * account already being known here. In purchase mode we know exactly which
+   * account to use, so instead of the generic "sign in" UI offer a focused
+   * passphrase unlock: it decrypts the stored ncryptsec in place, without the
+   * returning-owner redirect or the method picker.
+   */
+  const lockedAccount = useMemo(() => {
+    if (!purchaseMode) return null;
+    try {
+      const account = signer.getActiveAccount();
+      if (account?.method === "ncryptsec" && account.ncryptsec) return account;
+    } catch {
+      // no persisted account visible — fall through to the normal flow
+    }
+    return null;
+  }, [purchaseMode]);
+  const showUnlock = !!lockedAccount && !skipUnlock;
+
+  /** Decrypt the stored ncryptsec with the passphrase and continue the purchase. */
+  const unlockStored = useCallback(async () => {
+    if (!lockedAccount?.ncryptsec || !passphrase) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await signer.loginWithNcryptsec(lockedAccount.ncryptsec, passphrase);
+      await proceedAs(lockedAccount.pubkey);
+    } catch (e) {
+      setError(friendlyUnlockError(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [lockedAccount, passphrase, proceedAs]);
+
   /* Step 1 — sign in. Silent resume when a previous session exists,
-     otherwise the @formstr/signer login UI (NIP-07/46/49/55). */
+     otherwise the @formstr/signer login UI (NIP-07/46/49/55). Skipped while
+     the focused ncryptsec passphrase unlock is showing — it replaces this. */
   useEffect(() => {
-    if (step !== "login") return;
+    if (step !== "login" || showUnlock) return;
     let cancelled = false;
     let detach: (() => void) | undefined;
 
@@ -431,7 +471,7 @@ export default function SignupWizard({
       cancelled = true;
       detach?.();
     };
-  }, [step, proceedAs]);
+  }, [step, proceedAs, showUnlock]);
 
   /* Step 2 — debounced availability check on the chosen name.
      `availability` is derived: while the latest result doesn't match the
@@ -534,7 +574,7 @@ export default function SignupWizard({
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-bold text-ink">
-              {step === "login" && "Sign in with your Nostr key"}
+              {step === "login" && (showUnlock ? "Unlock your key" : "Sign in with your Nostr key")}
               {step === "resolving" && "One moment…"}
               {step === "name" && "Pick your address"}
               {step === "pay" && "One payment, and it's yours"}
@@ -542,7 +582,9 @@ export default function SignupWizard({
             </h3>
             <p className="mt-0.5 text-sm text-gray-500">
               {step === "login" &&
-                "Your key is your account. New to Nostr? Create one below."}
+                (showUnlock
+                  ? "Your key is stored encrypted on this device — enter its passphrase to continue."
+                  : "Your key is your account. New to Nostr? Create one below.")}
               {step === "resolving" && "Checking your account"}
               {step === "name" && "This becomes your email and your NIP-05 handle."}
               {step === "pay" && `Claiming ${address}`}
@@ -564,7 +606,57 @@ export default function SignupWizard({
           </p>
         )}
 
-        {step === "login" && <div ref={loginRef} className="signer-embed" />}
+        {step === "login" &&
+          (showUnlock && lockedAccount ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void unlockStored();
+              }}
+              className="flex flex-col gap-3"
+            >
+              <p className="text-sm text-gray-600">
+                Continue as{" "}
+                <span
+                  className="font-mono text-[13px] font-medium text-ink"
+                  title={lockedAccount.npub}
+                >
+                  {lockedAccount.npub.slice(0, 12)}…{lockedAccount.npub.slice(-4)}
+                </span>
+              </p>
+              <input
+                type="password"
+                name="off"
+                autoFocus
+                value={passphrase}
+                onChange={(e) => setPassphrase(e.target.value)}
+                placeholder="Passphrase for this key"
+                aria-label="Passphrase for this key"
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="w-full rounded-lg border border-ink/15 bg-white px-4 py-3 text-sm text-ink outline-none focus:border-primary"
+              />
+              <button
+                type="submit"
+                disabled={!passphrase || busy}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-primary-light disabled:opacity-50"
+              >
+                {busy && <Loader2 size={15} className="animate-spin" />}
+                {busy ? "Unlocking…" : "Unlock and continue"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSkipUnlock(true)}
+                className="text-sm text-gray-500 transition-colors hover:text-ink"
+              >
+                Use a different key
+              </button>
+            </form>
+          ) : (
+            <div ref={loginRef} className="signer-embed" />
+          ))}
 
         {step === "resolving" && (
           <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">

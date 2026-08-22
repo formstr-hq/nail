@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { Check, Copy, Loader2, Zap } from "lucide-react";
+import { Check, Copy, Loader2, Wallet, Zap } from "lucide-react";
 import { paymentSocket } from "../lib/api";
 
 const MAX_TIME = 300; // the backend closes the payment socket after 5 minutes
@@ -84,6 +84,17 @@ export default function InvoiceQR({
       <div className="rounded-2xl border border-black/10 bg-white p-4">
         <QRCodeSVG value={invoice} size={216} />
       </div>
+
+      {/* Primary action on a phone: you can't scan your own screen, so hand the
+          invoice straight to a Lightning wallet via the bolt11 URI scheme. The
+          QR + copy below stay for desktop / scanning from another device. */}
+      <a
+        href={`lightning:${invoice}`}
+        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-ink/90"
+      >
+        <Wallet size={16} />
+        Open in wallet
+      </a>
 
       <div className="flex w-full items-center gap-2">
         <pre className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-lg bg-black/[0.04] px-3 py-2 text-left font-mono text-xs text-gray-600">
