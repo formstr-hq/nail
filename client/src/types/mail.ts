@@ -58,6 +58,22 @@ export interface Email {
 
 export type EmailFolder = 'inbox' | 'sent' | 'trash' | 'archive' | 'spam'
 
+/**
+ * Per-mail state synced across devices as a kind-34578 metadata event, keyed by
+ * gift-wrap id. `updatedAt` (unix seconds) is the event's `created_at` — used to
+ * resolve which of two versions of the same mail's state is newer, so a stale
+ * relay replay never clobbers a fresh local or cross-device change.
+ *
+ * `spam` is deliberately absent: spam is reported to and held by the server, not
+ * expressed as a client-side metadata event.
+ */
+export interface MailFlags {
+  read?: boolean
+  archived?: boolean
+  trashed?: boolean
+  updatedAt: number
+}
+
 export interface Thread {
   id: string               // root Message-ID
   emails: Email[]

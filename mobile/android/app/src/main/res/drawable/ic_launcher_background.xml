@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mail by Form* adaptive-icon background — solid black, edge to edge.
+
+     The calendar icon uses a vector background drawable (see
+     nostr-calendar/.../drawable/ic_launcher_background.xml); we follow the
+     same pattern so the background reaches all four sides of the 108×108
+     canvas and the launcher's shape mask (circle, squircle, teardrop, …)
+     carves it cleanly. A pure color reference is clipped to the mask's safe
+     area and shows the launcher's wallpaper underneath, which fights the
+     mark. A vector that fills the full viewport keeps the 'infinite black'
+     feel — the mark sits on a slab of ink, not a chip of paper. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#0B0B0C"
+        android:pathData="M0,0 H108 V108 H0 Z" />
+</vector>

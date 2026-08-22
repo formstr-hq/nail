@@ -6,6 +6,7 @@ import { getSignerPool } from '@/lib/nostr/signerPool'
 import { markFreshSignup } from '@/lib/freshSignup'
 import { DEFAULT_RELAYS } from '@/lib/nostr/constants'
 import { useAccountStore } from '@/store/account'
+import { isNativeApp } from '@/lib/platform'
 import { Button } from '@/components/ui/Button'
 import { BrandGlyph } from '@/components/ui/icons'
 
@@ -26,6 +27,11 @@ const TAB_COPY: Record<string, { title: string; desc: string; icon: string }> = 
     title: 'Create a new account',
     desc: 'Fresh key, protected by a passphrase',
     icon: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/>',
+  },
+  android: {
+    title: 'Signer app',
+    desc: 'Amber or another NIP-55 signer',
+    icon: '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
   },
   extension: {
     title: 'Browser extension',
@@ -49,21 +55,26 @@ const TAB_COPY: Record<string, { title: string; desc: string; icon: string }> = 
   },
 }
 
-/** Order of the "already have a key?" rows under the create card. */
-const SECONDARY_TABS = ['extension', 'ncryptsec', 'bunker', 'nostrconnect']
+/** Order of the "already have a key?" rows under the create card. `android`
+ *  (NIP-55) shows only in the native app and `extension` only on the web —
+ *  tuneLoginUi removes whichever doesn't apply, so listing both is safe. */
+const SECONDARY_TABS = ['android', 'extension', 'ncryptsec', 'bunker', 'nostrconnect']
 
 const ICON_SVG_OPEN =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
 
-/** Inline mailstr glyph — same mark as the landing favicon. Monochrome + one
- *  spark; the parts are coloured from theme tokens in index.css so the mark
- *  tracks light/dark instead of baking colours into the string. */
+/** Inline Mail by Form* mark — red envelope + white flap, tile-less (the
+ *  launcher's ink tile reads as a heavy badge on the app's light chrome). The
+ *  asterisk uses currentColor so it adapts to the modal's theme. Geometry mirrors
+ *  scripts/render-app-icon.py. Keeps the `nostr-signer__brand-glyph` class for
+ *  sizing. */
 const MAILSTR_GLYPH =
-  '<svg class="nostr-signer__brand-glyph" viewBox="0 0 64 64" aria-hidden="true">' +
-  '<rect class="glyph-env" x="4" y="12" width="56" height="40" rx="8"/>' +
-  '<path class="glyph-flap" d="M8 18 L32 38 L56 18" fill="none" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>' +
-  '<circle class="glyph-disc" cx="50" cy="14" r="10"/>' +
-  '<path class="glyph-spark" d="M50 8.5 L50 19.5 M45.2 11.25 L54.8 16.75 M45.2 16.75 L54.8 11.25" stroke-width="2.4" stroke-linecap="round"/>' +
+  '<svg class="nostr-signer__brand-glyph" viewBox="23 15.25 68 68" aria-hidden="true">' +
+  '<rect x="32" y="40" width="44" height="34" rx="6" fill="#E5484D"/>' +
+  '<path d="M38.5,44 L54,59 L69.5,44" fill="none" stroke="#F4F4F3" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+  '<line x1="70" y1="27" x2="70" y2="49" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>' +
+  '<line x1="60.47" y1="32.5" x2="79.53" y2="43.5" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>' +
+  '<line x1="79.53" y1="32.5" x2="60.47" y2="43.5" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>' +
   '</svg>'
 
 /**
@@ -75,8 +86,14 @@ const MAILSTR_GLYPH =
  * primary card, and the rest get icon rows under a divider.
  */
 function tuneLoginUi(el: HTMLElement) {
-  el.querySelector('[data-tab="android"]')?.remove()
-  el.querySelector('[data-panel="android"]')?.remove()
+  // Mobile keyboards autocapitalize/autocorrect by default, which can silently
+  // alter a passphrase — and NIP-49 then fails to decrypt with an opaque
+  // "invalid tag". Turn those off on every password field the modal renders.
+  el.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach((input) => {
+    input.setAttribute('autocapitalize', 'none')
+    input.setAttribute('autocorrect', 'off')
+    input.setAttribute('spellcheck', 'false')
+  })
   const relaysInput = el.querySelector<HTMLInputElement>('.nostr-signer__input--relays')
   if (relaysInput) relaysInput.value = DEFAULT_RELAYS.join(', ')
 
@@ -154,6 +171,142 @@ function methodListNav(el: HTMLElement): () => void {
   }
 }
 
+/**
+ * Keep the fixed, vertically-centred login overlay pinned to the *visible*
+ * viewport. Android's WebView has no `interactive-widget=resizes-content`, so
+ * the on-screen keyboard overlays the layout viewport instead of shrinking it:
+ * a `position:fixed; inset:0` overlay stays full-screen and its centred modal —
+ * with the passphrase field and the Create button at the bottom — sits behind
+ * the keyboard. Sizing the overlay to `visualViewport` (and top-aligning +
+ * scrolling once the keyboard eats the height) keeps the submit button
+ * reachable. A no-op where `visualViewport` is absent or the viewport is not
+ * obscured (desktop, keyboard closed), so the web layout is unchanged.
+ */
+function fitOverlayToViewport(el: HTMLElement): () => void {
+  const root = el.querySelector<HTMLElement>('.nostr-signer__root')
+  const vv = window.visualViewport
+  if (!root || !vv) return () => {}
+  const sync = () => {
+    // >120px of hidden height means a keyboard (or similar) is up, not just
+    // browser-chrome jitter.
+    const obscured = window.innerHeight - vv.height > 120
+    root.style.position = 'fixed'
+    root.style.left = `${vv.offsetLeft}px`
+    root.style.top = `${vv.offsetTop}px`
+    root.style.right = 'auto'
+    root.style.bottom = 'auto'
+    root.style.width = `${vv.width}px`
+    root.style.height = `${vv.height}px`
+    root.style.alignItems = obscured ? 'flex-start' : ''
+    root.style.overflowY = obscured ? 'auto' : ''
+  }
+  sync()
+  vv.addEventListener('resize', sync)
+  vv.addEventListener('scroll', sync)
+  return () => {
+    vv.removeEventListener('resize', sync)
+    vv.removeEventListener('scroll', sync)
+  }
+}
+
+/**
+ * Drop the sign-in method that doesn't apply to this platform: NIP-55 signer
+ * apps exist only on Android, a NIP-07 browser extension only on the web.
+ *
+ * MUST run *after* attachLoginListeners: the package wires the extension button
+ * unconditionally (`on(q('[data-action="extension-login"]'), …)`), so removing
+ * that element earlier makes the query null and crashes the whole modal with
+ * "Cannot read properties of null (reading 'addEventListener')".
+ */
+function removeInapplicableMethod(el: HTMLElement) {
+  const id = isNativeApp() ? 'extension' : 'android'
+  el.querySelector(`[data-tab="${id}"]`)?.remove()
+  el.querySelector(`[data-panel="${id}"]`)?.remove()
+}
+
+/**
+ * On native, replace the generic "Signer app" tab with a row per *installed*
+ * NIP-55 signer (Amber, Primal, …) shown upfront in the picker, each with the
+ * app's own logo. Tapping a row signs in through that signer directly — no
+ * extra "choose a signer" step. Async (enumeration is a native round-trip);
+ * returns a canceller for unmount before it resolves.
+ */
+function injectAndroidSigners(
+  el: HTMLElement,
+  deps: { onSuccess: () => void; onError: (msg: string) => void },
+): () => void {
+  let cancelled = false
+  const tabs = el.querySelector<HTMLElement>('.nostr-signer__tabs')
+  const genericTab = el.querySelector('[data-tab="android"]')
+  el.querySelector('[data-panel="android"]')?.remove()
+  if (!tabs) return () => {}
+
+  void nostrSigner
+    .listAndroidSignerApps()
+    .then((apps) => {
+      if (cancelled) return
+      genericTab?.remove()
+      // Place the signer rows first among the "already have a key?" options.
+      let after: Element | null = tabs.querySelector('.nostr-signer__tabs-label')
+      for (const app of apps) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'nostr-signer__tab'
+
+        const icon = document.createElement('span')
+        icon.className = 'nostr-signer__tab-icon'
+        if (app.iconUrl) {
+          const img = document.createElement('img')
+          img.src = app.iconUrl // a data:image/png;base64 URI from the plugin
+          img.alt = ''
+          img.className = 'nostr-signer__signer-logo'
+          icon.appendChild(img)
+        } else {
+          icon.innerHTML = ICON_SVG_OPEN + TAB_COPY.android!.icon + '</svg>'
+        }
+
+        const title = document.createElement('span')
+        title.className = 'nostr-signer__tab-title'
+        title.textContent = `Sign in with ${app.name}`
+        const desc = document.createElement('span')
+        desc.className = 'nostr-signer__tab-desc'
+        desc.textContent = 'NIP-55 signer app'
+        const text = document.createElement('span')
+        text.className = 'nostr-signer__tab-text'
+        text.append(title, desc)
+        btn.append(icon, text)
+
+        btn.addEventListener('click', async () => {
+          deps.onError('')
+          btn.disabled = true
+          try {
+            await nostrSigner.loginWithAndroidSigner({ packageName: app.packageName })
+            deps.onSuccess()
+          } catch (err) {
+            btn.disabled = false
+            deps.onError(friendlyUnlockError(err))
+          }
+        })
+
+        if (after && after.parentElement === tabs) {
+          after.after(btn)
+        } else {
+          tabs.appendChild(btn)
+        }
+        after = btn
+      }
+    })
+    .catch(() => {
+      // No signers, or enumeration failed — drop the option rather than show a
+      // dead row.
+      if (!cancelled) genericTab?.remove()
+    })
+
+  return () => {
+    cancelled = true
+  }
+}
+
 /** Auto-generate the nostrconnect QR when the Remote (QR) tab opens. */
 function autoGenerateQr(el: HTMLElement): () => void {
   const tab = el.querySelector<HTMLButtonElement>('[data-tab="nostrconnect"]')
@@ -164,6 +317,20 @@ function autoGenerateQr(el: HTMLElement): () => void {
   }
   tab?.addEventListener('click', onClick)
   return () => tab?.removeEventListener('click', onClick)
+}
+
+/**
+ * Turn a raw signer/decryption error into something a person can act on. NIP-49
+ * (ncryptsec) decrypts with an AEAD, so a wrong passphrase surfaces as the
+ * cipher's opaque "invalid tag" (or "invalid MAC"/"unable to decrypt") — which
+ * means exactly one thing here: the passphrase was wrong.
+ */
+function friendlyUnlockError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (/invalid tag|invalid mac|decrypt|padding|poly1305/i.test(msg)) {
+    return 'Incorrect passphrase.'
+  }
+  return msg
 }
 
 /** Passphrase prompt for a persisted ncryptsec account after a reload. */
@@ -180,7 +347,7 @@ function UnlockForm({ onUseAnother }: { onUseAnother: () => void }) {
     try {
       await unlockNcryptsec(passphrase)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(friendlyUnlockError(err))
     } finally {
       setBusy(false)
     }
@@ -200,6 +367,9 @@ function UnlockForm({ onUseAnother }: { onUseAnother: () => void }) {
       <input
         type="password"
         autoFocus
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
         placeholder="Passphrase"
         value={passphrase}
         onChange={(e) => setPassphrase(e.target.value)}
@@ -286,10 +456,23 @@ export function SignerLogin({
         onLoggedIn?.()
       },
       onCancel,
-      onError: (err) => setError(err.message),
+      onError: (err) => setError(friendlyUnlockError(err)),
     })
+    // After the package has wired its listeners, so removing an element can't
+    // null out one of its queries (see removeInapplicableMethod).
+    removeInapplicableMethod(el)
+    const detachSigners = isNativeApp()
+      ? injectAndroidSigners(el, {
+          onSuccess: () => {
+            refresh()
+            onLoggedIn?.()
+          },
+          onError: setError,
+        })
+      : () => {}
     const detachQr = autoGenerateQr(el)
     const detachNav = methodListNav(el)
+    const detachFit = fitOverlayToViewport(el)
     // A brand-new key created here provably has no kind-10050 relay list, so
     // flag it for the relay onboarding. Capture phase on the container runs
     // before the package's own created-ack handler fires onLogin, so the flag
@@ -303,6 +486,8 @@ export function SignerLogin({
     }
     el.addEventListener('click', markCreated, true)
     return () => {
+      detachSigners()
+      detachFit()
       detachNav()
       detachQr()
       detachCancel?.()
@@ -335,14 +520,14 @@ export function LoginPage() {
   // below belongs only to the unlock and resume paths, which are ours.
   if (!resuming) {
     return (
-      <div className="bg-graph min-h-[100dvh] bg-background">
+      <div className="bg-graph safe-y min-h-[100dvh] bg-background">
         <SignerLogin />
       </div>
     )
   }
 
   return (
-    <div className="bg-graph flex min-h-[100dvh] items-center justify-center bg-background px-4">
+    <div className="bg-graph safe-y flex min-h-[100dvh] items-center justify-center bg-background px-4">
       <div className="flex w-full max-w-sm flex-col gap-6 py-10">
         <div className="flex flex-col items-center gap-2 text-center">
           <BrandGlyph size={38} />

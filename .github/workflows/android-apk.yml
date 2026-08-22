@@ -1,0 +1,74 @@
+name: Android APK
+
+# Manual only: pick a branch (including a PR's head branch) in the Actions tab
+# and run it. Keeps APK builds off every push while still being one click away
+# for reviewing a PR on-device.
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: Gradle build type
+        type: choice
+        options:
+          - debug
+          - release
+        default: debug
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      # landing and client are built by mobile/scripts/build-web.mjs via pnpm,
+      # so their deps must be present before the combined build runs.
+      - name: Install web app deps
+        run: |
+          pnpm --dir landing install --no-frozen-lockfile
+          pnpm --dir client install --no-frozen-lockfile
+
+      - name: Install mobile deps
+        run: npm --prefix mobile ci
+
+      - name: Build combined web bundle and sync
+        run: npm --prefix mobile run build
+
+      - name: Resolve Gradle task
+        id: task
+        env:
+          BT: ${{ inputs.build_type }}
+        # assembleDebug / assembleRelease — Gradle wants the type capitalised.
+        run: echo "name=assemble${BT^}" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble APK
+        working-directory: mobile/android
+        run: ./gradlew ${{ steps.task.outputs.name }} --no-daemon --console=plain
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: mailstr-${{ inputs.build_type }}-apk
+          path: mobile/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error

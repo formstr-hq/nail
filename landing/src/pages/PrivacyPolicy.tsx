@@ -5,7 +5,7 @@ import content from "./privacy-policy.md?raw";
 
 export default function PrivacyPolicy() {
   return (
-    <div className="min-h-screen bg-white text-gray-900">
+    <div className="safe-y min-h-screen bg-white text-gray-900">
       <Navbar />
       <main className="mx-auto max-w-3xl px-6 py-20">
         <article className="prose prose-gray max-w-none">

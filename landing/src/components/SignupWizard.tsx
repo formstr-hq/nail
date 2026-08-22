@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AtSign, Check, Loader2, PartyPopper, X } from "lucide-react";
 import { renderLoginHtml, attachLoginListeners } from "@formstr/signer/ui";
 import "@formstr/signer/styles.css";
 import { signer, pool, NOSTRCONNECT_RELAYS } from "../lib/signer";
+import { isNativeApp } from "../lib/platform";
 
 /*
  * The login-UI helpers below (TAB_COPY, tuneLoginUi, methodListNav,
@@ -22,6 +23,11 @@ const TAB_COPY: Record<string, { title: string; desc: string; icon: string }> =
       title: "Create a new account",
       desc: "Fresh key, protected by a passphrase",
       icon: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/>',
+    },
+    android: {
+      title: "Signer app",
+      desc: "Amber or another NIP-55 signer",
+      icon: '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
     },
     extension: {
       title: "Browser extension",
@@ -45,8 +51,10 @@ const TAB_COPY: Record<string, { title: string; desc: string; icon: string }> =
     },
   };
 
-/** Order of the "already have a key?" rows under the create card. */
-const SECONDARY_TABS = ["extension", "ncryptsec", "bunker", "nostrconnect"];
+/** Order of the "already have a key?" rows under the create card. `android`
+ *  (NIP-55) shows only in the native app and `extension` only on the web —
+ *  removeInapplicableMethod drops whichever doesn't apply. */
+const SECONDARY_TABS = ["android", "extension", "ncryptsec", "bunker", "nostrconnect"];
 
 const ICON_SVG_OPEN =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
@@ -61,12 +69,20 @@ const ICON_SVG_OPEN =
  * card supplies the heading, so no brand header here).
  */
 function tuneLoginUi(el: HTMLElement) {
-  el.querySelector('[data-tab="android"]')?.remove();
-  el.querySelector('[data-panel="android"]')?.remove();
   const relaysInput = el.querySelector<HTMLInputElement>(
     ".nostr-signer__input--relays",
   );
   if (relaysInput) relaysInput.value = NOSTRCONNECT_RELAYS.join(", ");
+
+  // Mobile keyboards autocapitalize/autocorrect by default, which can silently
+  // alter a passphrase and make NIP-49 fail with an opaque "invalid tag".
+  el.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach(
+    (input) => {
+      input.setAttribute("autocapitalize", "none");
+      input.setAttribute("autocorrect", "off");
+      input.setAttribute("spellcheck", "false");
+    },
+  );
 
   el.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((tab) => {
     const copy = TAB_COPY[tab.dataset.tab ?? ""];
@@ -144,6 +160,99 @@ function autoGenerateQr(el: HTMLElement): () => void {
   tab?.addEventListener("click", onClick);
   return () => tab?.removeEventListener("click", onClick);
 }
+
+/** NIP-49 decrypts with an AEAD, so a wrong passphrase surfaces as the cipher's
+ *  opaque "invalid tag"; translate that to something a person can act on. */
+function friendlyUnlockError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/invalid tag|invalid mac|decrypt|padding|poly1305/i.test(msg)) {
+    return "Incorrect passphrase.";
+  }
+  return msg;
+}
+
+/** Drop the sign-in method that doesn't apply to this platform: NIP-55 signer
+ *  apps only on native, a NIP-07 browser extension only on the web. MUST run
+ *  after attachLoginListeners — the package wires the extension button
+ *  unconditionally, so removing it earlier nulls that query and crashes. */
+function removeInapplicableMethod(el: HTMLElement) {
+  const id = isNativeApp() ? "extension" : "android";
+  el.querySelector(`[data-tab="${id}"]`)?.remove();
+  el.querySelector(`[data-panel="${id}"]`)?.remove();
+}
+
+/** On native, replace the generic "Signer app" tab with a row per installed
+ *  NIP-55 signer, shown upfront with the app's own logo. Async; returns a
+ *  canceller. */
+function injectAndroidSigners(
+  el: HTMLElement,
+  deps: { onSuccess: () => void; onError: (msg: string) => void },
+): () => void {
+  let cancelled = false;
+  const tabs = el.querySelector<HTMLElement>(".nostr-signer__tabs");
+  const genericTab = el.querySelector('[data-tab="android"]');
+  el.querySelector('[data-panel="android"]')?.remove();
+  if (!tabs) return () => {};
+
+  void signer
+    .listAndroidSignerApps()
+    .then((apps) => {
+      if (cancelled) return;
+      genericTab?.remove();
+      let after: Element | null = tabs.querySelector(".nostr-signer__tabs-label");
+      for (const app of apps) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "nostr-signer__tab";
+
+        const icon = document.createElement("span");
+        icon.className = "nostr-signer__tab-icon";
+        if (app.iconUrl) {
+          const img = document.createElement("img");
+          img.src = app.iconUrl; // data:image/png;base64 URI from the plugin
+          img.alt = "";
+          img.className = "nostr-signer__signer-logo";
+          icon.appendChild(img);
+        } else {
+          icon.innerHTML = ICON_SVG_OPEN + TAB_COPY.android!.icon + "</svg>";
+        }
+
+        const title = document.createElement("span");
+        title.className = "nostr-signer__tab-title";
+        title.textContent = `Sign in with ${app.name}`;
+        const desc = document.createElement("span");
+        desc.className = "nostr-signer__tab-desc";
+        desc.textContent = "NIP-55 signer app";
+        const text = document.createElement("span");
+        text.className = "nostr-signer__tab-text";
+        text.append(title, desc);
+        btn.append(icon, text);
+
+        btn.addEventListener("click", async () => {
+          deps.onError("");
+          btn.disabled = true;
+          try {
+            await signer.loginWithAndroidSigner({ packageName: app.packageName });
+            deps.onSuccess();
+          } catch (err) {
+            btn.disabled = false;
+            deps.onError(friendlyUnlockError(err));
+          }
+        });
+
+        if (after && after.parentElement === tabs) after.after(btn);
+        else tabs.appendChild(btn);
+        after = btn;
+      }
+    })
+    .catch(() => {
+      if (!cancelled) genericTab?.remove();
+    });
+
+  return () => {
+    cancelled = true;
+  };
+}
 import { config } from "../lib/config";
 import {
   apiUrl,
@@ -209,6 +318,9 @@ export default function SignupWizard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loginRef = useRef<HTMLDivElement>(null);
+  // "Use a different key" escape hatch: drops back to the full signer UI.
+  const [skipUnlock, setSkipUnlock] = useState(false);
+  const [passphrase, setPassphrase] = useState("");
 
   const proceedAs = useCallback(async (pk: string) => {
     setPubkey(pk);
@@ -245,10 +357,47 @@ export default function SignupWizard({
     setStep("name");
   }, [purchaseMode]);
 
+  /**
+   * An ncryptsec key is encrypted at rest, so the silent resume below always
+   * fails for it and this tab (a fresh window with no in-memory key) can't sign
+   * — which is why buying an address used to demand a full sign-in despite the
+   * account already being known here. In purchase mode we know exactly which
+   * account to use, so instead of the generic "sign in" UI offer a focused
+   * passphrase unlock: it decrypts the stored ncryptsec in place, without the
+   * returning-owner redirect or the method picker.
+   */
+  const lockedAccount = useMemo(() => {
+    if (!purchaseMode) return null;
+    try {
+      const account = signer.getActiveAccount();
+      if (account?.method === "ncryptsec" && account.ncryptsec) return account;
+    } catch {
+      // no persisted account visible — fall through to the normal flow
+    }
+    return null;
+  }, [purchaseMode]);
+  const showUnlock = !!lockedAccount && !skipUnlock;
+
+  /** Decrypt the stored ncryptsec with the passphrase and continue the purchase. */
+  const unlockStored = useCallback(async () => {
+    if (!lockedAccount?.ncryptsec || !passphrase) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await signer.loginWithNcryptsec(lockedAccount.ncryptsec, passphrase);
+      await proceedAs(lockedAccount.pubkey);
+    } catch (e) {
+      setError(friendlyUnlockError(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [lockedAccount, passphrase, proceedAs]);
+
   /* Step 1 — sign in. Silent resume when a previous session exists,
-     otherwise the @formstr/signer login UI (NIP-07/46/49/55). */
+     otherwise the @formstr/signer login UI (NIP-07/46/49/55). Skipped while
+     the focused ncryptsec passphrase unlock is showing — it replaces this. */
   useEffect(() => {
-    if (step !== "login") return;
+    if (step !== "login" || showUnlock) return;
     let cancelled = false;
     let detach: (() => void) | undefined;
 
@@ -276,9 +425,20 @@ export default function SignupWizard({
           const account = signer.getActiveAccount();
           if (account) void proceedAs(account.pubkey);
         },
-        onError: (err: unknown) =>
-          setError(err instanceof Error ? err.message : String(err)),
+        onError: (err: unknown) => setError(friendlyUnlockError(err)),
       });
+      // After attach (so removing an element can't null a package query), then
+      // surface installed NIP-55 signers upfront on native.
+      removeInapplicableMethod(el);
+      const detachSigners = isNativeApp()
+        ? injectAndroidSigners(el, {
+            onSuccess: () => {
+              const account = signer.getActiveAccount();
+              if (account) void proceedAs(account.pubkey);
+            },
+            onError: setError,
+          })
+        : () => {};
       const detachQr = autoGenerateQr(el);
       const detachNav = methodListNav(el);
       // Flag a freshly-created key for the mail app's relay onboarding. Capture
@@ -299,6 +459,7 @@ export default function SignupWizard({
       };
       el.addEventListener("click", markCreated, true);
       detach = () => {
+        detachSigners();
         detachNav();
         detachQr();
         el.removeEventListener("click", markCreated, true);
@@ -310,7 +471,7 @@ export default function SignupWizard({
       cancelled = true;
       detach?.();
     };
-  }, [step, proceedAs]);
+  }, [step, proceedAs, showUnlock]);
 
   /* Step 2 — debounced availability check on the chosen name.
      `availability` is derived: while the latest result doesn't match the
@@ -403,7 +564,7 @@ export default function SignupWizard({
 
   return (
     <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-ink/60 p-4 backdrop-blur-sm"
+      className="safe-modal fixed inset-0 z-[70] flex items-center justify-center bg-ink/60 px-4 backdrop-blur-sm"
       onClick={step === "pay" ? undefined : onClose}
     >
       <div
@@ -413,7 +574,7 @@ export default function SignupWizard({
         <div className="mb-5 flex items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-bold text-ink">
-              {step === "login" && "Sign in with your Nostr key"}
+              {step === "login" && (showUnlock ? "Unlock your key" : "Sign in with your Nostr key")}
               {step === "resolving" && "One moment…"}
               {step === "name" && "Pick your address"}
               {step === "pay" && "One payment, and it's yours"}
@@ -421,7 +582,9 @@ export default function SignupWizard({
             </h3>
             <p className="mt-0.5 text-sm text-gray-500">
               {step === "login" &&
-                "Your key is your account. New to Nostr? Create one below."}
+                (showUnlock
+                  ? "Your key is stored encrypted on this device — enter its passphrase to continue."
+                  : "Your key is your account. New to Nostr? Create one below.")}
               {step === "resolving" && "Checking your account"}
               {step === "name" && "This becomes your email and your NIP-05 handle."}
               {step === "pay" && `Claiming ${address}`}
@@ -443,7 +606,57 @@ export default function SignupWizard({
           </p>
         )}
 
-        {step === "login" && <div ref={loginRef} className="signer-embed" />}
+        {step === "login" &&
+          (showUnlock && lockedAccount ? (
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void unlockStored();
+              }}
+              className="flex flex-col gap-3"
+            >
+              <p className="text-sm text-gray-600">
+                Continue as{" "}
+                <span
+                  className="font-mono text-[13px] font-medium text-ink"
+                  title={lockedAccount.npub}
+                >
+                  {lockedAccount.npub.slice(0, 12)}…{lockedAccount.npub.slice(-4)}
+                </span>
+              </p>
+              <input
+                type="password"
+                name="off"
+                autoFocus
+                value={passphrase}
+                onChange={(e) => setPassphrase(e.target.value)}
+                placeholder="Passphrase for this key"
+                aria-label="Passphrase for this key"
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                className="w-full rounded-lg border border-ink/15 bg-white px-4 py-3 text-sm text-ink outline-none focus:border-primary"
+              />
+              <button
+                type="submit"
+                disabled={!passphrase || busy}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-primary-light disabled:opacity-50"
+              >
+                {busy && <Loader2 size={15} className="animate-spin" />}
+                {busy ? "Unlocking…" : "Unlock and continue"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSkipUnlock(true)}
+                className="text-sm text-gray-500 transition-colors hover:text-ink"
+              >
+                Use a different key
+              </button>
+            </form>
+          ) : (
+            <div ref={loginRef} className="signer-embed" />
+          ))}
 
         {step === "resolving" && (
           <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
@@ -567,8 +780,8 @@ export default function SignupWizard({
                           <span className="text-lg font-bold leading-none text-ink">
                             {t.priceSats.toLocaleString()}
                           </span>
-                          <span className="ml-1 text-sm text-gray-500">sats</span>
-                          <span className="block text-[11px] text-gray-400">one-time</span>
+                          <span className="ml-1 text-sm text-gray-500">{t.unit}</span>
+                          <span className="block text-[11px] text-gray-400">{t.billing}</span>
                         </div>
                       </div>
                       {(t.features.length > 0 || t.notIncluded.length > 0) && (
@@ -605,13 +818,17 @@ export default function SignupWizard({
               ) : (
                 <>
                   Get {selectedTier?.name ?? "Mail"}
-                  {selectedTier ? ` — ${selectedTier.priceSats.toLocaleString()} sats` : ""}
+                  {selectedTier ? ` — ${selectedTier.priceSats.toLocaleString()} ${selectedTier.unit}` : ""}
                 </>
               )}
             </button>
-            <p className="mt-2 text-center text-xs text-gray-400">
-              Paid once over Lightning. No card, no recurring charge.
-            </p>
+            {selectedTier && (
+              <p className="mt-2 text-center text-xs text-gray-400">
+                {selectedTier.billing === "one-time"
+                  ? "Paid once. No recurring charge."
+                  : `Billed ${selectedTier.billing}.`}
+              </p>
+            )}
           </div>
         )}
 
@@ -620,6 +837,7 @@ export default function SignupWizard({
             invoice={invoice.invoice}
             hash={invoice.paymentHash}
             amount={invoice.amount}
+            unit={selectedTier?.unit ?? "sats"}
             onPaid={onPaid}
           />
         )}

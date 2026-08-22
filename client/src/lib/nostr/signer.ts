@@ -1,11 +1,16 @@
 import { createSigner } from '@formstr/signer'
 import type { ActiveSigner } from '@formstr/signer'
+import { NostrSignerPlugin } from 'nostr-signer-capacitor-plugin'
 
 // Single signer instance for the whole app. appName/appUrl are what remote
-// signers (NIP-46 nostrconnect) display on their approval prompt.
+// signers (NIP-46 nostrconnect) display on their approval prompt. The Android
+// signer plugin powers NIP-55 (Amber) login inside the native app — its
+// exported surface is already the positional shape @formstr/signer calls, so it
+// drops straight in. Inert on web, where that method isn't offered.
 export const nostrSigner = createSigner({
   appName: 'Mail by Formstr',
   appUrl: 'https://mailstr.app',
+  androidSignerPlugin: NostrSignerPlugin,
 })
 
 /**

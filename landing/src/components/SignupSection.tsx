@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { config } from "../lib/config";
 import { parseIdentityInput } from "../lib/nostr";
-import { hasBuyIntent } from "../lib/session";
+import { hasBuyIntent, clearBuyIntent } from "../lib/session";
 
 // The wizard drags in the signer + QR libraries — keep them out of the
 // landing page's initial bundle.
@@ -33,8 +33,11 @@ export default function SignupSection() {
   // wizard closed, so opening it must happen after hydration or the server and
   // client markup would mismatch.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- see above: post-hydration open is intentional
-    if (hasBuyIntent()) setWizard({ open: true, purchase: true });
+    if (hasBuyIntent()) {
+      clearBuyIntent(); // consume so it can't leak into a later organic visit
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- see above: post-hydration open is intentional
+      setWizard({ open: true, purchase: true });
+    }
   }, []);
 
   const check = (e: React.FormEvent) => {

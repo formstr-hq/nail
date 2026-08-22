@@ -12,6 +12,14 @@ export const KIND_NIP65_RELAYS = 10002
 export const KIND_LABEL = 1985
 export const KIND_SETTINGS = 30078
 
+// NIP-Metadata (kind 34578, addressable): per-entity metadata whose content is
+// NIP-44 ciphertext to the author's own key. We use one event per mail to hold
+// its read/archived/trashed state. The `d` tag is a keyed HMAC of the gift-wrap
+// id (see mailMeta.ts) so the coordinate never reveals which mail it refers to,
+// and we deliberately omit the optional `["t", …]` sub-type tag so these events
+// are indistinguishable from any other kind-34578 metadata on the relay.
+export const KIND_MAIL_META = 34578
+
 export const LABEL_NAMESPACE = 'mail'
 
 // Overridable so the e2e suite can point the whole app at a single local mock

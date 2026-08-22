@@ -63,7 +63,9 @@ export function IconButton({
       title={title}
       aria-label={title}
       className={[
-        'inline-flex h-7 w-7 flex-none items-center justify-center rounded-md',
+        // 32px square: the comfortable floor for a touch target in this dense
+        // UI. The glyph inside stays small (h-4); the padding is the hit area.
+        'inline-flex h-8 w-8 flex-none items-center justify-center rounded-md',
         'text-muted-foreground transition-colors duration-[120ms]',
         'hover:bg-accent hover:text-foreground',
         'disabled:cursor-not-allowed disabled:opacity-50',

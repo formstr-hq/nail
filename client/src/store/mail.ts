@@ -1,47 +1,71 @@
 import { create } from 'zustand'
-import type { Email, EmailFolder } from '@/types/mail'
+import type { Email, EmailFolder, MailFlags } from '@/types/mail'
 
 /**
- * Read state, persisted to this device.
+ * Per-mail state (read / archived / trashed), keyed by gift-wrap id.
  *
- * The store is otherwise in-memory: every fetch rebuilds emails from the wraps
- * with `read: false`, so without this the inbox forgets what you've opened on
- * each reload. We keep the set of opened gift-wrap ids in localStorage and
- * re-apply it as mail comes back in.
+ * This is the local, always-fast mirror of the kind-34578 metadata events that
+ * carry mail state across devices (see lib/nostr/mailMeta.ts and the useMailMeta
+ * hook that hydrates this from the relay). Every action updates this map first,
+ * so the UI reacts instantly, then publishes in the background.
  *
- * Deliberately local. A per-message read receipt published to relays would leak
- * who-read-what-and-when to anyone serving them. The gift-wrap id is stable
- * across fetches — and across devices — so if we ever want cross-device read
- * state, the move is to sync *this same set* as a single self-encrypted event
- * (NIP-44 to our own key), not to emit a label per message. That stays an
- * opt-in follow-up; this fixes the local case with no new metadata.
+ * It is cached to this device too: the store is otherwise in-memory (every fetch
+ * rebuilds emails from the wraps with `read: false`), so without the cache the
+ * inbox forgets what you've opened until the relay round-trips on each reload.
+ * The relay copy remains the source of truth — `updatedAt` (the event's
+ * `created_at`) decides which of two versions wins, so a stale replay never
+ * clobbers a newer local or cross-device change.
  */
-const READ_KEY = 'mailstr.read'
+const STATE_KEY = 'mailstr.mailstate.v1'
+// The pre-sync build kept only a set of opened gift-wrap ids here. Fold it into
+// the new map on first load so nobody's read state resets on upgrade.
+const LEGACY_READ_KEY = 'mailstr.read'
 
-function loadReadIds(): Set<string> {
+function loadMailState(): Record<string, MailFlags> {
+  const state: Record<string, MailFlags> = {}
   try {
-    const raw = localStorage.getItem(READ_KEY)
-    const ids: unknown = raw ? JSON.parse(raw) : []
-    return new Set(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : [])
+    const raw = localStorage.getItem(STATE_KEY)
+    const parsed: unknown = raw ? JSON.parse(raw) : {}
+    if (parsed && typeof parsed === 'object') {
+      for (const [id, flags] of Object.entries(parsed as Record<string, MailFlags>)) {
+        if (flags && typeof flags === 'object') state[id] = flags
+      }
+    }
   } catch {
-    // Blocked/absent storage or malformed JSON — start empty. Read state just
-    // won't persist this session, which is a far smaller failure than a crash.
-    return new Set()
+    // Blocked/absent storage or malformed JSON — start empty. State just won't
+    // persist this session, a far smaller failure than a crash.
+  }
+  try {
+    const rawLegacy = localStorage.getItem(LEGACY_READ_KEY)
+    const ids: unknown = rawLegacy ? JSON.parse(rawLegacy) : []
+    if (Array.isArray(ids)) {
+      for (const id of ids) {
+        if (typeof id === 'string' && !state[id]) state[id] = { read: true, updatedAt: 0 }
+      }
+    }
+  } catch {
+    // Ignore a malformed legacy value.
+  }
+  return state
+}
+
+function persistMailState(state: Record<string, MailFlags>): void {
+  try {
+    localStorage.setItem(STATE_KEY, JSON.stringify(state))
+  } catch {
+    // Storage refused it — state still applies in memory for this session.
   }
 }
 
-function persistReadIds(ids: Set<string>): void {
-  try {
-    localStorage.setItem(READ_KEY, JSON.stringify([...ids]))
-  } catch {
-    // Storage refused it — read state still applies in memory for this session.
-  }
+/** True when the mail is filed away (archived or trashed), so it leaves Inbox. */
+export function isFiled(flags: MailFlags | undefined): boolean {
+  return !!(flags?.archived || flags?.trashed)
 }
 
 interface MailState {
   emails: Record<string, Email>   // keyed by event ID
   seenIds: Set<string>
-  readIds: Set<string>            // opened gift-wrap ids, persisted to this device
+  mailState: Record<string, MailFlags> // read/archived/trashed by gift-wrap id
   selectedId: string | null
   folder: EmailFolder
   query: string
@@ -50,7 +74,10 @@ interface MailState {
   // this filters the view by which alias it was addressed from/to.
   inboxFilter: string | null
   addEmail: (email: Email) => void
-  markRead: (id: string) => void
+  /** Merge a delta into a mail's flags and return the merged set for publishing. */
+  setFlag: (id: string, patch: Partial<Omit<MailFlags, 'updatedAt'>>) => MailFlags
+  /** Apply state learned from the relay, newest-wins by `updatedAt`. */
+  hydrateFlags: (entries: { ref: string; flags: MailFlags }[]) => void
   setFolder: (folder: EmailFolder) => void
   setSelected: (id: string | null) => void
   setQuery: (query: string) => void
@@ -61,7 +88,7 @@ interface MailState {
 export const useMailStore = create<MailState>()((set, get) => ({
   emails: {},
   seenIds: new Set(),
-  readIds: loadReadIds(),
+  mailState: loadMailState(),
   selectedId: null,
   folder: 'inbox',
   query: '',
@@ -69,24 +96,50 @@ export const useMailStore = create<MailState>()((set, get) => ({
 
   addEmail: (email) => {
     if (get().seenIds.has(email.id)) return
-    // Re-apply persisted read state: a freshly fetched wrap arrives read:false,
-    // but we may have opened it on a previous load.
-    const read = email.read || get().readIds.has(email.id)
+    // Re-apply known state: a freshly fetched wrap arrives read:false, but we
+    // may have opened (or filed) it before, here or on another device.
+    const read = email.read || !!get().mailState[email.id]?.read
     set((s) => ({
       emails: { ...s.emails, [email.id]: { ...email, read } },
       seenIds: new Set([...s.seenIds, email.id]),
     }))
   },
 
-  markRead: (id) =>
+  setFlag: (id, patch) => {
+    const prev = get().mailState[id]
+    const merged: MailFlags = { ...prev, ...patch, updatedAt: Math.floor(Date.now() / 1000) }
     set((s) => {
-      const alreadyTracked = s.readIds.has(id)
-      const readIds = alreadyTracked ? s.readIds : new Set(s.readIds).add(id)
-      if (!alreadyTracked) persistReadIds(readIds)
+      const mailState = { ...s.mailState, [id]: merged }
+      persistMailState(mailState)
       const email = s.emails[id]
       const emails =
-        email && !email.read ? { ...s.emails, [id]: { ...email, read: true } } : s.emails
-      return { readIds, emails }
+        email && merged.read !== undefined && email.read !== merged.read
+          ? { ...s.emails, [id]: { ...email, read: !!merged.read } }
+          : s.emails
+      return { mailState, emails }
+    })
+    return merged
+  },
+
+  hydrateFlags: (entries) =>
+    set((s) => {
+      const mailState = { ...s.mailState }
+      const emails = { ...s.emails }
+      let changed = false
+      for (const { ref, flags } of entries) {
+        const prev = mailState[ref]
+        // Newest wins. An optimistic local write stamps `updatedAt` with now, so
+        // a replay of an older relay version (or one it just echoed back) can't
+        // overwrite it.
+        if (prev && prev.updatedAt > flags.updatedAt) continue
+        mailState[ref] = flags
+        changed = true
+        const email = emails[ref]
+        if (email && email.read !== !!flags.read) emails[ref] = { ...email, read: !!flags.read }
+      }
+      if (!changed) return s
+      persistMailState(mailState)
+      return { mailState, emails }
     }),
 
   // Switching folders clears the search too: a query typed against Inbox
@@ -108,10 +161,11 @@ export const useMailStore = create<MailState>()((set, get) => ({
         : { inboxFilter: address ? address.toLowerCase() : null, selectedId: null, query: '' },
     ),
 
-  // Wipe everything account-scoped when switching users. `readIds` is keyed by
-  // gift-wrap id (globally unique) and persisted per device, so it deliberately
-  // survives — a message opened under one account stays read if it ever appears
-  // under another.
+  // Wipe everything account-scoped when switching users. `mailState` is keyed by
+  // gift-wrap id (globally unique, so it never collides across accounts) and
+  // persisted per device, so it deliberately survives — mail opened or filed
+  // under one account keeps that state if it ever appears under another, and its
+  // offline cache stays warm across a switch.
   clear: () =>
     set({
       emails: {},
