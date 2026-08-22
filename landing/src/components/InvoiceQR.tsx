@@ -121,6 +121,21 @@ export default function InvoiceQR({
           again in a minute.
         </p>
       )}
+
+      {/* Lightning usually settles in seconds, but can lag — and this watcher
+          only listens for 5 minutes (MAX_TIME) while a payment may still reflect
+          for up to an hour. Say so plainly so a slow-but-successful payment
+          doesn't read as a failure, and point to the in-app contact channel for
+          anything beyond that. Hidden once paid — the note is only reassurance
+          while waiting. */}
+      {status !== "paid" && (
+        <p className="max-w-xs border-t border-black/10 pt-3 text-xs leading-relaxed text-gray-500">
+          Payments usually confirm within minutes, but can take up to an hour to
+          reflect. If yours has not shown up after that, contact us from{" "}
+          <span className="font-medium text-gray-600">Settings → Help</span>{" "}
+          in the app.
+        </p>
+      )}
     </div>
   );
 }

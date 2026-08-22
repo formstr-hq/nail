@@ -199,6 +199,23 @@ export const InboxIcon = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
+export const RefreshIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+    <path d="M21 3v5h-5" />
+    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+    <path d="M8 16H3v5" />
+  </Icon>
+)
+
+export const CalendarIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M8 2v4M16 2v4" />
+    <rect width="18" height="18" x="3" y="4" rx="2" />
+    <path d="M3 10h18" />
+  </Icon>
+)
+
 export const HelpIcon = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <circle cx="12" cy="12" r="10" />
@@ -208,41 +225,45 @@ export const HelpIcon = (p: SVGProps<SVGSVGElement>) => (
 )
 
 /**
- * The mailstr mark — same glyph as the landing favicon and the signer modal.
+ * The Mail by Form* mark for inline use (headers, cards, loading screen).
  *
- * The gradient id is per-instance. A fixed id breaks as soon as the mark
- * appears twice in one document (the responsive layout renders a hidden mobile
- * copy alongside the sidebar one): duplicate ids make `url(#…)` resolve to
- * whichever came first, and the envelope loses its fill.
+ * Same red envelope + white flap as the Android launcher icon, but TILE-LESS:
+ * the launcher's ink tile reads as a heavy black badge on the app's light
+ * "paper" chrome (and the landing), so here the mark sits on the surface and the
+ * asterisk uses `currentColor` — ink on light, paper on dark — so it adapts to
+ * whatever it's placed on. The self-contained tile version lives in the favicon
+ * and native icon (see scripts/render-app-icon.py); geometry is shared so they
+ * don't drift.
  */
 export function BrandGlyph({ size = 22 }: { size?: number }) {
-  // Monochrome + one spark, tracking the theme: the envelope is ink (paper in
-  // dark), its cut-out disc is the ground behind it, the asterisk is emphasis.
+  const RED = '#E5484D'
+  const PAPER = '#F4F4F3'
+  // Asterisk: three round-capped strokes crossing at (70,38), in currentColor.
+  const AST = { cx: 70, cy: 38, arm: 22, w: 5, angles: [90, 30, 150] }
+  const half = AST.arm / 2
+  const astLines = AST.angles.map((a) => {
+    const r = (a * Math.PI) / 180
+    const dx = half * Math.cos(r)
+    const dy = half * Math.sin(r)
+    return { x1: AST.cx - dx, y1: AST.cy - dy, x2: AST.cx + dx, y2: AST.cy + dy }
+  })
   return (
-    <svg viewBox="0 0 64 64" width={size} height={size} aria-hidden="true">
-      <rect
-        x="4"
-        y="12"
-        width="56"
-        height="40"
-        rx="8"
-        className="fill-foreground"
-      />
+    // Cropped tight and centred on the art's true bounding box — envelope plus
+    // the asterisk that overhangs top-right — so the mark sits balanced in its
+    // box at every size (not low-left as a naive envelope-only crop would).
+    <svg viewBox="23 15.25 68 68" width={size} height={size} aria-hidden="true">
+      <rect x="32" y="40" width="44" height="34" rx="6" fill={RED} />
       <path
-        d="M8 18 L32 38 L56 18"
+        d="M38.5,44 L54,59 L69.5,44"
         fill="none"
-        className="stroke-background"
-        strokeWidth="4.5"
+        stroke={PAPER}
+        strokeWidth={3.6}
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <circle cx="50" cy="14" r="10" className="fill-background" />
-      <path
-        d="M50 8.5 L50 19.5 M45.2 11.25 L54.8 16.75 M45.2 16.75 L54.8 11.25"
-        className="stroke-emphasis"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-      />
+      {astLines.map((l, i) => (
+        <line key={i} {...l} stroke="currentColor" strokeWidth={AST.w} strokeLinecap="round" />
+      ))}
     </svg>
   )
 }

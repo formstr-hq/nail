@@ -28,7 +28,7 @@
         android:strokeWidth="3.6"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M32.0,44.0 L54.0,59.0 L76.0,44.0" />
+        android:pathData="M38.5,44.0 L54.0,59.0 L69.5,44.0" />
 
     <!-- asterisk halo (background ink, so the asterisk reads "on top") -->
     <path

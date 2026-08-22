@@ -184,7 +184,11 @@ export async function decodeGiftWrap(
         timestamp: rumor.created_at,
         senderPubkey: seal.pubkey,
         senderProof,
-        read: false,
+        // Our own outgoing copies (the self-wrap that files under Sent) are
+        // never "unread" — we wrote them. Marking them read at the source keeps
+        // Sent from ever showing bold/unread and out of any unread count,
+        // without emitting a read-state event for mail we sent ourselves.
+        read: ownPubkey !== null && seal.pubkey === ownPubkey,
         labelEventIds: [],
         labels: [],
       },

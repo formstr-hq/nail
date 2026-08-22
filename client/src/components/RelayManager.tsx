@@ -64,7 +64,6 @@ export function RelayManager({
             <IconButton
               title={`Remove ${r}`}
               onClick={() => onChange(relays.filter((x) => x !== r))}
-              className="h-6 w-6"
             >
               <XIcon className="h-3.5 w-3.5" />
             </IconButton>

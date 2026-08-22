@@ -5,6 +5,9 @@ import { installAndroidBackHandler } from '@/lib/androidBack'
 import { useSettingsStore } from '@/store/settings'
 import { useMailStore } from '@/store/mail'
 import { useInbox } from '@/hooks/useInbox'
+import { useMailMeta } from '@/hooks/useMailMeta'
+import { ensureMailIndexKey } from '@/hooks/useMailActions'
+import { isFreshSignup } from '@/lib/freshSignup'
 import { useResolveContext } from '@/hooks/useResolveContext'
 import { useOwnedAddresses } from '@/hooks/useOwnedAddresses'
 import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
@@ -32,15 +35,31 @@ function MailApp() {
   const [addingAccount, setAddingAccount] = useState(false)
 
   const { account, active } = useAccountStore()
-  const { load, settings, loaded: settingsLoaded } = useSettingsStore()
+  const { load, settings, loaded: settingsLoaded, eventExists: settingsEventExists } =
+    useSettingsStore()
   const { selectedId, setSelected } = useMailStore()
   const ctx = useResolveContext()
   const { status, retry } = useInbox(ctx.bridgePubkey)
+  // Keep read/archived/trashed state synced across devices via kind-34578 events.
+  const { refresh: refreshMeta } = useMailMeta()
   const { addresses } = useOwnedAddresses()
+
+  // The app's manual "reload": re-open both standing subscriptions, which each
+  // kick off a fresh upstream sync. There's no browser refresh in the native
+  // app, so this is how a user pulls new mail on demand.
+  const refreshMail = useCallback(() => {
+    retry()
+    refreshMeta()
+  }, [retry, refreshMeta])
 
   useEffect(() => {
     if (!account || !active) return
-    load(account.pubkey, active).catch(console.error)
+    // Load settings, then make sure the mail index key exists — minting it now
+    // (once) means the first archive/read/trash publishes without stopping to
+    // generate and save a key first.
+    load(account.pubkey, active)
+      .then(() => ensureMailIndexKey(account.pubkey, active))
+      .catch(console.error)
   }, [account, active, load])
 
   // Intercept the Android system back button so it walks the in-app stack
@@ -196,7 +215,7 @@ function MailApp() {
             selectedId ? 'hidden md:block' : 'block',
           ].join(' ')}
         >
-          <EmailList status={status} onRetry={retry} />
+          <EmailList status={status} onRetry={refreshMail} />
         </div>
 
         <div className={['min-w-0 flex-1', selectedId ? 'flex' : 'hidden md:flex'].join(' ')}>
@@ -226,12 +245,24 @@ function MailApp() {
         />
       )}
 
-      {/* First-run relay setup — shown once per account (the flag lives in the
-          synced settings event, so "once" holds across devices). Gated on
-          settingsLoaded so it never flashes before settings are known. */}
-      {settingsLoaded && !settings.onboardedAt && !addingAccount && (
-        <OnboardingModal status={status} />
-      )}
+      {/* First-run relay setup — shown once per account (the `onboardedAt` flag
+          lives in the synced kind-30078 settings event, so "once" holds across
+          devices).
+
+          Only shown when we can actually trust that the user hasn't onboarded:
+          either they're a provably-new key (created here, so there's genuinely
+          no settings anywhere), or we positively saw their settings event this
+          session (`settingsEventExists`) and it carried no `onboardedAt`. A bare
+          `!onboardedAt` isn't enough — `settingsLoaded` flips true even when the
+          settings event merely timed out, which made this screen re-appear for
+          users who had confirmed relays many times before. */}
+      {settingsLoaded &&
+        !settings.onboardedAt &&
+        !addingAccount &&
+        account &&
+        (isFreshSignup(account.pubkey) || settingsEventExists) && (
+          <OnboardingModal status={status} />
+        )}
 
       {/* Adding an account switches the active one on success, so wipe the
           previous inbox and close the overlay. The signer modal renders its

@@ -63,15 +63,18 @@ const SECONDARY_TABS = ['android', 'extension', 'ncryptsec', 'bunker', 'nostrcon
 const ICON_SVG_OPEN =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
 
-/** Inline mailstr glyph — same mark as the landing favicon. Monochrome + one
- *  spark; the parts are coloured from theme tokens in index.css so the mark
- *  tracks light/dark instead of baking colours into the string. */
+/** Inline Mail by Form* mark — red envelope + white flap, tile-less (the
+ *  launcher's ink tile reads as a heavy badge on the app's light chrome). The
+ *  asterisk uses currentColor so it adapts to the modal's theme. Geometry mirrors
+ *  scripts/render-app-icon.py. Keeps the `nostr-signer__brand-glyph` class for
+ *  sizing. */
 const MAILSTR_GLYPH =
-  '<svg class="nostr-signer__brand-glyph" viewBox="0 0 64 64" aria-hidden="true">' +
-  '<rect class="glyph-env" x="4" y="12" width="56" height="40" rx="8"/>' +
-  '<path class="glyph-flap" d="M8 18 L32 38 L56 18" fill="none" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>' +
-  '<circle class="glyph-disc" cx="50" cy="14" r="10"/>' +
-  '<path class="glyph-spark" d="M50 8.5 L50 19.5 M45.2 11.25 L54.8 16.75 M45.2 16.75 L54.8 11.25" stroke-width="2.4" stroke-linecap="round"/>' +
+  '<svg class="nostr-signer__brand-glyph" viewBox="23 15.25 68 68" aria-hidden="true">' +
+  '<rect x="32" y="40" width="44" height="34" rx="6" fill="#E5484D"/>' +
+  '<path d="M38.5,44 L54,59 L69.5,44" fill="none" stroke="#F4F4F3" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+  '<line x1="70" y1="27" x2="70" y2="49" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>' +
+  '<line x1="60.47" y1="32.5" x2="79.53" y2="43.5" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>' +
+  '<line x1="79.53" y1="32.5" x2="60.47" y2="43.5" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>' +
   '</svg>'
 
 /**

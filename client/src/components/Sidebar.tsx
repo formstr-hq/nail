@@ -1,10 +1,10 @@
-import { useMailStore } from '@/store/mail'
+import { useMailStore, isFiled } from '@/store/mail'
 import { useAccountStore } from '@/store/account'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
 import { matchesAlias } from '@/lib/mail/aliasFilter'
 import type { EmailFolder } from '@/types/mail'
 import type { InboxStatus } from '@/hooks/useInbox'
-import { BrandGlyph, PenIcon, SettingsIcon, InboxIcon, AtSignIcon } from '@/components/ui/icons'
+import { BrandGlyph, PenIcon, SettingsIcon, InboxIcon, AtSignIcon, CalendarIcon } from '@/components/ui/icons'
 import { Button, IconButton } from '@/components/ui/Button'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 
@@ -65,7 +65,7 @@ function RelayState({ status }: { status: InboxStatus }) {
 }
 
 export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, aliases, status }: SidebarProps) {
-  const { folder, setFolder, emails, inboxFilter, setInboxFilter } = useMailStore()
+  const { folder, setFolder, emails, mailState, inboxFilter, setInboxFilter } = useMailStore()
   const { account } = useAccountStore()
 
   // The badge sits on the Inbox row, so it must count Inbox mail specifically —
@@ -75,8 +75,11 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
   // respects the active alias filter, so the badge matches what the list shows.
   const myPubkey = account?.pubkey
   const unread = Object.values(emails).filter((e) => {
-    const unlabeled = !e.labels.some((l) => ['trash', 'archive', 'spam'].includes(l))
-    if (!(unlabeled && e.senderPubkey !== myPubkey && !e.read)) return false
+    const flags = mailState[e.id]
+    const read = flags?.read ?? e.read
+    if (isFiled(flags) || e.labels.includes('spam') || e.senderPubkey === myPubkey || read) {
+      return false
+    }
     return matchesAlias(e, inboxFilter)
   }).length
 
@@ -162,6 +165,26 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
               </button>
             )
           })}
+        </nav>
+
+        {/* Sibling app, not a mail folder — it navigates away, so it's an
+            external link styled to sit alongside the folders rather than a
+            folder button that swaps the pane. */}
+        <nav aria-label="Apps" className="flex flex-col gap-px px-2">
+          <div className="eyebrow px-2 pb-1.5">Apps</div>
+          <a
+            href="https://calendar.formstr.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={[
+              'flex items-center gap-2 rounded-md border-l-2 border-l-transparent px-2.5 py-1.5',
+              'text-[13px] text-muted-foreground transition-colors duration-[120ms]',
+              'hover:bg-accent/60 hover:text-foreground',
+            ].join(' ')}
+          >
+            <CalendarIcon className="h-3.5 w-3.5 flex-none text-subtle" />
+            <span>Calendar</span>
+          </a>
         </nav>
       </div>
 

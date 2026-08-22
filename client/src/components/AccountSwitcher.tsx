@@ -53,14 +53,14 @@ function AccountRow({
           <button
             type="button"
             onClick={onRemove}
-            className="rounded px-2 py-0.5 text-[11px] font-medium text-destructive-foreground bg-destructive/90 transition-colors hover:bg-destructive"
+            className="rounded px-2.5 py-1.5 text-[11px] font-medium text-destructive-foreground bg-destructive/90 transition-colors hover:bg-destructive"
           >
             Remove
           </button>
           <button
             type="button"
             onClick={() => setConfirming(false)}
-            className="rounded px-2 py-0.5 text-[11px] text-subtle transition-colors hover:text-foreground"
+            className="rounded px-2.5 py-1.5 text-[11px] text-subtle transition-colors hover:text-foreground"
           >
             Cancel
           </button>
@@ -104,7 +104,7 @@ function AccountRow({
         type="button"
         title="Remove this account"
         onClick={() => setConfirming(true)}
-        className="flex-none rounded p-1 text-subtle opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+        className="flex-none rounded p-1.5 text-subtle opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
       >
         <TrashIcon className="h-3.5 w-3.5" />
       </button>

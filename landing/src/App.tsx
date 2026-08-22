@@ -30,24 +30,33 @@ import PrivacyPolicy from "./pages/PrivacyPolicy";
 /* ------------------------------------------------------------------ */
 
 function Glyph({ className = "" }: { className?: string }) {
+  // The Mail by Form* mark for inline use: same red envelope + white flap as the
+  // Android launcher icon, but TILE-LESS — the launcher's ink tile reads as a
+  // heavy black badge on the landing's light chrome. The asterisk uses
+  // currentColor so it adapts to whatever it sits on. The tile version lives in
+  // the favicon / native icon (scripts/render-app-icon.py); geometry is shared.
+  const AST = { cx: 70, cy: 38, arm: 22, w: 5, angles: [90, 30, 150] };
+  const half = AST.arm / 2;
+  const astLines = AST.angles.map((a) => {
+    const r = (a * Math.PI) / 180;
+    const dx = half * Math.cos(r);
+    const dy = half * Math.sin(r);
+    return { x1: AST.cx - dx, y1: AST.cy - dy, x2: AST.cx + dx, y2: AST.cy + dy };
+  });
   return (
-    <svg viewBox="0 0 64 64" className={className} aria-hidden="true">
-      <rect x="4" y="12" width="56" height="40" rx="8" fill="#0b0b0c" />
+    <svg viewBox="23 15.25 68 68" className={className} aria-hidden="true">
+      <rect x="32" y="40" width="44" height="34" rx="6" fill="#E5484D" />
       <path
-        d="M8 18 L32 38 L56 18"
+        d="M38.5,44 L54,59 L69.5,44"
         fill="none"
-        stroke="#f4f4f3"
-        strokeWidth="4.5"
+        stroke="#F4F4F3"
+        strokeWidth="3.6"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <circle cx="50" cy="14" r="10" fill="#f4f4f3" />
-      <path
-        d="M50 8.5 L50 19.5 M45.2 11.25 L54.8 16.75 M45.2 16.75 L54.8 11.25"
-        stroke="#e5484d"
-        strokeWidth="2.4"
-        strokeLinecap="round"
-      />
+      {astLines.map((l, i) => (
+        <line key={i} {...l} stroke="currentColor" strokeWidth={AST.w} strokeLinecap="round" />
+      ))}
     </svg>
   );
 }
