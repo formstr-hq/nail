@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMailStore } from '@/store/mail'
+import { useMailActions } from '@/hooks/useMailActions'
 import { useThemeStore, resolveTheme } from '@/store/theme'
 import type { Email } from '@/types/mail'
 import { replyDraft, replyAllDraft, forwardDraft, type Draft } from '@/lib/mail/draft'
@@ -8,7 +9,15 @@ import { Avatar } from '@/components/ui/Avatar'
 import { useProfile } from '@/hooks/useProfile'
 import { Button } from '@/components/ui/Button'
 import { AttachmentRow } from '@/components/AttachmentRow'
-import { ReplyIcon, ReplyAllIcon, ForwardIcon, InboxIcon, BackIcon } from '@/components/ui/icons'
+import {
+  ReplyIcon,
+  ReplyAllIcon,
+  ForwardIcon,
+  InboxIcon,
+  BackIcon,
+  ArchiveIcon,
+  TrashIcon,
+} from '@/components/ui/icons'
 
 /**
  * Remote content in HTML mail is how senders find out a message was opened.
@@ -129,11 +138,20 @@ interface EmailViewProps {
 }
 
 export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) {
-  const { emails, selectedId } = useMailStore()
+  const { emails, selectedId, mailState, setSelected } = useMailStore()
   const email = selectedId ? emails[selectedId] : null
+  const { archive, unarchive, trash, restore } = useMailActions()
   // Hook order is fixed, so this runs before the early return below; passing
   // null when nothing is open makes it a no-op.
   const senderProfile = useProfile(email?.senderPubkey ?? null)
+
+  // Filing a mail from the reading pane removes it from the folder in view, so
+  // return to the list rather than leaving a now-misfiled message open.
+  const fileAway = (action: (id: string) => void) => () => {
+    if (!email) return
+    action(email.id)
+    setSelected(null)
+  }
 
   if (!email) {
     return (
@@ -152,15 +170,17 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
     timeStyle: 'short',
   })
 
+  const flags = mailState[email.id]
+
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-surface-read">
       <header className="border-b border-border px-5 py-4 md:px-6 md:py-5">
         <button
           type="button"
           onClick={onBack}
-          className="mb-2 flex items-center gap-1 font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-subtle transition-colors hover:text-primary md:hidden"
+          className="-ml-2 mb-1 flex items-center gap-1.5 rounded-md px-2 py-2 font-mono text-[11px] font-semibold uppercase tracking-[0.12em] text-subtle transition-colors hover:bg-accent hover:text-primary md:hidden"
         >
-          <BackIcon className="h-3 w-3" />
+          <BackIcon className="h-3.5 w-3.5" />
           All messages
         </button>
 
@@ -233,6 +253,29 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
           <ForwardIcon className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Forward</span>
         </Button>
+
+        <span className="flex-1" />
+
+        {flags?.trashed ? (
+          <Button onClick={fileAway(restore)} title="Move back to Inbox">
+            <InboxIcon className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Restore</span>
+          </Button>
+        ) : (
+          <>
+            <Button
+              onClick={fileAway(flags?.archived ? unarchive : archive)}
+              title={flags?.archived ? 'Move back to Inbox' : 'Archive'}
+            >
+              <ArchiveIcon className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{flags?.archived ? 'Unarchive' : 'Archive'}</span>
+            </Button>
+            <Button onClick={fileAway(trash)} title="Move to Trash">
+              <TrashIcon className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Delete</span>
+            </Button>
+          </>
+        )}
       </footer>
     </div>
   )

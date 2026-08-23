@@ -24,5 +24,6 @@
       "@protocol/*": ["../nostr-bridge/src/protocol/*"]
     }
   },
-  "include": ["src", "../nostr-bridge/src/protocol"]
+  "include": ["src", "../nostr-bridge/src/protocol"],
+  "exclude": ["../nostr-bridge/src/protocol/**/*.test.ts"]
 }

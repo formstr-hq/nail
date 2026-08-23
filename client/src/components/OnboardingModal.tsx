@@ -155,7 +155,7 @@ export function OnboardingModal({ status }: { status: InboxStatus }) {
 
   return (
     <div className="fixed inset-0 z-[60] flex items-end justify-center bg-foreground/40 p-0 backdrop-blur-sm md:items-center md:p-6">
-      <div className="flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:max-w-md md:rounded-xl">
+      <div className="safe-bottom flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:max-w-md md:rounded-xl">
         <div className="flex flex-col items-center gap-2 border-b border-border px-5 py-5 text-center">
           <BrandGlyph size={30} />
           <h2 className="text-base font-semibold tracking-tight">{heading}</h2>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { Check, Copy, Loader2, Zap } from "lucide-react";
+import { Check, Copy, Loader2, Wallet, Zap } from "lucide-react";
 import { paymentSocket } from "../lib/api";
 
 const MAX_TIME = 300; // the backend closes the payment socket after 5 minutes
@@ -11,11 +11,13 @@ export default function InvoiceQR({
   invoice,
   hash,
   amount,
+  unit,
   onPaid,
 }: {
   invoice: string;
   hash: string;
   amount: number;
+  unit: string;
   onPaid: () => void;
 }) {
   const [status, setStatus] = useState<Status>("pending");
@@ -75,13 +77,24 @@ export default function InvoiceQR({
   return (
     <div className="flex flex-col items-center gap-4 text-center">
       <p className="text-sm text-gray-600">
-        Scan with a Lightning wallet to pay{" "}
-        <span className="font-semibold text-ink">{amount} sats</span>.
+        Scan the QR with your wallet to pay{" "}
+        <span className="font-semibold text-ink">{amount} {unit}</span>.
       </p>
 
       <div className="rounded-2xl border border-black/10 bg-white p-4">
         <QRCodeSVG value={invoice} size={216} />
       </div>
+
+      {/* Primary action on a phone: you can't scan your own screen, so hand the
+          invoice straight to a Lightning wallet via the bolt11 URI scheme. The
+          QR + copy below stay for desktop / scanning from another device. */}
+      <a
+        href={`lightning:${invoice}`}
+        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-ink px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-ink/90"
+      >
+        <Wallet size={16} />
+        Open in wallet
+      </a>
 
       <div className="flex w-full items-center gap-2">
         <pre className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap rounded-lg bg-black/[0.04] px-3 py-2 text-left font-mono text-xs text-gray-600">
@@ -117,6 +130,21 @@ export default function InvoiceQR({
           Something went wrong while watching for the payment. If you already
           paid, your mailbox is still being provisioned — try the sign-in check
           again in a minute.
+        </p>
+      )}
+
+      {/* Lightning usually settles in seconds, but can lag — and this watcher
+          only listens for 5 minutes (MAX_TIME) while a payment may still reflect
+          for up to an hour. Say so plainly so a slow-but-successful payment
+          doesn't read as a failure, and point to the in-app contact channel for
+          anything beyond that. Hidden once paid — the note is only reassurance
+          while waiting. */}
+      {status !== "paid" && (
+        <p className="max-w-xs border-t border-black/10 pt-3 text-xs leading-relaxed text-gray-500">
+          Payments usually confirm within minutes, but can take up to an hour to
+          reflect. If yours has not shown up after that, contact us from{" "}
+          <span className="font-medium text-gray-600">Settings → Help</span>{" "}
+          in the app.
         </p>
       )}
     </div>

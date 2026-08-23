@@ -11,9 +11,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/core": "^7.6.8",
     "@formstr/signer": "^0.2.2",
     "@tailwindcss/typography": "^0.5.19",
     "lucide-react": "^0.563.0",
+    "nostr-signer-capacitor-plugin": "^0.0.5",
     "nostr-tools": "^2.7.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.0",

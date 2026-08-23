@@ -45,6 +45,8 @@ export interface MailTier {
   name: string;
   description: string;
   priceSats: number;
+  unit: string; // price unit label, backend-driven (e.g. "sats"); future providers may differ
+  billing: string; // cadence label, backend-driven: "one-time" (base) or e.g. "per month" (storage)
   features: string[]; // included on this tier (✓)
   notIncluded: string[]; // explicitly not on this tier (✗), e.g. attachments
   available: boolean; // whether the tier can be purchased
@@ -59,9 +61,11 @@ function fallbackTiers(priceSats: number): MailTier[] {
       name: "Mail",
       description: "Your own encrypted mailbox, delivered over Nostr.",
       priceSats,
+      unit: "sats",
+      billing: "one-time",
       features: [
         `Your name@${config.mailDomain} address`,
-        "Send & receive end-to-end encrypted mail",
+        "Send & receive mail, stored encrypted to your key",
       ],
       notIncluded: ["Attachments", "Extra storage"],
       available: true,
@@ -87,6 +91,10 @@ async function fetchMailTiers(): Promise<MailTier[] | null> {
         name: String(t.name ?? "Mail"),
         description: String(t.description ?? ""),
         priceSats: t.priceSats as number,
+        // Unit + cadence are backend-driven so new payment providers / recurring
+        // tiers change copy without a frontend release; default to the base case.
+        unit: typeof t.unit === "string" ? t.unit : "sats",
+        billing: typeof t.billing === "string" ? t.billing : "one-time",
         features: Array.isArray(t.features)
           ? (t.features as unknown[]).filter((f): f is string => typeof f === "string")
           : [],

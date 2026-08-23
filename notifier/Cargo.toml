@@ -1,0 +1,47 @@
+[package]
+name = "notifier"
+version = "0.1.0"
+edition = "2021"
+description = "Key-free Nostr inbox-arrival watcher. Watches a set of relays for kind-1059 gift-wraps addressed to a pubkey and reports new arrivals — no private key, no decryption. Shared core for local mail notifications across apps (Android now, iOS later) via UniFFI."
+license = "MIT"
+
+[lib]
+# `cdylib` for the Android/iOS native lib; `staticlib` for iOS xcframework;
+# `lib` so host-side unit tests and the uniffi-bindgen binary can link it.
+crate-type = ["cdylib", "staticlib", "lib"]
+name = "notifier"
+
+[dependencies]
+# Async runtime, driven on a thread we own so foreign callers (Kotlin/Swift)
+# don't need one. `rt-multi-thread` for the relay tasks, `sync`/`time` for the
+# watcher plumbing.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+# WebSocket client. rustls (pure Rust, webpki roots) so there is no OpenSSL to
+# cross-compile for the Android NDK targets — the whole point of the TLS choice.
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+# rustls 0.23 needs an explicit process-level CryptoProvider (`ring` or
+# `aws-lc-rs`) before any TLS handshake. tokio-tungstenite's webpki-roots
+# feature bundles root certs but selects *no* crypto backend, so without this
+# `connect_async` panics at runtime ("Could not automatically determine the
+# process-level CryptoProvider") — on Android that surfaced as zero
+# gift-wraps and zero notifications, with no visible error. We enable exactly
+# one backend — `ring` (cross-compiles cleanly to the NDK targets) — and
+# install it up front from `poll_once`/`Watcher::start` (see lib.rs).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Foreign-language bindings (Kotlin + Swift) from #[uniffi::export] annotations.
+# `cli` enables the `uniffi-bindgen` binary below that emits the bindings.
+uniffi = { version = "0.28", features = ["cli"] }
+# Lightweight logging; the host installs a subscriber (or Android logcat bridge).
+log = "0.4"
+
+# Generates the Kotlin/Swift bindings from the built library:
+#   cargo run --bin uniffi-bindgen -- generate --library <lib> --language kotlin ...
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "test-util"] }

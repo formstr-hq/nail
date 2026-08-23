@@ -1,10 +1,10 @@
-import { useMailStore } from '@/store/mail'
+import { useMailStore, isFiled } from '@/store/mail'
 import { useAccountStore } from '@/store/account'
 import { AccountSwitcher } from '@/components/AccountSwitcher'
 import { matchesAlias } from '@/lib/mail/aliasFilter'
 import type { EmailFolder } from '@/types/mail'
 import type { InboxStatus } from '@/hooks/useInbox'
-import { BrandGlyph, PenIcon, SettingsIcon, InboxIcon, AtSignIcon } from '@/components/ui/icons'
+import { BrandGlyph, PenIcon, SettingsIcon, InboxIcon, AtSignIcon, CalendarIcon } from '@/components/ui/icons'
 import { Button, IconButton } from '@/components/ui/Button'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 
@@ -65,7 +65,7 @@ function RelayState({ status }: { status: InboxStatus }) {
 }
 
 export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, aliases, status }: SidebarProps) {
-  const { folder, setFolder, emails, inboxFilter, setInboxFilter } = useMailStore()
+  const { folder, setFolder, emails, mailState, inboxFilter, setInboxFilter } = useMailStore()
   const { account } = useAccountStore()
 
   // The badge sits on the Inbox row, so it must count Inbox mail specifically —
@@ -75,16 +75,19 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
   // respects the active alias filter, so the badge matches what the list shows.
   const myPubkey = account?.pubkey
   const unread = Object.values(emails).filter((e) => {
-    const unlabeled = !e.labels.some((l) => ['trash', 'archive', 'spam'].includes(l))
-    if (!(unlabeled && e.senderPubkey !== myPubkey && !e.read)) return false
+    const flags = mailState[e.id]
+    const read = flags?.read ?? e.read
+    if (isFiled(flags) || e.labels.includes('spam') || e.senderPubkey === myPubkey || read) {
+      return false
+    }
     return matchesAlias(e, inboxFilter)
   }).length
 
   return (
     <aside className="flex h-full w-full flex-col border-r border-border bg-surface-nav">
       <div className="flex items-center gap-2 px-4 pb-3 pt-4">
-        <BrandGlyph size={20} />
-        <span className="text-sm font-semibold tracking-tight">Mail</span>
+        <BrandGlyph size={24} />
+        <span className="text-base font-semibold tracking-tight">Mail</span>
         <span className="flex-1" />
         <ThemeToggle />
       </div>
@@ -112,7 +115,7 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
           <nav aria-label="Inboxes" className="flex flex-col gap-px px-2">
             <div className="eyebrow px-2 pb-1.5">Inboxes</div>
             <InboxOption
-              icon={<InboxIcon className="h-3.5 w-3.5 flex-none" />}
+              icon={<InboxIcon className="h-4 w-4 flex-none" />}
               label="All mail"
               active={inboxFilter === null}
               onClick={() => setInboxFilter(null)}
@@ -120,7 +123,7 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
             {aliases.map((address) => (
               <InboxOption
                 key={address}
-                icon={<AtSignIcon className="h-3.5 w-3.5 flex-none" />}
+                icon={<AtSignIcon className="h-4 w-4 flex-none" />}
                 label={address}
                 mono
                 active={inboxFilter === address.toLowerCase()}
@@ -141,7 +144,7 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
                 onClick={() => setFolder(f.id)}
                 aria-current={active ? 'page' : undefined}
                 className={[
-                  'flex items-center justify-between rounded-md border-l-2 px-2.5 py-1.5 text-[13px]',
+                  'flex items-center justify-between rounded-md border-l-2 px-3 py-2.5 text-[15px]',
                   'transition-colors duration-[120ms]',
                   active
                     ? 'border-l-primary bg-accent font-semibold text-foreground'
@@ -152,7 +155,7 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
                 {f.id === 'inbox' && unread > 0 && (
                   <span
                     className={[
-                      'font-mono text-[10px] font-semibold tabular-nums',
+                      'font-mono text-[11px] font-semibold tabular-nums',
                       active ? 'text-primary' : 'text-subtle',
                     ].join(' ')}
                   >
@@ -162,6 +165,26 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
               </button>
             )
           })}
+        </nav>
+
+        {/* Sibling app, not a mail folder — it navigates away, so it's an
+            external link styled to sit alongside the folders rather than a
+            folder button that swaps the pane. */}
+        <nav aria-label="Apps" className="flex flex-col gap-px px-2">
+          <div className="eyebrow px-2 pb-1.5">Apps</div>
+          <a
+            href="https://calendar.formstr.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={[
+              'flex items-center gap-2 rounded-md border-l-2 border-l-transparent px-3 py-2.5',
+              'text-[15px] text-muted-foreground transition-colors duration-[120ms]',
+              'hover:bg-accent/60 hover:text-foreground',
+            ].join(' ')}
+          >
+            <CalendarIcon className="h-4 w-4 flex-none text-subtle" />
+            <span>Calendar</span>
+          </a>
         </nav>
       </div>
 
@@ -207,7 +230,7 @@ function InboxOption({
       aria-current={active ? 'true' : undefined}
       title={label}
       className={[
-        'flex items-center gap-2 rounded-md border-l-2 px-2.5 py-1.5 text-left',
+        'flex items-center gap-2 rounded-md border-l-2 px-3 py-2.5 text-left',
         'transition-colors duration-[120ms]',
         active
           ? 'border-l-primary bg-accent font-semibold text-foreground'
@@ -215,7 +238,7 @@ function InboxOption({
       ].join(' ')}
     >
       <span className={active ? 'text-primary' : 'text-subtle'}>{icon}</span>
-      <span className={['min-w-0 flex-1 truncate', mono ? 'font-mono text-[11px]' : 'text-[13px]'].join(' ')}>
+      <span className={['min-w-0 flex-1 truncate', mono ? 'font-mono text-[13px]' : 'text-[15px]'].join(' ')}>
         {label}
       </span>
     </button>

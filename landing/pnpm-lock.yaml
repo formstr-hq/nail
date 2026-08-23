@@ -8,15 +8,21 @@ importers:
 
   .:
     dependencies:
+      '@capacitor/core':
+        specifier: ^7.6.8
+        version: 7.6.8
       '@formstr/signer':
         specifier: ^0.2.2
-        version: 0.2.2(typescript@5.9.3)
+        version: 0.2.2(nostr-signer-capacitor-plugin@0.0.5(@capacitor/core@7.6.8))(typescript@5.9.3)
       '@tailwindcss/typography':
         specifier: ^0.5.19
         version: 0.5.20(tailwindcss@4.3.2)
       lucide-react:
         specifier: ^0.563.0
         version: 0.563.0(react@19.2.7)
+      nostr-signer-capacitor-plugin:
+        specifier: ^0.0.5
+        version: 0.0.5(@capacitor/core@7.6.8)
       nostr-tools:
         specifier: ^2.7.0
         version: 2.23.9(typescript@5.9.3)
@@ -166,6 +172,9 @@ packages:
   '@babel/types@7.29.7':
     resolution: {integrity: sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==}
     engines: {node: '>=6.9.0'}
+
+  '@capacitor/core@7.6.8':
+    resolution: {integrity: sha512-x1xfxvNcTSnj6OoYaAB0n0a0HRvi5f2YjcVnMLxpMhbHDgGDAzzN9z8cnPCYV+SKTvqGF1hezHm82Op32XaAGg==}
 
   '@esbuild/aix-ppc64@0.28.1':
     resolution: {integrity: sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==}
@@ -1453,6 +1462,11 @@ packages:
     resolution: {integrity: sha512-J6l92tKHX6w8Jy5nO1Vuc01NoIiRGi/d6qBKVxh+IQ8Cr3b6HbVNfKiF8ZpFKufTwpwxMmce2W3iQZ861ZRyTg==}
     engines: {node: '>=18'}
 
+  nostr-signer-capacitor-plugin@0.0.5:
+    resolution: {integrity: sha512-/EvqWz71HZ5cWmzvfXWTm48AWZtbeZDbOg3vLwXyXPjnIp1DR7Wurww/Mo41ORNu1DNPlqH20l7kIXKO6vR5og==}
+    peerDependencies:
+      '@capacitor/core': ^7.0.0
+
   nostr-tools@2.23.9:
     resolution: {integrity: sha512-PBN3TpGh+EszlTZWpQdvcqEMqhcKcY1vTw0Xkkccg+TyP7y/icu9/iXJw72aFZ/ETm35ehU0hneGTXLaTSkImw==}
     peerDependencies:
@@ -1677,6 +1691,9 @@ packages:
     engines: {node: '>=18.12'}
     peerDependencies:
       typescript: '>=4.8.4'
+
+  tslib@2.8.1:
+    resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
   type-check@0.4.0:
     resolution: {integrity: sha512-XleUoc9uwGXqjWwXaUTZAmzMcFZ5858QA2vvx1Ur5xIcixXIP+8LnFDgRplU30us6teqdlskFfu+ae4K79Ooew==}
@@ -1933,6 +1950,10 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
+  '@capacitor/core@7.6.8':
+    dependencies:
+      tslib: 2.8.1
+
   '@esbuild/aix-ppc64@0.28.1':
     optional: true
 
@@ -2057,10 +2078,12 @@ snapshots:
       '@eslint/core': 0.17.0
       levn: 0.4.1
 
-  '@formstr/signer@0.2.2(typescript@5.9.3)':
+  '@formstr/signer@0.2.2(nostr-signer-capacitor-plugin@0.0.5(@capacitor/core@7.6.8))(typescript@5.9.3)':
     dependencies:
       nostr-tools: 2.23.9(typescript@5.9.3)
       qrcode: 1.5.4
+    optionalDependencies:
+      nostr-signer-capacitor-plugin: 0.0.5(@capacitor/core@7.6.8)
     transitivePeerDependencies:
       - typescript
 
@@ -3271,6 +3294,10 @@ snapshots:
 
   node-releases@2.0.50: {}
 
+  nostr-signer-capacitor-plugin@0.0.5(@capacitor/core@7.6.8):
+    dependencies:
+      '@capacitor/core': 7.6.8
+
   nostr-tools@2.23.9(typescript@5.9.3):
     dependencies:
       '@noble/ciphers': 2.1.1
@@ -3532,6 +3559,8 @@ snapshots:
   ts-api-utils@2.5.0(typescript@5.9.3):
     dependencies:
       typescript: 5.9.3
+
+  tslib@2.8.1: {}
 
   type-check@0.4.0:
     dependencies:

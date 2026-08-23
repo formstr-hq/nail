@@ -40,6 +40,11 @@ export interface MailSettings {
   onboardedAt?: number     // ms epoch the user finished relay onboarding; its
                            // presence is the "seen once, any device" flag —
                            // this event is NIP-44 synced across devices
+  mailIndexKey?: string    // 32-byte hex secret keying the HMAC that obfuscates
+                           // per-mail metadata coordinates (see mailMeta.ts).
+                           // Generated once, then synced here so every device
+                           // derives the same opaque `d` tags. Never leaves the
+                           // encrypted settings blob.
 }
 
 export async function saveSettings(
@@ -83,10 +88,29 @@ export async function saveSettings(
   }
 }
 
-export async function loadSettings(
+/**
+ * The outcome of a settings load, rich enough to write back safely.
+ *
+ * `settings` is null both when nothing was ever saved AND when an event exists
+ * but couldn't be decrypted — indistinguishable from the settings alone. That
+ * gap is dangerous for anything that then SAVES (like minting the mail index
+ * key): overwriting a present-but-unreadable event would silently drop whatever
+ * it held. So this also reports whether an event was actually seen on the relays
+ * and its `version` (the newest event's `created_at`), letting a writer refuse
+ * to clobber an event it couldn't read.
+ */
+export interface SettingsLoad {
+  settings: MailSettings | null
+  /** An event was found on the relays, whatever the decrypt outcome. */
+  eventExists: boolean
+  /** `created_at` of the newest settings event seen, if any. */
+  version?: number
+}
+
+export async function loadSettingsDetailed(
   pubkey: string,
   active: ActiveSigner,
-): Promise<MailSettings | null> {
+): Promise<SettingsLoad> {
   const relays = await stage('load/fetchDmRelays', () => fetchDmRelays(pubkey))
 
   const events = await stage('load/query', () =>
@@ -97,7 +121,7 @@ export async function loadSettings(
 
   if (!events.length) {
     console.warn('[settings] no kind-30078 event found on', relays, '— nothing was ever saved')
-    return null
+    return { settings: null, eventExists: false }
   }
 
   const latest = events.sort((a: Event, b: Event) => b.created_at - a.created_at)[0]
@@ -117,11 +141,19 @@ export async function loadSettings(
       settings.senderAddress = `${settings.senderAddress}@${BRIDGE_DOMAIN}`
     }
 
-    return settings
+    return { settings, eventExists: true, version: latest.created_at }
   } catch (e) {
     // Was silently swallowed, which makes a stored-but-undecryptable settings
     // event look identical to never having saved: both render an empty form.
+    // The `eventExists` flag is how a writer avoids overwriting it anyway.
     console.error('[settings] found a saved event but could not decrypt it', e)
-    return null
+    return { settings: null, eventExists: true, version: latest.created_at }
   }
+}
+
+export async function loadSettings(
+  pubkey: string,
+  active: ActiveSigner,
+): Promise<MailSettings | null> {
+  return (await loadSettingsDetailed(pubkey, active)).settings
 }

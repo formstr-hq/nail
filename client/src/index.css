@@ -303,6 +303,13 @@ div.nostr-signer__root {
   width: 19px;
   height: 19px;
 }
+/* Installed NIP-55 signer app logos (injected rows) fill the icon chip. */
+.nostr-signer__root .nostr-signer__signer-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: inherit;
+}
 .nostr-signer__root .nostr-signer__tab-text {
   display: flex;
   flex-direction: column;
@@ -469,9 +476,7 @@ div.nostr-signer__root {
 .nostr-signer__root label[for='nostr-signer-nc-perms'],
 .nostr-signer__root label[for='nostr-signer-bunker-perms'],
 .nostr-signer__root .nostr-signer__panel--nostrconnect .nostr-signer__input--relays,
-.nostr-signer__root label[for='nostr-signer-nc-relays'],
-.nostr-signer__root .nostr-signer__tab--android,
-.nostr-signer__root .nostr-signer__panel--android {
+.nostr-signer__root label[for='nostr-signer-nc-relays'] {
   display: none;
 }
 
@@ -531,4 +536,24 @@ div.nostr-signer__root {
    [hidden] attribute it sets after the nostrconnect form is submitted */
 .nostr-signer__root .nostr-signer__form[hidden] {
   display: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Native safe-area insets (Capacitor Android).                          */
+/* On the web every env() below resolves to 0, so these classes are      */
+/* inert; inside the app — where the WebView draws edge-to-edge behind    */
+/* the status bar — they keep the chrome clear of the status bar and the  */
+/* gesture / navigation bar. Depends on viewport-fit=cover in index.html. */
+/* Placed after @tailwind utilities so they win over Tailwind padding on  */
+/* the elements they're applied to (which carry no padding on that axis). */
+/* ------------------------------------------------------------------ */
+.safe-y {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
 }

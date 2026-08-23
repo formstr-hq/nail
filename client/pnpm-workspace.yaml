@@ -1,2 +1,6 @@
+packages:
+  - .
+  - ../nostr-bridge
+
 allowBuilds:
   esbuild: true
