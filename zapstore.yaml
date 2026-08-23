@@ -1,0 +1,71 @@
+# Zapstore publish config for the "Mail by Form*" Android app.
+# Generated to answer `zsp publish --wizard` for this repo.
+# Publish with:  SIGN_WITH=<nsec|npub|bunker://|browser> zsp publish
+#
+# NOTE: `name` is intentionally omitted so the listing uses the APK's own
+# label ("Mail by Form*"). Add your `pubkey` (npub) below, or let the signing
+# step fill it in, so the relay can whitelist your key.
+
+repository: https://github.com/formstr-hq/nail
+
+# Pull description/screenshots metadata from the GitHub repo (native source).
+# The app is not on F-Droid or the Play Store.
+metadata_sources:
+  - github
+
+summary: Email on Nostr — your keys are the account, and your mail lives encrypted on relays you choose.
+description: >-
+  Your email should belong to you, not to the company that hosts it. Mailstr
+  makes that real. You get a name@mailstr.app address that runs on Nostr and is
+  tied to a keypair you control instead of an account a provider owns. You sign
+  in with your keys, so there's no password and no phone number to hand over.
+
+  Mail sent to your address is encrypted and stored on the relays you choose,
+  and only your key can read it. Write to other Nostr users directly, or to any
+  ordinary email address through the bridge. It's all built on an open spec, so
+  you can open the same mailbox in other compatible clients, switch relays, or
+  leave for good — your mail follows your key, not our servers.
+
+  Claiming your address is a one-time payment. No subscription, no data
+  harvesting, and no one reading over your shoulder.
+
+tags:
+  - nostr
+  - email
+  - mail
+  - privacy
+  - encryption
+  - nip05
+  - lightning
+  - decentralized
+
+license: MIT
+website: https://mailstr.app
+
+# CDN for screenshots/icon defaults to https://cdn.zapstore.dev. To use another
+# (e.g. blossom.band), set it via the BLOSSOM_URL env var — zsp v0.4.17 has no
+# blossom_servers config key.
+
+# Mobile-view screenshots (iPhone 13 viewport). Light + a couple in dark mode.
+images:
+  - .shots/mobile/landing-hero.png
+  - .shots/mobile/client-login.png
+  - .shots/mobile/client-inbox.png
+  - .shots/mobile/client-inbox-dark.png
+  - .shots/mobile/client-compose.png
+  - .shots/mobile/client-compose-dark.png
+
+# NIPs the app implements: NIP-05 identity, NIP-07/46/49/55 signing paths,
+# NIP-59 gift wrap for encrypted mail, and NIP-98 HTTP auth for the paid signup.
+supported_nips:
+  - "05"
+  - "07"
+  - "46"
+  - "49"
+  - "55"
+  - "59"
+  - "98"
+
+# Your npub — used so the relay can verify pubkey ownership. Fill this in, or
+# the signing step will resolve it from SIGN_WITH.
+# pubkey: npub1...
