@@ -34,13 +34,21 @@ echo "build-notifier: NDK=$ANDROID_NDK_HOME"
 # paths are absolute, so the cd is safe.
 cd "$crate"
 
-# minSdk 23 must match variables.gradle. All device ABIs Zapstore/Play serve.
-cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -P 23 -o "$jni" build --release
+# minSdk 23 must match variables.gradle. Defaults to all device ABIs
+# Zapstore/Play serve; NOTIFIER_ABIS overrides for CI builds that only
+# care about regular phones/tablets (arm64-v8a).
+abis="${NOTIFIER_ABIS:-arm64-v8a armeabi-v7a x86_64}"
+cargo_ndk_args=()
+for abi in ${abis}; do
+  cargo_ndk_args+=(-t "${abi}")
+done
+cargo ndk "${cargo_ndk_args[@]}" -P 23 -o "$jni" build --release
 
 # Generate Kotlin from the freshly-built library (any ABI carries the metadata).
+first_abi="${abis%% *}"
 cargo run --quiet --bin uniffi-bindgen -- \
   generate \
-  --library "$jni/arm64-v8a/libnotifier.so" \
+  --library "$jni/${first_abi}/libnotifier.so" \
   --language kotlin \
   --out-dir "$bindings"
 
