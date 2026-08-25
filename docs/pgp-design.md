@@ -54,14 +54,42 @@ Correspondents' **public keys** live in a local keyring — a new field in
 settings, `pgpKeyring: { [emailLowercased]: armoredPublicKey }` — so it also
 syncs. Imported by paste or `.asc` upload.
 
-## No key discovery in v1
+## Key discovery — keyserver (keys.openpgp.org)
 
-Deliberately **no keyserver / WKD lookups** to start. Automated discovery is
-where OpenPGP historically leaks (which correspondents you're about to write to)
-and where trust gets murky (a keyserver can hand you any key). v1 is
-**manual exchange only**: you paste or import a key you obtained out of band.
-WKD / opt-in keyserver discovery is a later phase, gated behind an explicit
-setting, once the core is solid.
+The feature isn't complete without discovery: a manual-import-only keyring means
+encryption almost never happens, because nobody pastes keys. So mailstr both
+**looks up** and **publishes** keys through a VKS keyserver — `keys.openpgp.org`
+by default (`VITE_PGP_KEYSERVER` overrides).
+
+Why this keyserver specifically: unlike the defunct SKS network (which let anyone
+upload any key for any address), keys.openpgp.org **verifies email ownership**
+before serving a key by address. A by-email hit therefore means "someone who
+controls that mailbox published this key" — a real, if modest, binding, and
+exactly the signal the composer wants. It also serves
+`Access-Control-Allow-Origin: *`, so the browser calls it directly — no bridge
+or proxy, and only public keys ever cross the boundary.
+
+**Lookup** (`GET /vks/v1/by-email/<addr>`): at compose time, every recipient we
+don't already hold a key for is looked up once per session (the endpoint
+rate-limits by-email hard, so we never retry a miss). A hit is saved to the
+synced keyring, which flips the recipient from cleartext to encryptable with no
+user action — this is what turns "have a key ⇒ encrypt" into the default
+experience. A miss or any error is silent and just leaves that recipient as
+cleartext; discovery never blocks or errors the send.
+
+**Publish** (`POST /vks/v1/upload` then `POST /vks/v1/request-verify`): when a
+user **generates** a key, we upload the PUBLIC half so others can discover it,
+then request email verification for the address. Upload makes the key
+retrievable by fingerprint immediately; by-email discovery only works after the
+address owner clicks the verification link the keyserver emails them (for a
+mailstr address, that email arrives through the bridge). Best-effort — a publish
+failure never undoes the already-saved key, it just means the user isn't
+discoverable yet. Only the public key is ever uploaded; the private key never
+leaves the encrypted settings blob.
+
+**Still manual as a fallback:** paste/import remains, for correspondents who
+haven't published or aren't on this keyserver. WKD (domain-served keys) is a
+natural second discovery source for a later pass.
 
 ## Compose
 
@@ -114,7 +142,8 @@ setting, once the core is solid.
 - v1 is inline-PGP, so attachments on an encrypted message are not yet
   encrypted by the PGP layer (they still ride the existing Blossom encryption
   path — flag the distinction);
-- key exchange is manual;
+- discovery relies on the recipient having published to keys.openpgp.org and
+  verified their address; correspondents who haven't still need a manual import;
 - encrypted mail to a non-PGP client arrives as an armored blob the recipient
   can't read — the Encrypt toggle being recipient-gated is what prevents this by
   accident, but a determined user can still do it.
@@ -129,9 +158,11 @@ setting, once the core is solid.
    fingerprint; keyring management (add/remove correspondent keys).
 4. Read path: detect + decrypt + signature state in `receive.ts` and
    `EmailView`.
-5. Compose path: recipient-gated Encrypt toggle, encrypt-to-all-plus-self,
-   sign, plaintext-provider warning.
-6. Docs + honest in-UI limitation copy.
+5. Compose path: recipient-gated Encrypt toggle (default-on when possible),
+   encrypt-to-all-plus-self, sign, plaintext-provider warning.
+6. Keyserver: lookup at compose time (auto-enrich the keyring) and publish on
+   key generation (`lib/pgp/keyserver.ts`).
+7. Docs + honest in-UI limitation copy.
 
-PGP/MIME, attachment encryption, and WKD/keyserver discovery are explicitly
-**phase 2**, tracked separately.
+PGP/MIME, attachment encryption, and WKD (domain-served) discovery are
+explicitly **phase 2**, tracked separately.
