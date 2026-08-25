@@ -45,6 +45,24 @@ export interface MailSettings {
                            // Generated once, then synced here so every device
                            // derives the same opaque `d` tags. Never leaves the
                            // encrypted settings blob.
+
+  // ── OpenPGP (see lib/pgp/). Content-level encryption on top of the gift-wrap
+  // transport, for interop with the outside email world. ──
+  pgpPrivateKey?: string   // The user's ARMORED private key. Secret material,
+                           // but it rides inside this NIP-44-encrypted settings
+                           // blob exactly like mailIndexKey, so it syncs across
+                           // devices and never hits a server in the clear. May
+                           // itself be passphrase-encrypted (see pgpPassphrase-
+                           // Protected) for a second factor.
+  pgpPublicKey?: string    // The matching ARMORED public key. Redundant with the
+                           // private key but kept split so the common read/keyring
+                           // paths never parse the secret.
+  pgpPassphraseProtected?: boolean // True when pgpPrivateKey is passphrase-locked
+                           // and the user must be prompted to unlock it to sign/
+                           // decrypt. Off by default to keep first-run frictionless.
+  pgpKeyring?: Record<string, string> // Correspondents' ARMORED PUBLIC keys,
+                           // keyed by lowercased email address. Public keys only —
+                           // safe to sync. Populated by manual import in v1.
 }
 
 export async function saveSettings(
