@@ -153,11 +153,10 @@ export function ComposeModal({
   const hasAlias = ownedAliases.length > 0
 
   // --- PGP encryption gate ---
-  // Encrypt is offered only once the user holds a key AND we have a public key
-  // for every recipient — a body encrypted to a missing recipient is a body
+  // Encryption is only POSSIBLE once the user holds a key AND we have a public
+  // key for every recipient — a body encrypted to a missing recipient is a body
   // they can't read. `missingKeys` names the gaps so the UI can explain why the
-  // toggle is off rather than just disabling it silently.
-  const [encrypt, setEncrypt] = useState(false)
+  // toggle is unavailable rather than just disabling it silently.
   const hasOwnPgpKey = Boolean(settings.pgpPublicKey && settings.pgpPrivateKey)
   const missingKeys = useMemo(
     () =>
@@ -170,17 +169,25 @@ export function ComposeModal({
     [recipients, settings.pgpKeyring, settings.pgpPublicKey, selfAddresses],
   )
   const canEncrypt = hasOwnPgpKey && recipients.length > 0 && missingKeys.length === 0
-  // Turn the toggle off by itself the moment it stops being possible (a
-  // recipient without a key was added), so a stale "on" never sends plaintext
-  // while the UI still reads as encrypted.
+  const cleartextProviders = useMemo(() => cleartextRecipients(recipients), [recipients])
+
+  // Encrypt-by-default: when it's possible, protect the message unless a
+  // recipient is on a known cleartext-only provider (gmail/outlook/…). Those
+  // default OFF — a webmail user often can't read PGP, so silently encrypting
+  // would hand them an unreadable blob; the user can still opt in per message.
+  // `userOverride` records a manual flip so this reactive default never fights
+  // a deliberate choice: once the user sets the toggle, their pick wins until
+  // they clear the composer.
+  const [userOverride, setUserOverride] = useState<boolean | null>(null)
+  const encrypt = canEncrypt && (userOverride ?? cleartextProviders.length === 0)
+  // Drop a manual override once it's moot (encryption became impossible, or the
+  // recipient set changed enough that the choice no longer applies cleanly), so
+  // the smart default takes back over.
   useEffect(() => {
-    if (encrypt && !canEncrypt) setEncrypt(false)
-  }, [encrypt, canEncrypt])
-  // Plaintext-provider nudge: only meaningful when NOT encrypting.
-  const cleartext = useMemo(
-    () => (encrypt ? [] : cleartextRecipients(recipients)),
-    [encrypt, recipients],
-  )
+    if (!canEncrypt && userOverride !== null) setUserOverride(null)
+  }, [canEncrypt, userOverride])
+  // The plaintext-provider nudge only shows when we're actually sending cleartext.
+  const cleartext = encrypt ? [] : cleartextProviders
 
   // --- recipient autocomplete over past correspondents ---
   const [recipientFocused, setRecipientFocused] = useState(false)
@@ -551,7 +558,7 @@ export function ComposeModal({
               // Enabled only when every recipient has a key; the title carries
               // the reason when it's not, so the disabled state is never mute.
               disabled={!canEncrypt}
-              onClick={() => setEncrypt((v) => !v)}
+              onClick={() => setUserOverride(!encrypt)}
               title={
                 canEncrypt
                   ? encrypt
