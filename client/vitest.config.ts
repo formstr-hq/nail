@@ -9,7 +9,9 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // Logic tests run in Node (the default); component tests opt into jsdom with
+    // a `// @vitest-environment jsdom` docblock at the top of the file.
     environment: "node",
   },
 });

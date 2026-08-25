@@ -94,7 +94,7 @@ function PlainBody({ text }: { text: string }) {
   )
 }
 
-function MessageBody({ email }: { email: Email }) {
+export function MessageBody({ email }: { email: Email }) {
   const [allowRemote, setAllowRemote] = useState(false)
   const [passphraseNonce, setPassphraseNonce] = useState(0)
   const preference = useThemeStore((s) => s.preference)
