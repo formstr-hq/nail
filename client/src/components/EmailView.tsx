@@ -125,8 +125,9 @@ function MessageBody({ email }: { email: Email }) {
           onClick={() => {
             const pass = window.prompt('Enter your PGP key passphrase')
             if (pass) {
-              // Cache for the session, then re-run the decrypt.
-              setSessionPassphrase(pass)
+              // Cache against the specific alias key this message needs, then
+              // re-run the decrypt.
+              setSessionPassphrase(pgp.fingerprint, pass)
               setPassphraseNonce((n) => n + 1)
             }
           }}

@@ -1,49 +1,59 @@
-import type { MailSettings } from '@/lib/nostr/settings'
+import type { MailSettings, PgpKeypair } from '@/lib/nostr/settings'
 import { readKeyInfo, validatePublicKey } from './openpgp'
 
 /**
- * The correspondent keyring: which of the people you write to you hold a PGP
- * public key for. It lives in the encrypted settings blob (`pgpKeyring`), keyed
- * by lowercased email address — public keys only, so it is safe to sync.
+ * Two key stores, both in the encrypted settings blob:
+ *  - `pgpKeys`    — the user's OWN keypairs, one PER ALIAS (see settings.ts for
+ *                   why per-alias: binding aliases to one key would link them).
+ *  - `pgpKeyring` — correspondents' public keys, keyed by lowercased address.
  *
- * These are pure helpers over that map plus the settings' own key. The UI and
- * the compose/read paths go through here rather than touching the map directly,
- * so address normalization (lowercasing, matching how the rest of the mailbox
- * compares addresses) happens in exactly one place.
+ * These are pure helpers over those maps. The UI and the compose/read paths go
+ * through here rather than touching the maps directly, so address normalization
+ * (lowercasing, matching how the rest of the mailbox compares addresses) happens
+ * in exactly one place.
  */
+
+/** The settings slice the key helpers need. */
+type KeySettings = Pick<MailSettings, 'pgpKeyring' | 'pgpKeys'>
 
 /** Normalize an address to its keyring key. Matches the app's alias matching. */
 export function keyringKey(address: string): string {
   return address.trim().toLowerCase()
 }
 
-/** The armored public key held for an address, or undefined. */
-export function keyForAddress(
-  settings: Pick<MailSettings, 'pgpKeyring' | 'pgpPublicKey'> & { ownAddresses?: string[] },
-  address: string,
-): string | undefined {
-  const key = keyringKey(address)
-  // The user's own address resolves to their own public key, so encrypting to
-  // yourself (the Sent-copy path) never needs a manual keyring entry.
-  if (settings.ownAddresses?.some((a) => keyringKey(a) === key) && settings.pgpPublicKey) {
-    return settings.pgpPublicKey
-  }
-  return settings.pgpKeyring?.[key]
+/** The user's own keypair for one of their alias addresses, if they have one. */
+export function ownKeypairFor(settings: KeySettings, address: string): PgpKeypair | undefined {
+  return settings.pgpKeys?.[keyringKey(address)]
+}
+
+/** Every own keypair the user holds, across all their aliases. */
+export function allOwnKeypairs(settings: KeySettings): PgpKeypair[] {
+  return Object.values(settings.pgpKeys ?? {})
+}
+
+/** True when the user has at least one alias key (so encryption is possible). */
+export function hasAnyOwnKey(settings: KeySettings): boolean {
+  return allOwnKeypairs(settings).length > 0
+}
+
+/**
+ * The armored PUBLIC key to encrypt to for an address, or undefined.
+ *
+ * An address that is one of the user's OWN aliases resolves to that alias's own
+ * public key — so encrypting to yourself (the Sent-copy path) needs no keyring
+ * entry. Everyone else comes from the correspondent keyring.
+ */
+export function keyForAddress(settings: KeySettings, address: string): string | undefined {
+  return ownKeypairFor(settings, address)?.publicKey ?? settings.pgpKeyring?.[keyringKey(address)]
 }
 
 /** True when every address has a public key we can encrypt to. */
-export function haveKeysForAll(
-  settings: Pick<MailSettings, 'pgpKeyring' | 'pgpPublicKey'> & { ownAddresses?: string[] },
-  addresses: string[],
-): boolean {
+export function haveKeysForAll(settings: KeySettings, addresses: string[]): boolean {
   return addresses.length > 0 && addresses.every((a) => !!keyForAddress(settings, a))
 }
 
 /** Addresses from the list we do NOT hold a key for — what the UI names. */
-export function addressesMissingKeys(
-  settings: Pick<MailSettings, 'pgpKeyring' | 'pgpPublicKey'> & { ownAddresses?: string[] },
-  addresses: string[],
-): string[] {
+export function addressesMissingKeys(settings: KeySettings, addresses: string[]): string[] {
   return addresses.filter((a) => !keyForAddress(settings, a))
 }
 

@@ -27,24 +27,31 @@ describe('cleartextRecipients', () => {
 })
 
 describe('encryptBody', () => {
-  it('encrypts to the recipient AND the sender, signs, and both can decrypt', async () => {
-    const keyring = await addToKeyring({}, bob.publicKey)
-    const settings = {
-      pgpKeyring: keyring,
-      pgpPublicKey: me.publicKey,
-      pgpPrivateKey: me.privateKey,
+  /** Settings with `me@mailstr.app` as an own alias key and Bob in the keyring. */
+  async function settingsWithMeAndBob() {
+    return {
+      pgpKeyring: await addToKeyring({}, bob.publicKey),
+      pgpKeys: {
+        'me@mailstr.app': {
+          publicKey: me.publicKey,
+          privateKey: me.privateKey,
+          fingerprint: me.fingerprint,
+        },
+      },
     }
+  }
 
+  it('signs with the From alias key, encrypts to recipient + self, both decrypt', async () => {
     const armored = await encryptBody({
       body: 'top secret',
+      fromAddress: 'me@mailstr.app',
       recipients: ['bob@gmail.com'],
-      settings,
-      ownAddresses: ['me@mailstr.app'],
+      settings: await settingsWithMeAndBob(),
     })
     expect(isPgpMessage(armored)).toBe(true)
     expect(armored).not.toContain('top secret')
 
-    // Recipient reads it, and verifies the sender's signature.
+    // Recipient reads it, and verifies the From alias's signature.
     const asBob = await decryptMessage({
       armored,
       privateKey: bob.privateKey,
@@ -62,15 +69,21 @@ describe('encryptBody', () => {
     await expect(
       encryptBody({
         body: 'x',
+        fromAddress: 'me@mailstr.app',
         recipients: ['stranger@nowhere.com'],
-        settings: { pgpKeyring: {}, pgpPublicKey: me.publicKey, pgpPrivateKey: me.privateKey },
+        settings: await settingsWithMeAndBob(),
       }),
     ).rejects.toThrow(/No PGP key for stranger@nowhere.com/)
   })
 
-  it('refuses when the sender has no PGP key at all', async () => {
+  it('refuses when the From alias has no key', async () => {
     await expect(
-      encryptBody({ body: 'x', recipients: ['bob@gmail.com'], settings: {} }),
-    ).rejects.toThrow(/no PGP key/i)
+      encryptBody({
+        body: 'x',
+        fromAddress: 'other@mailstr.app', // no key for this alias
+        recipients: ['bob@gmail.com'],
+        settings: await settingsWithMeAndBob(),
+      }),
+    ).rejects.toThrow(/No PGP key for other@mailstr.app/)
   })
 })

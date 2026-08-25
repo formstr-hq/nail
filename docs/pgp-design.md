@@ -36,23 +36,39 @@ transport is plaintext SMTP on the Gmail side.
 
 ## Key custody — reuse the encrypted-settings pattern
 
-The user's **private key** rides in the existing NIP-44-encrypted settings event
+**One key PER ALIAS, not one per account.** A single key bound to several
+addresses advertises all of them (as user IDs on the key, and by publishing them
+together to a keyserver), permanently linking those aliases in public — the exact
+privacy leak aliases exist to prevent. So each owned address gets its own
+independent keypair, and nothing cryptographically ties one alias to another.
+The store is `pgpKeys: { [emailLowercased]: { publicKey, privateKey,
+fingerprint, passphraseProtected } }`.
+
+The **private keys** ride in the existing NIP-44-encrypted settings event
 (kind 30078), exactly as `mailIndexKey` does today (see
 `client/src/lib/nostr/settings.ts` and the `MailSettings` shape). Consequences,
 all deliberate:
 
-- it syncs across the user's devices with no new infrastructure;
-- it is never on any server in the clear (the settings content is encrypted to
+- they sync across the user's devices with no new infrastructure;
+- they are never on any server in the clear (the settings content is encrypted to
   the user's own Nostr key before it leaves the device);
-- losing the Nostr key loses the PGP key too — acceptable, they are one identity.
+- losing the Nostr key loses the PGP keys too — acceptable, they are one identity.
 
-An **optional passphrase** may additionally encrypt the private key at rest
-(OpenPGP.js `encryptKey({ passphrase })`) for users who want a second factor even
-against a compromised Nostr key. Default off to keep first-run frictionless.
+An **optional passphrase** may additionally encrypt a private key at rest
+(OpenPGP.js generate/`encryptKey({ passphrase })`) for users who want a second
+factor even against a compromised Nostr key. Per-alias, so keys can have
+different passphrases; the session cache is keyed by fingerprint. Default off to
+keep first-run frictionless.
 
-Correspondents' **public keys** live in a local keyring — a new field in
-settings, `pgpKeyring: { [emailLowercased]: armoredPublicKey }` — so it also
-syncs. Imported by paste or `.asc` upload.
+Correspondents' **public keys** live in a separate keyring —
+`pgpKeyring: { [emailLowercased]: armoredPublicKey }` — so it also syncs.
+Populated by keyserver discovery and manual paste/import.
+
+**Resolution rule:** to encrypt to an address, an address that is one of the
+user's OWN aliases resolves to that alias's own public key (so encrypt-to-self
+needs no keyring entry); everyone else comes from the correspondent keyring. On
+read, a message is decrypted by trying every own alias key, since the message is
+encrypted only to whichever alias it was sent to.
 
 ## Key discovery — keyserver (keys.openpgp.org)
 
@@ -104,8 +120,11 @@ natural second discovery source for a later pass.
   encrypting hands them an unreadable blob. Either way it stays a live per-
   message toggle, and a manual flip sticks for that draft (a reactive default
   must never fight a deliberate choice).
-- When on: encrypt the body to **all recipients plus self** (so the Sent copy in
-  our own self-wrap stays readable), and **sign by default** with the user's key.
+- When on: encrypt the body to **all recipients plus the From alias itself** (so
+  the Sent copy in our own self-wrap stays readable), and **sign** with the
+  **From alias's** key. Per-alias means the toggle needs a key for the specific
+  From address; switching From to an alias without a key disables it, with the
+  reason shown.
 - **Inline PGP** (armored `-----BEGIN PGP MESSAGE-----` body) for v1. **PGP/MIME**
   (which covers attachments and HTML cleanly) is the phase-2 upgrade; call it out
   as a known limitation rather than half-doing it.

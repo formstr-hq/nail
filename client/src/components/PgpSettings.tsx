@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { useOwnedAddresses } from '@/hooks/useOwnedAddresses'
-import { generateKey, readKeyInfo, type KeyInfo } from '@/lib/pgp/openpgp'
-import { addToKeyring, removeFromKeyring, keyringEntries, type KeyringEntry } from '@/lib/pgp/keyring'
+import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
+import type { PgpKeypair } from '@/lib/nostr/settings'
+import { generateKey, readKeyInfo } from '@/lib/pgp/openpgp'
+import { keyringKey, addToKeyring, removeFromKeyring, keyringEntries, type KeyringEntry } from '@/lib/pgp/keyring'
 import { publishKey } from '@/lib/pgp/keyserver'
 import { Button } from '@/components/ui/Button'
 import { AlertIcon, KeyIcon, TrashIcon, PlusIcon } from '@/components/ui/icons'
@@ -25,14 +27,18 @@ const areaClass =
   'w-full resize-none rounded-md border border-input bg-background px-3 py-2 font-mono text-[11px] text-foreground placeholder:text-subtle focus:outline-none'
 
 /**
- * The Encryption settings pane: manage the user's own OpenPGP key and the
- * keyring of correspondents' public keys.
+ * The Encryption settings pane: manage a PGP key PER ALIAS plus the keyring of
+ * correspondents' public keys.
+ *
+ * Keys are per-alias by design (settings.ts): one key bound to several
+ * addresses would link them publicly, which is the opposite of what aliases are
+ * for. So each owned address gets its own independent keypair, listed and
+ * managed separately here.
  *
  * This owns its own persistence (through the settings store's `save`) rather
- * than folding into SettingsModal's single Save, because a keyring add/remove
- * and a key generate/import are each a complete action the user expects to
- * stick immediately — not something staged behind a modal-wide Save they might
- * cancel. The private key rides in the same encrypted settings blob as every
+ * than folding into SettingsModal's single Save, because generating/importing a
+ * key or editing the keyring is each a complete action the user expects to stick
+ * immediately. Private keys ride in the same encrypted settings blob as every
  * other field.
  */
 export function PgpSettings() {
@@ -40,31 +46,25 @@ export function PgpSettings() {
   const { settings, save } = useSettingsStore()
   const { addresses } = useOwnedAddresses()
 
-  const [ownInfo, setOwnInfo] = useState<KeyInfo | null>(null)
   const [entries, setEntries] = useState<KeyringEntry[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  // Decode the stored own-key and keyring for display whenever they change.
+  // Every address the user can hold a key for: owned NIP-05 names plus the
+  // always-present npub bridge address.
+  const bridgeAddress = account ? `${account.npub}@${BRIDGE_DOMAIN}` : ''
+  const aliasList = [...addresses, ...(bridgeAddress ? [bridgeAddress] : [])]
+
   useEffect(() => {
     let alive = true
     void (async () => {
-      if (settings.pgpPublicKey) {
-        try {
-          if (alive) setOwnInfo(await readKeyInfo(settings.pgpPublicKey))
-        } catch {
-          if (alive) setOwnInfo(null)
-        }
-      } else if (alive) {
-        setOwnInfo(null)
-      }
       const list = await keyringEntries(settings.pgpKeyring)
       if (alive) setEntries(list)
     })()
     return () => {
       alive = false
     }
-  }, [settings.pgpPublicKey, settings.pgpKeyring])
+  }, [settings.pgpKeyring])
 
   async function persist(patch: Parameters<typeof save>[0]) {
     if (!account || !active) {
@@ -82,42 +82,41 @@ export function PgpSettings() {
     }
   }
 
-  // The address a generated key is bound to: the saved sender, else the first
-  // owned address. Without one we can't mint a key that identifies the user.
-  const identityAddress = settings.senderAddress ?? addresses[0]
+  function setAliasKey(address: string, keypair: PgpKeypair | null) {
+    const next = { ...(settings.pgpKeys ?? {}) }
+    if (keypair) next[keyringKey(address)] = keypair
+    else delete next[keyringKey(address)]
+    void persist({ pgpKeys: next })
+  }
 
   return (
     <div className="flex flex-col gap-6">
       <Field
-        label="Your PGP key"
-        hint="Used to encrypt and sign mail to people who use PGP, and to decrypt PGP mail sent to you. Your private key is stored encrypted and synced with your other settings — it never leaves in the clear."
+        label="Your keys"
+        hint="A separate PGP key for each of your addresses — kept distinct so your aliases stay unlinked. Each is used to sign and decrypt mail for that address, and its private half is stored encrypted and synced with your other settings."
       >
-        {ownInfo ? (
-          <OwnKey info={ownInfo} armoredPublic={settings.pgpPublicKey!} onRemove={() =>
-            void persist({ pgpPublicKey: undefined, pgpPrivateKey: undefined, pgpPassphraseProtected: undefined })
-          } busy={busy} />
-        ) : (
-          <NoOwnKey
-            identityAddress={identityAddress}
-            busy={busy}
-            onGenerate={(gen) =>
-              void persist({
-                pgpPublicKey: gen.publicKey,
-                pgpPrivateKey: gen.privateKey,
-                pgpPassphraseProtected: gen.passphraseProtected,
-              })
-            }
-            onImport={(pub, priv, locked) =>
-              void persist({ pgpPublicKey: pub, pgpPrivateKey: priv, pgpPassphraseProtected: locked })
-            }
-            setError={setError}
-          />
-        )}
+        <div className="flex flex-col gap-2">
+          {aliasList.length === 0 && (
+            <p className="text-[11.5px] text-subtle">
+              Set up an address first — keys are bound to an email identity.
+            </p>
+          )}
+          {aliasList.map((address) => (
+            <AliasKeyRow
+              key={address}
+              address={address}
+              keypair={settings.pgpKeys?.[keyringKey(address)]}
+              busy={busy}
+              onSet={(kp) => setAliasKey(address, kp)}
+              setError={setError}
+            />
+          ))}
+        </div>
       </Field>
 
       <Field
         label="Correspondents’ keys"
-        hint="Public keys of people you write to. You can only encrypt to someone once you hold their key. Paste an armored public key to add one."
+        hint="Public keys of people you write to, found automatically when you compose or added by hand. You can only encrypt to someone once you hold their key."
       >
         <Keyring
           entries={entries}
@@ -141,206 +140,189 @@ export function PgpSettings() {
   )
 }
 
-/** Shown when the user already has a key: fingerprint, export, remove. */
-function OwnKey({
-  info,
-  armoredPublic,
-  onRemove,
+/** One alias row: shows its key if it has one, else offers generate/import. */
+function AliasKeyRow({
+  address,
+  keypair,
   busy,
-}: {
-  info: KeyInfo
-  armoredPublic: string
-  onRemove: () => void
-  busy: boolean
-}) {
-  const [copied, setCopied] = useState(false)
-  const [confirmRemove, setConfirmRemove] = useState(false)
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="rounded-md border border-input bg-muted/40 p-3">
-        <div className="flex items-center gap-2 text-[12.5px] font-medium text-foreground">
-          <KeyIcon className="h-4 w-4 flex-none text-muted-foreground" />
-          {info.userIDs[0] ?? info.emails[0] ?? 'your key'}
-        </div>
-        <div className="mt-1 break-all font-mono text-[10.5px] text-subtle">
-          {formatFingerprint(info.fingerprint)}
-        </div>
-        {info.encrypted && (
-          <div className="mt-1 text-[10.5px] text-muted-foreground">Passphrase-protected</div>
-        )}
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          onClick={() => {
-            void navigator.clipboard.writeText(armoredPublic).then(() => {
-              setCopied(true)
-              setTimeout(() => setCopied(false), 1500)
-            })
-          }}
-        >
-          {copied ? 'Copied public key' : 'Copy public key'}
-        </Button>
-        {confirmRemove ? (
-          <>
-            <span className="self-center text-[11.5px] text-muted-foreground">
-              Remove this key from all your devices?
-            </span>
-            <Button size="sm" variant="danger" onClick={onRemove} disabled={busy}>
-              Remove
-            </Button>
-            <Button size="sm" onClick={() => setConfirmRemove(false)}>
-              Keep
-            </Button>
-          </>
-        ) : (
-          <Button size="sm" variant="danger" onClick={() => setConfirmRemove(true)}>
-            Remove key
-          </Button>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/** Shown when there's no key yet: generate one, or import an existing one. */
-function NoOwnKey({
-  identityAddress,
-  busy,
-  onGenerate,
-  onImport,
+  onSet,
   setError,
 }: {
-  identityAddress: string | undefined
+  address: string
+  keypair: PgpKeypair | undefined
   busy: boolean
-  onGenerate: (gen: { publicKey: string; privateKey: string; passphraseProtected: boolean }) => void
-  onImport: (pub: string, priv: string, locked: boolean) => void
+  onSet: (kp: PgpKeypair | null) => void
   setError: (m: string) => void
 }) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'import'>('idle')
   const [passphrase, setPassphrase] = useState('')
   const [importText, setImportText] = useState('')
   const [working, setWorking] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [confirmRemove, setConfirmRemove] = useState(false)
 
-  if (mode === 'idle') {
+  // Has a key — show fingerprint, copy, remove.
+  if (keypair) {
     return (
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" onClick={() => setMode('generate')} disabled={busy}>
-          Generate a key
-        </Button>
-        <Button size="sm" onClick={() => setMode('import')} disabled={busy}>
-          Import a key
-        </Button>
-      </div>
-    )
-  }
-
-  if (mode === 'generate') {
-    return (
-      <div className="flex flex-col gap-2">
-        {!identityAddress && (
-          <p className="text-[11.5px] text-destructive">
-            Set a sender address first — a key is bound to your email identity.
-          </p>
-        )}
-        <input
-          type="password"
-          value={passphrase}
-          onChange={(e) => setPassphrase(e.target.value)}
-          placeholder="Optional passphrase (extra protection at rest)"
-          className={inputClass}
-        />
-        <div className="flex gap-2">
+      <div className="rounded-md border border-input bg-muted/40 p-3">
+        <div className="flex items-center gap-2">
+          <KeyIcon className="h-4 w-4 flex-none text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-foreground">{address}</span>
+          {keypair.passphraseProtected && (
+            <span className="flex-none text-[10px] text-subtle">passphrase-protected</span>
+          )}
+        </div>
+        <div className="mt-1 break-all pl-6 font-mono text-[10px] text-subtle">
+          {formatFingerprint(keypair.fingerprint)}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2 pl-6">
           <Button
             size="sm"
-            variant="primary"
-            disabled={!identityAddress || working}
-            onClick={async () => {
-              if (!identityAddress) return
-              setWorking(true)
-              setError('')
-              try {
-                const gen = await generateKey({ email: identityAddress, passphrase: passphrase || undefined })
-                onGenerate({
-                  publicKey: gen.publicKey,
-                  privateKey: gen.privateKey,
-                  passphraseProtected: !!passphrase,
-                })
-                setMode('idle')
-                setPassphrase('')
-                // Publish the PUBLIC key to the keyserver so others can discover
-                // it and encrypt to this user. Best-effort: a failure here never
-                // undoes the (already saved) key — it just means the user isn't
-                // discoverable yet. The keyserver emails a verification link to
-                // the address; one click makes it searchable by email.
-                void publishKey(gen.publicKey, [identityAddress]).catch((e) =>
-                  console.warn('[pgp] keyserver publish failed', e),
-                )
-              } catch (e) {
-                setError(e instanceof Error ? e.message : String(e))
-              } finally {
-                setWorking(false)
-              }
+            onClick={() => {
+              void navigator.clipboard.writeText(keypair.publicKey).then(() => {
+                setCopied(true)
+                setTimeout(() => setCopied(false), 1500)
+              })
             }}
           >
-            {working ? 'Generating…' : 'Generate'}
+            {copied ? 'Copied' : 'Copy public key'}
           </Button>
-          <Button size="sm" onClick={() => setMode('idle')}>
-            Cancel
-          </Button>
+          {confirmRemove ? (
+            <>
+              <Button size="sm" variant="danger" disabled={busy} onClick={() => onSet(null)}>
+                Remove
+              </Button>
+              <Button size="sm" onClick={() => setConfirmRemove(false)}>
+                Keep
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" variant="danger" onClick={() => setConfirmRemove(true)}>
+              Remove
+            </Button>
+          )}
         </div>
       </div>
     )
   }
 
-  // import
+  // No key for this alias yet.
   return (
-    <div className="flex flex-col gap-2">
-      <textarea
-        value={importText}
-        onChange={(e) => setImportText(e.target.value)}
-        placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----"
-        rows={4}
-        className={areaClass}
-      />
-      <p className="text-[11px] leading-relaxed text-subtle">
-        Paste your armored PRIVATE key (e.g. exported from GPG). It’s stored encrypted with your
-        other settings.
-      </p>
-      <div className="flex gap-2">
-        <Button
-          size="sm"
-          variant="primary"
-          disabled={working || !importText.trim()}
-          onClick={async () => {
-            setWorking(true)
-            setError('')
-            try {
-              const armoredPrivate = importText.trim()
-              const info = await readKeyInfo(armoredPrivate)
-              if (!info.isPrivate) {
-                throw new Error('That’s a public key — import your PRIVATE key so you can decrypt and sign.')
-              }
-              // Store both halves: the public key derived from the private, so
-              // the common keyring/read paths never parse the secret.
-              const publicKey = await extractPublicKey(armoredPrivate)
-              onImport(publicKey, armoredPrivate, info.encrypted ?? false)
-              setMode('idle')
-              setImportText('')
-            } catch (e) {
-              setError(e instanceof Error ? e.message : String(e))
-            } finally {
-              setWorking(false)
-            }
-          }}
-        >
-          {working ? 'Importing…' : 'Import'}
-        </Button>
-        <Button size="sm" onClick={() => setMode('idle')}>
-          Cancel
-        </Button>
+    <div className="rounded-md border border-dashed border-input p-3">
+      <div className="flex items-center gap-2">
+        <KeyIcon className="h-4 w-4 flex-none text-subtle" />
+        <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">{address}</span>
+        {mode === 'idle' && (
+          <div className="flex flex-none gap-2">
+            <Button size="sm" onClick={() => setMode('generate')} disabled={busy}>
+              Generate
+            </Button>
+            <Button size="sm" onClick={() => setMode('import')} disabled={busy}>
+              Import
+            </Button>
+          </div>
+        )}
       </div>
+
+      {mode === 'generate' && (
+        <div className="mt-2 flex flex-col gap-2 pl-6">
+          <input
+            type="password"
+            value={passphrase}
+            onChange={(e) => setPassphrase(e.target.value)}
+            placeholder="Optional passphrase (extra protection at rest)"
+            className={inputClass}
+          />
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={working}
+              onClick={async () => {
+                setWorking(true)
+                setError('')
+                try {
+                  const gen = await generateKey({ email: address, passphrase: passphrase || undefined })
+                  onSet({
+                    publicKey: gen.publicKey,
+                    privateKey: gen.privateKey,
+                    fingerprint: gen.fingerprint,
+                    passphraseProtected: !!passphrase,
+                  })
+                  setMode('idle')
+                  setPassphrase('')
+                  // Publish the PUBLIC key so others can discover it and encrypt
+                  // to this address. Best-effort — the keyserver emails a
+                  // verification link; one click makes it searchable by email.
+                  void publishKey(gen.publicKey, [address]).catch((e) =>
+                    console.warn('[pgp] keyserver publish failed', e),
+                  )
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e))
+                } finally {
+                  setWorking(false)
+                }
+              }}
+            >
+              {working ? 'Generating…' : 'Generate key'}
+            </Button>
+            <Button size="sm" onClick={() => setMode('idle')}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {mode === 'import' && (
+        <div className="mt-2 flex flex-col gap-2 pl-6">
+          <textarea
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+            placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----"
+            rows={4}
+            className={areaClass}
+          />
+          <p className="text-[11px] leading-relaxed text-subtle">
+            Paste the armored PRIVATE key for this address (e.g. exported from GPG).
+          </p>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={working || !importText.trim()}
+              onClick={async () => {
+                setWorking(true)
+                setError('')
+                try {
+                  const armoredPrivate = importText.trim()
+                  const info = await readKeyInfo(armoredPrivate)
+                  if (!info.isPrivate) {
+                    throw new Error('That’s a public key — import your PRIVATE key so you can decrypt and sign.')
+                  }
+                  const publicKey = await extractPublicKey(armoredPrivate)
+                  onSet({
+                    publicKey,
+                    privateKey: armoredPrivate,
+                    fingerprint: info.fingerprint,
+                    passphraseProtected: info.encrypted ?? false,
+                  })
+                  setMode('idle')
+                  setImportText('')
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e))
+                } finally {
+                  setWorking(false)
+                }
+              }}
+            >
+              {working ? 'Importing…' : 'Import key'}
+            </Button>
+            <Button size="sm" onClick={() => setMode('idle')}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

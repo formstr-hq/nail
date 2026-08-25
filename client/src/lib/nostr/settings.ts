@@ -48,21 +48,29 @@ export interface MailSettings {
 
   // ── OpenPGP (see lib/pgp/). Content-level encryption on top of the gift-wrap
   // transport, for interop with the outside email world. ──
-  pgpPrivateKey?: string   // The user's ARMORED private key. Secret material,
-                           // but it rides inside this NIP-44-encrypted settings
-                           // blob exactly like mailIndexKey, so it syncs across
-                           // devices and never hits a server in the clear. May
-                           // itself be passphrase-encrypted (see pgpPassphrase-
-                           // Protected) for a second factor.
-  pgpPublicKey?: string    // The matching ARMORED public key. Redundant with the
-                           // private key but kept split so the common read/keyring
-                           // paths never parse the secret.
-  pgpPassphraseProtected?: boolean // True when pgpPrivateKey is passphrase-locked
-                           // and the user must be prompted to unlock it to sign/
-                           // decrypt. Off by default to keep first-run frictionless.
+  //
+  // Keys are PER ALIAS, not one per account. Binding every alias to a single key
+  // (as user IDs, and by publishing them together to a keyserver) would link
+  // those addresses publicly and permanently — the exact privacy leak aliases
+  // exist to prevent. So each address gets its own distinct keypair, and nothing
+  // cryptographically ties one alias to another.
+  pgpKeys?: Record<string, PgpKeypair> // Own keypairs, keyed by lowercased
+                           // address. Private keys ride inside this NIP-44-
+                           // encrypted settings blob (like mailIndexKey) — synced
+                           // across devices, never on a server in the clear.
   pgpKeyring?: Record<string, string> // Correspondents' ARMORED PUBLIC keys,
                            // keyed by lowercased email address. Public keys only —
-                           // safe to sync. Populated by manual import in v1.
+                           // safe to sync. Populated by manual import and by
+                           // keyserver discovery.
+}
+
+/** One of the user's own alias keypairs. */
+export interface PgpKeypair {
+  publicKey: string        // armored public key — safe to publish
+  privateKey: string       // armored private key — secret; passphrase-encrypted
+                           // here iff passphraseProtected
+  fingerprint: string      // this key's fingerprint, for session-passphrase keying
+  passphraseProtected?: boolean // true when privateKey is passphrase-locked
 }
 
 export async function saveSettings(

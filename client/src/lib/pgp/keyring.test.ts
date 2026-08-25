@@ -8,6 +8,9 @@ import {
   addToKeyring,
   removeFromKeyring,
   keyringEntries,
+  ownKeypairFor,
+  allOwnKeypairs,
+  hasAnyOwnKey,
 } from './keyring'
 
 let alice: GeneratedKey // the user
@@ -49,18 +52,32 @@ describe('lookup + gating', () => {
     expect(keyForAddress({ pgpKeyring: ring }, 'BOB@gmail.com')).toBe(bob.publicKey)
   })
 
-  it('resolves the user’s own address to their own public key without a keyring entry', () => {
+  it('resolves the user’s own alias to that alias’s public key without a keyring entry', () => {
     const settings = {
-      pgpPublicKey: alice.publicKey,
       pgpKeyring: {},
-      ownAddresses: ['alice@mailstr.app'],
+      pgpKeys: {
+        'alice@mailstr.app': {
+          publicKey: alice.publicKey,
+          privateKey: alice.privateKey,
+          fingerprint: alice.fingerprint,
+        },
+      },
     }
-    expect(keyForAddress(settings, 'alice@mailstr.app')).toBe(alice.publicKey)
+    expect(keyForAddress(settings, 'ALICE@mailstr.app')).toBe(alice.publicKey)
   })
 
   it('haveKeysForAll is true only when every recipient has a key', async () => {
     const ring = await addToKeyring({}, bob.publicKey)
-    const settings = { pgpKeyring: ring, pgpPublicKey: alice.publicKey, ownAddresses: ['alice@mailstr.app'] }
+    const settings = {
+      pgpKeyring: ring,
+      pgpKeys: {
+        'alice@mailstr.app': {
+          publicKey: alice.publicKey,
+          privateKey: alice.privateKey,
+          fingerprint: alice.fingerprint,
+        },
+      },
+    }
     expect(haveKeysForAll(settings, ['bob@gmail.com', 'alice@mailstr.app'])).toBe(true)
     expect(haveKeysForAll(settings, ['bob@gmail.com', 'carol@nowhere.com'])).toBe(false)
     expect(haveKeysForAll(settings, [])).toBe(false)
@@ -79,6 +96,41 @@ describe('removeFromKeyring', () => {
     const ring = await addToKeyring({}, bob.publicKey)
     const after = removeFromKeyring(ring, 'BOB@gmail.com')
     expect(after['bob@gmail.com']).toBeUndefined()
+  })
+})
+
+describe('own per-alias keys', () => {
+  const settings = {
+    pgpKeys: {
+      'alice@mailstr.app': {
+        publicKey: 'PUB_A',
+        privateKey: 'PRIV_A',
+        fingerprint: 'fpA',
+      },
+      'alias2@mailstr.app': {
+        publicKey: 'PUB_2',
+        privateKey: 'PRIV_2',
+        fingerprint: 'fp2',
+      },
+    },
+  }
+
+  it('ownKeypairFor resolves a normalized alias to its own keypair', () => {
+    expect(ownKeypairFor(settings, 'ALICE@mailstr.app')?.fingerprint).toBe('fpA')
+    expect(ownKeypairFor(settings, 'nokey@mailstr.app')).toBeUndefined()
+  })
+
+  it('allOwnKeypairs returns every alias key; hasAnyOwnKey reflects presence', () => {
+    expect(allOwnKeypairs(settings)).toHaveLength(2)
+    expect(hasAnyOwnKey(settings)).toBe(true)
+    expect(hasAnyOwnKey({})).toBe(false)
+    expect(allOwnKeypairs({})).toEqual([])
+  })
+
+  it('keys are distinct per alias — no key links one alias to another', () => {
+    // Each alias resolves ONLY to its own public key; there is no shared key.
+    expect(keyForAddress(settings, 'alice@mailstr.app')).toBe('PUB_A')
+    expect(keyForAddress(settings, 'alias2@mailstr.app')).toBe('PUB_2')
   })
 })
 

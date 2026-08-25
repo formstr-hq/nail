@@ -11,7 +11,7 @@ import type { ResolveContext } from '@/lib/mail/resolve'
 import type { Draft } from '@/lib/mail/draft'
 import { useContacts } from '@/hooks/useContacts'
 import { searchContacts } from '@/lib/mail/contacts'
-import { addressesMissingKeys } from '@/lib/pgp/keyring'
+import { addressesMissingKeys, ownKeypairFor, hasAnyOwnKey } from '@/lib/pgp/keyring'
 import { cleartextRecipients, encryptBody } from '@/lib/pgp/compose'
 import { getSessionPassphrase, setSessionPassphrase } from '@/lib/pgp/session'
 import { usePgpDiscovery } from '@/hooks/usePgpDiscovery'
@@ -154,22 +154,22 @@ export function ComposeModal({
   const hasAlias = ownedAliases.length > 0
 
   // --- PGP encryption gate ---
-  // Encryption is only POSSIBLE once the user holds a key AND we have a public
-  // key for every recipient — a body encrypted to a missing recipient is a body
-  // they can't read. `missingKeys` names the gaps so the UI can explain why the
-  // toggle is unavailable rather than just disabling it silently.
-  const hasOwnPgpKey = Boolean(settings.pgpPublicKey && settings.pgpPrivateKey)
+  // Keys are per-alias, so encryption needs a key for the FROM alias
+  // specifically (that's what signs and self-encrypts), plus a public key for
+  // every recipient — a body encrypted to a missing recipient is one they can't
+  // read. `missingKeys` names the gaps so the UI can explain the disabled toggle.
+  const hasFromKey = Boolean(ownKeypairFor(settings, fromAddress))
   const missingKeys = useMemo(
     () =>
       recipients.length
         ? addressesMissingKeys(
-            { pgpKeyring: settings.pgpKeyring, pgpPublicKey: settings.pgpPublicKey, ownAddresses: selfAddresses },
+            { pgpKeyring: settings.pgpKeyring, pgpKeys: settings.pgpKeys },
             recipients,
           )
         : [],
-    [recipients, settings.pgpKeyring, settings.pgpPublicKey, selfAddresses],
+    [recipients, settings.pgpKeyring, settings.pgpKeys],
   )
-  const canEncrypt = hasOwnPgpKey && recipients.length > 0 && missingKeys.length === 0
+  const canEncrypt = hasFromKey && recipients.length > 0 && missingKeys.length === 0
 
   // Auto-discover missing recipient keys from the keyserver. A hit lands in the
   // keyring and flips canEncrypt on by itself — this is what makes "have a key ⇒
@@ -307,22 +307,25 @@ export function ComposeModal({
       // self-copy) carries the armored body and send.ts needs no PGP awareness.
       let outgoingBody = body
       if (encrypt) {
-        let passphrase = settings.pgpPassphraseProtected ? getSessionPassphrase() ?? undefined : undefined
-        if (settings.pgpPassphraseProtected && !passphrase) {
+        // The From alias's own key signs and self-encrypts; unlock it if locked.
+        const fromKey = ownKeypairFor(settings, fromAddress)
+        let passphrase =
+          fromKey?.passphraseProtected ? getSessionPassphrase(fromKey.fingerprint) ?? undefined : undefined
+        if (fromKey?.passphraseProtected && !passphrase) {
           const entered = window.prompt('Enter your PGP key passphrase to sign this message')
           if (!entered) {
             setError('A passphrase is required to sign and send an encrypted message.')
             setSending(false)
             return
           }
-          setSessionPassphrase(entered)
+          setSessionPassphrase(fromKey.fingerprint, entered)
           passphrase = entered
         }
         outgoingBody = await encryptBody({
           body,
+          fromAddress,
           recipients: toList,
           settings,
-          ownAddresses: selfAddresses,
           passphrase,
         })
       }
@@ -519,7 +522,7 @@ export function ComposeModal({
               {cleartext.join(', ')} can read this message on their servers.
               {canEncrypt
                 ? ' Turn on Encrypt to protect it.'
-                : hasOwnPgpKey
+                : hasFromKey
                   ? ' Import their PGP key to encrypt.'
                   : ''}
             </p>
@@ -567,11 +570,12 @@ export function ComposeModal({
               </a>
             )}
           </div>
-          {hasOwnPgpKey && (
+          {hasAnyOwnKey(settings) && (
             <button
               type="button"
-              // Enabled only when every recipient has a key; the title carries
-              // the reason when it's not, so the disabled state is never mute.
+              // Shown whenever the user has any alias key; enabled only when the
+              // From alias has a key AND every recipient does. The title carries
+              // the reason when disabled, so the state is never mute.
               disabled={!canEncrypt}
               onClick={() => setUserOverride(!encrypt)}
               title={
@@ -579,9 +583,11 @@ export function ComposeModal({
                   ? encrypt
                     ? 'Encryption on — click to turn off'
                     : 'Encrypt this message with PGP'
-                  : missingKeys.length
-                    ? `No PGP key for ${missingKeys.join(', ')} — import one to encrypt`
-                    : 'Add a recipient to encrypt'
+                  : !hasFromKey
+                    ? `No PGP key for ${fromAddress} — generate one in Settings to encrypt from it`
+                    : missingKeys.length
+                      ? `No PGP key for ${missingKeys.join(', ')} — import one to encrypt`
+                      : 'Add a recipient to encrypt'
               }
               className={[
                 'flex flex-none items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-colors',
