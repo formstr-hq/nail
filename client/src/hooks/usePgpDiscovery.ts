@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
-import { addressesMissingKeys, addToKeyring } from '@/lib/pgp/keyring'
+import { addressesMissingKeys, addToKeyring, hasAnyOwnKey } from '@/lib/pgp/keyring'
 import { lookupByEmail } from '@/lib/pgp/keyserver'
 
 /**
@@ -32,14 +32,14 @@ export function usePgpDiscovery(recipients: string[]): { discovering: boolean } 
   // Addresses already looked up this session — never retried, hit or miss.
   const attempted = useRef<Set<string>>(new Set())
 
-  const hasOwnKey = Boolean(settings.pgpPublicKey && settings.pgpPrivateKey)
+  const hasOwnKey = hasAnyOwnKey(settings)
 
   useEffect(() => {
     // No point discovering correspondents' keys if we can't encrypt anyway.
     if (!hasOwnKey || !account || !active || recipients.length === 0) return
 
     const missing = addressesMissingKeys(
-      { pgpKeyring: settings.pgpKeyring, pgpPublicKey: settings.pgpPublicKey },
+      { pgpKeyring: settings.pgpKeyring, pgpKeys: settings.pgpKeys },
       recipients,
     )
       // Only real email addresses are on a keyserver; skip npubs and anything

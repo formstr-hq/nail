@@ -1,6 +1,6 @@
 import type { MailSettings } from '@/lib/nostr/settings'
 import { encryptMessage } from './openpgp'
-import { keyForAddress, keyringKey } from './keyring'
+import { keyForAddress, ownKeypairFor, keyringKey } from './keyring'
 
 /**
  * Mail providers that can read message bodies server-side. Sending them
@@ -30,36 +30,38 @@ export function cleartextRecipients(addresses: string[]): string[] {
 }
 
 /**
- * Encrypt (and sign, if a private key is present) a plaintext body to every
- * recipient plus the sender.
+ * Encrypt and sign a plaintext body to every recipient plus the sender, using
+ * the FROM alias's own keypair.
  *
- * Encrypting back to the sender's OWN key is what keeps the Sent copy readable —
- * every gift wrap (to each recipient AND the self-wrap that files under Sent)
- * carries this same armored body, so it must be decryptable by the sender too.
+ * Per-alias keys (settings.ts): the message is signed by, and encrypted back to,
+ * the specific alias it is being sent from — not some account-wide key. That
+ * self-encryption keeps the Sent copy readable (every gift wrap, including the
+ * self-wrap that files under Sent, carries this same armored body) while keeping
+ * the alias's identity distinct.
  *
- * Throws if any recipient has no key (the caller gates the toggle on this, but
- * it is enforced here too so a body is never sent to someone who can't read it)
- * or if the sender has no PGP key at all.
+ * Throws if the From alias has no key, or if any recipient has no key (the caller
+ * gates the toggle on this, but it is enforced here too so a body is never sent
+ * to someone who can't read it).
  */
 export async function encryptBody(params: {
   body: string
+  /** The alias this is sent from — selects which own keypair signs + self-encrypts. */
+  fromAddress: string
   recipients: string[]
-  settings: Pick<
-    MailSettings,
-    'pgpKeyring' | 'pgpPublicKey' | 'pgpPrivateKey' | 'pgpPassphraseProtected'
-  >
-  ownAddresses?: string[]
-  /** Session passphrase, required when the private key is passphrase-locked. */
+  settings: Pick<MailSettings, 'pgpKeyring' | 'pgpKeys'>
+  /** Session passphrase for the From alias's key, when it is passphrase-locked. */
   passphrase?: string
 }): Promise<string> {
-  const { body, recipients, settings, ownAddresses, passphrase } = params
-  if (!settings.pgpPublicKey) {
-    throw new Error('You have no PGP key yet — generate one in Settings to encrypt.')
+  const { body, fromAddress, recipients, settings, passphrase } = params
+
+  const own = ownKeypairFor(settings, fromAddress)
+  if (!own) {
+    throw new Error(`No PGP key for ${fromAddress} — generate one in Settings to encrypt.`)
   }
 
   const recipientKeys: string[] = []
   for (const address of recipients) {
-    const key = keyForAddress({ ...settings, ownAddresses }, address)
+    const key = keyForAddress(settings, address)
     if (!key) throw new Error(`No PGP key for ${address}.`)
     recipientKeys.push(key)
   }
@@ -67,9 +69,9 @@ export async function encryptBody(params: {
   return encryptMessage({
     // De-dupe against the sender's own key so it isn't listed twice when the
     // sender is also a recipient.
-    recipientPublicKeys: [...new Set([...recipientKeys, settings.pgpPublicKey])],
+    recipientPublicKeys: [...new Set([...recipientKeys, own.publicKey])],
     text: body,
-    signingPrivateKey: settings.pgpPrivateKey,
-    signingPassphrase: settings.pgpPassphraseProtected ? passphrase : undefined,
+    signingPrivateKey: own.privateKey,
+    signingPassphrase: own.passphraseProtected ? passphrase : undefined,
   })
 }
