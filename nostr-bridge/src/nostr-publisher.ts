@@ -1,4 +1,5 @@
 import type { Event } from "nostr-tools";
+import { generateSecretKey } from "nostr-tools/pure";
 import { buildMailRumor, sealAndWrap } from "./protocol/mail.js";
 import type { ProtocolSigner } from "./protocol/types.js";
 import { KIND_CLIENT_AUTH } from "./protocol/constants.js";
@@ -118,12 +119,17 @@ export async function buildInboundWrap(
   recipientPubkey: string,
   signer: ProtocolSigner,
 ): Promise<Event> {
+  // Generate the wrap's ephemeral key first and pass the SAME key into the
+  // rumor (as the deletable-mail WRAP_KEY_TAG) and the wrap itself — splitting
+  // these would hand the recipient a deletion key that matches nothing.
+  const ephemeralSk = generateSecretKey();
   const rumor = buildMailRumor({
     senderPubkey: await signer.getPublicKey(),
     recipientPubkey,
     rfc2822: raw,
+    wrapSecret: ephemeralSk,
   });
-  return sealAndWrap(rumor, recipientPubkey, signer);
+  return sealAndWrap(rumor, recipientPubkey, signer, ephemeralSk);
 }
 
 /** Returns true if at least one relay accepted the event. */

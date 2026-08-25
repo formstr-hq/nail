@@ -1,5 +1,6 @@
-import { generateSecretKey, getEventHash, finalizeEvent, verifyEvent } from "nostr-tools/pure";
+import { generateSecretKey, getEventHash, getPublicKey, finalizeEvent, verifyEvent } from "nostr-tools/pure";
 import { getConversationKey, encrypt } from "nostr-tools/nip44";
+import { bytesToHex, hexToBytes } from "nostr-tools/utils";
 import type { Event } from "nostr-tools";
 import { KIND_MAIL, KIND_SEAL, KIND_GIFTWRAP, MAX_RUMOR_AGE_SECONDS } from "./constants.js";
 import type { ProtocolSigner, Rumor, UnwrapResult } from "./types.js";
@@ -11,14 +12,35 @@ function randomPast(now: number): number {
   return now - Math.floor(Math.random() * TWO_DAYS);
 }
 
+/**
+ * Rumor tag carrying the gift wrap's ephemeral signing key, hex-encoded.
+ *
+ * NIP-09 says a deletion request is only honored when it comes from the
+ * deleted event's own author — but a gift wrap is signed by a throwaway
+ * ephemeral key (see sealAndWrap), so the recipient could never delete their
+ * own mail. Handing them that key inside the rumor (which only they can
+ * decrypt, since it travels NIP-44-encrypted to their key inside the seal)
+ * is what makes "delete forever" real: they sign the kind-5 AS the wrap's
+ * author and NIP-09 relays, our local relay included, honor it.
+ *
+ * The capability granted is deletion of this one wrap only — the key cannot
+ * read anything (wrap content needs the recipient's key) and signs nothing
+ * else. The sender/bridge necessarily retains the same capability; that is
+ * inherent to being the wrap's author, not a new privilege.
+ */
+export const WRAP_KEY_TAG = "wrapkey";
+
 export function buildMailRumor(params: {
   senderPubkey: string;
   recipientPubkey: string;
   rfc2822: string;
   deliverTo?: string[];
+  /** The ephemeral key that will sign the outer wrap; see WRAP_KEY_TAG. */
+  wrapSecret?: Uint8Array;
 }): Rumor {
   const tags: string[][] = [["p", params.recipientPubkey]];
   for (const address of params.deliverTo ?? []) tags.push(["deliver", address]);
+  if (params.wrapSecret) tags.push([WRAP_KEY_TAG, bytesToHex(params.wrapSecret)]);
 
   const rumor = {
     kind: KIND_MAIL,
@@ -56,10 +78,20 @@ export function deliverTargets(rumor: Rumor): string[] {
   return rumor.tags.filter((t) => t[0] === "deliver" && t[1]).map((t) => t[1]);
 }
 
+/**
+ * Seal the rumor and gift-wrap it for the recipient.
+ *
+ * When `ephemeralSk` is supplied it is used to sign the wrap instead of a
+ * freshly generated one — callers that embed the key in the rumor (see
+ * WRAP_KEY_TAG) must generate it first and pass the SAME key to both, or the
+ * recipient ends up with a deletion key that matches nothing and every
+ * "delete forever" they attempt silently does nothing.
+ */
 export async function sealAndWrap(
   rumor: Rumor,
   recipientPubkey: string,
   signer: ProtocolSigner,
+  ephemeralSk?: Uint8Array,
 ): Promise<Event> {
   const now = Math.floor(Date.now() / 1000);
 
@@ -71,7 +103,7 @@ export async function sealAndWrap(
     content: await signer.nip44Encrypt(recipientPubkey, JSON.stringify(rumor)),
   });
 
-  const ephemeralSk = generateSecretKey();
+  ephemeralSk ??= generateSecretKey();
   return finalizeEvent(
     {
       kind: KIND_GIFTWRAP,
@@ -157,5 +189,24 @@ export async function unwrapAndVerify(
   if (rumor.kind !== KIND_MAIL) return { ok: false, reason: "wrong-rumor-kind" };
   if (now - rumor.created_at > maxAge) return { ok: false, reason: "expired" };
 
-  return { ok: true, seal, rumor };
+  // Rule 6 — a sender that embeds a WRAP_KEY_TAG (see above) is handing us the
+  // wrap author's signing key for NIP-09 deletion. If that key does not derive
+  // to the wrap's actual pubkey the rumor is lying, and every deletion signed
+  // with it would fail silently at the relay — reject the wrap now, while the
+  // lie is attributable, rather than letting mail we can never delete through.
+  const wrapSecret = rumor.tags.find(
+    (t) => t[0] === WRAP_KEY_TAG && typeof t[1] === "string",
+  )?.[1];
+  if (wrapSecret !== undefined) {
+    let valid = false;
+    try {
+      valid =
+        /^[0-9a-f]{64}$/.test(wrapSecret) && getPublicKey(hexToBytes(wrapSecret)) === wrap.pubkey;
+    } catch {
+      valid = false; // not a parseable secret key at all
+    }
+    if (!valid) return { ok: false, reason: "wrapkey-mismatch" };
+  }
+
+  return { ok: true, seal, rumor, wrapSecret };
 }

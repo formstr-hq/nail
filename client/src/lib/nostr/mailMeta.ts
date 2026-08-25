@@ -34,6 +34,7 @@ interface MailMetaContent {
   read?: boolean
   archived?: boolean
   trashed?: boolean
+  deleted?: boolean // permanently deleted — see MailFlags.deleted
 }
 
 // ── small hex helpers (avoid a direct @noble dep, which is only transitive) ──
@@ -92,6 +93,7 @@ export async function publishMailMeta(
     read: flags.read,
     archived: flags.archived,
     trashed: flags.trashed,
+    deleted: flags.deleted,
   }
 
   const encrypted = await withSignerTimeout('nip44Encrypt', () =>
@@ -154,6 +156,7 @@ export async function decodeMailMeta(
       read: !!parsed.read,
       archived: !!parsed.archived,
       trashed: !!parsed.trashed,
+      deleted: !!parsed.deleted,
       updatedAt: event.created_at,
     },
   }

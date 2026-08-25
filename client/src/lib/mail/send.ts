@@ -1,4 +1,5 @@
 import { nip19 } from 'nostr-tools'
+import { generateSecretKey } from 'nostr-tools/pure'
 import type { Event } from 'nostr-tools'
 import {
   buildMailRumor,
@@ -127,8 +128,18 @@ export async function buildWraps(
   const targets: string[] = []
 
   const add = async (recipientPubkey: string, deliverTo?: string[]) => {
-    const rumor = buildMailRumor({ senderPubkey, recipientPubkey, rfc2822: content, deliverTo })
-    wraps.push(await sealAndWrap(rumor, recipientPubkey, signer))
+    // One ephemeral key per wrap, generated first and shared between the rumor
+    // (WRAP_KEY_TAG — what makes the recipient's "delete forever" real) and the
+    // wrap signature. Splitting them hands the recipient a useless key.
+    const ephemeralSk = generateSecretKey()
+    const rumor = buildMailRumor({
+      senderPubkey,
+      recipientPubkey,
+      rfc2822: content,
+      deliverTo,
+      wrapSecret: ephemeralSk,
+    })
+    wraps.push(await sealAndWrap(rumor, recipientPubkey, signer, ephemeralSk))
     targets.push(recipientPubkey)
   }
 

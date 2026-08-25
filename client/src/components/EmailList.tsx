@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { SenderProofLine } from '@/components/ui/SenderProof'
 import { SearchIcon, InboxIcon, AlertIcon, RefreshIcon } from '@/components/ui/icons'
 import { Button, IconButton } from '@/components/ui/Button'
+import { ConfirmButton } from '@/components/ui/ConfirmButton'
 
 const FOLDER_LABEL: Record<EmailFolder, string> = {
   inbox: 'Inbox',
@@ -126,6 +127,7 @@ function ListState({
 export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: () => void }) {
   const { emails, mailState, folder, selectedId, query, setQuery, inboxFilter } = useMailStore()
   const myPubkey = useAccountStore((s) => s.account?.pubkey)
+  const { deleteForever } = useMailActions()
   // Spin the icon briefly on tap so the refresh reads as "doing something" even
   // when the cache answers instantly and nothing visibly changes.
   const [refreshing, setRefreshing] = useState(false)
@@ -177,6 +179,19 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
               <span className="font-mono text-[10px] font-semibold tabular-nums text-primary">
                 {unread} unread
               </span>
+            )}
+            {folder === 'trash' && inFolder.length > 0 && (
+              // Scoped to the alias in view (inFolder), like every other count
+              // and list in this folder: what you see is what gets purged.
+              <ConfirmButton
+                size="sm"
+                label="Empty trash"
+                confirmLabel={`Delete ${inFolder.length} forever?`}
+                title="Permanently delete every message in this trash view"
+                onConfirm={() => {
+                  for (const e of inFolder) deleteForever(e.id)
+                }}
+              />
             )}
             <IconButton title="Refresh mail" onClick={handleRefresh}>
               <RefreshIcon className={['h-3.5 w-3.5', refreshing ? 'animate-spin' : ''].join(' ')} />

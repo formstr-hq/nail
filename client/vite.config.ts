@@ -7,6 +7,21 @@ const API_UPSTREAM = process.env.VITE_API_PROXY_TARGET ?? "https://api.formstr.a
 export default defineConfig({
   base: process.env.CLIENT_BASE_PATH ?? "/",
   plugins: [react()],
+  build: {
+    // Vite 6's default assumes "baseline widely available" (~Safari 16.4),
+    // which silently excludes every iPhone capped at iOS 15 (6s/7/SE-1) — a
+    // plausible source of the "client doesn't work on iOS Safari" reports.
+    // es2020 syntax is universally supported since Safari 14 / iOS 14.
+    target: ["es2020", "chrome87", "firefox78", "safari14"],
+  },
+  worker: {
+    // Ship the local-relay worker as a classic script (single IIFE bundle),
+    // not an ES module: Safari before 15 rejects `{ type: "module" }` workers
+    // outright, which kills the entire mailbox — the relay, cache, and every
+    // connection run inside this worker. Paired with the conditional spawn in
+    // src/lib/nostr/localRelay.ts (dev still needs module workers).
+    format: "iife",
+  },
   server: {
     // Vite 6 rejects requests whose Host header isn't on an allowlist. For
     // network testing under a custom hostname (e.g. a Yggdrasil DNS name),
