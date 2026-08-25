@@ -14,6 +14,7 @@ import { searchContacts } from '@/lib/mail/contacts'
 import { addressesMissingKeys } from '@/lib/pgp/keyring'
 import { cleartextRecipients, encryptBody } from '@/lib/pgp/compose'
 import { getSessionPassphrase, setSessionPassphrase } from '@/lib/pgp/session'
+import { usePgpDiscovery } from '@/hooks/usePgpDiscovery'
 import { Button, IconButton } from '@/components/ui/Button'
 import { XIcon, MinimizeIcon, ExpandIcon, AlertIcon, LockIcon } from '@/components/ui/icons'
 
@@ -169,25 +170,30 @@ export function ComposeModal({
     [recipients, settings.pgpKeyring, settings.pgpPublicKey, selfAddresses],
   )
   const canEncrypt = hasOwnPgpKey && recipients.length > 0 && missingKeys.length === 0
-  const cleartextProviders = useMemo(() => cleartextRecipients(recipients), [recipients])
 
-  // Encrypt-by-default: when it's possible, protect the message unless a
-  // recipient is on a known cleartext-only provider (gmail/outlook/…). Those
-  // default OFF — a webmail user often can't read PGP, so silently encrypting
-  // would hand them an unreadable blob; the user can still opt in per message.
-  // `userOverride` records a manual flip so this reactive default never fights
-  // a deliberate choice: once the user sets the toggle, their pick wins until
-  // they clear the composer.
+  // Auto-discover missing recipient keys from the keyserver. A hit lands in the
+  // keyring and flips canEncrypt on by itself — this is what makes "have a key ⇒
+  // encrypt" automatic rather than manual-import-only.
+  const { discovering } = usePgpDiscovery(recipients)
+
+  // Encrypt-by-default whenever it's possible. Holding a public key for every
+  // recipient IS the signal that they use PGP — if the user went to the trouble
+  // of having someone's key, that's exactly who they want to encrypt to,
+  // regardless of which provider hosts the address. So the default is simply
+  // "on when we can", and the only thing that produces cleartext is a missing
+  // key (→ canEncrypt false). `userOverride` records a manual flip so this
+  // reactive default never fights a deliberate choice: once the user sets the
+  // toggle, their pick wins until encryption stops being possible.
   const [userOverride, setUserOverride] = useState<boolean | null>(null)
-  const encrypt = canEncrypt && (userOverride ?? cleartextProviders.length === 0)
-  // Drop a manual override once it's moot (encryption became impossible, or the
-  // recipient set changed enough that the choice no longer applies cleanly), so
-  // the smart default takes back over.
+  const encrypt = canEncrypt && (userOverride ?? true)
+  // Drop a manual override once it's moot (encryption became impossible), so the
+  // default takes back over for the next recipient set.
   useEffect(() => {
     if (!canEncrypt && userOverride !== null) setUserOverride(null)
   }, [canEncrypt, userOverride])
-  // The plaintext-provider nudge only shows when we're actually sending cleartext.
-  const cleartext = encrypt ? [] : cleartextProviders
+  // The plaintext-provider nudge is now ONLY a warning, not a default-setter:
+  // when we're sending cleartext to a provider that can read it, say so.
+  const cleartext = encrypt ? [] : cleartextRecipients(recipients)
 
   // --- recipient autocomplete over past correspondents ---
   const [recipientFocused, setRecipientFocused] = useState(false)
@@ -484,6 +490,15 @@ export function ComposeModal({
               {hasAlias
                 ? 'External email addresses are delivered through the bridge, which only accepts registered alias senders — your npub can’t reach them. (Your npub still works fine for any recipient reached directly over Nostr: npubs and NIP-05 names.) Pick one of your aliases in From, or remove the external recipient.'
                 : 'External email addresses are delivered through the bridge, which only accepts registered alias senders — your npub can’t reach them. (Your npub still works fine for any recipient reached directly over Nostr: npubs and NIP-05 names.) Buy an alias to send to external email, or remove the external recipient.'}
+            </p>
+          </div>
+        )}
+
+        {discovering && !encrypt && (
+          <div className="flex items-start gap-2 border-t border-border bg-background/60 px-3.5 py-2">
+            <LockIcon className="mt-px h-3.5 w-3.5 flex-none text-subtle" />
+            <p className="text-[11.5px] leading-relaxed text-subtle">
+              Looking for encryption keys for your recipients…
             </p>
           </div>
         )}
