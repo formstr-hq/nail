@@ -34,8 +34,20 @@ export type UnwrapFailure =
   | "malformed-rumor"
   | "author-mismatch"
   | "wrong-rumor-kind"
+  | "wrapkey-mismatch"
   | "expired";
 
 export type UnwrapResult =
-  | { ok: true; seal: Event; rumor: Rumor }
+  | {
+      ok: true;
+      seal: Event;
+      rumor: Rumor;
+      /**
+       * Hex of the wrap author's ephemeral signing key, when the sender
+       * embedded it (WRAP_KEY_TAG, mail.ts). Lets the recipient author a
+       * NIP-09 kind-5 that relays will actually honor for this wrap. Absent
+       * on mail wrapped before the tag existed.
+       */
+      wrapSecret?: string;
+    }
   | { ok: false; reason: UnwrapFailure };
