@@ -8,6 +8,7 @@ import { SenderProofTrace } from '@/components/ui/SenderProof'
 import { Avatar } from '@/components/ui/Avatar'
 import { useProfile } from '@/hooks/useProfile'
 import { Button } from '@/components/ui/Button'
+import { ConfirmButton } from '@/components/ui/ConfirmButton'
 import { AttachmentRow } from '@/components/AttachmentRow'
 import {
   ReplyIcon,
@@ -140,7 +141,7 @@ interface EmailViewProps {
 export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) {
   const { emails, selectedId, mailState, setSelected } = useMailStore()
   const email = selectedId ? emails[selectedId] : null
-  const { archive, unarchive, trash, restore } = useMailActions()
+  const { archive, unarchive, trash, restore, deleteForever } = useMailActions()
   // Hook order is fixed, so this runs before the early return below; passing
   // null when nothing is open makes it a no-op.
   const senderProfile = useProfile(email?.senderPubkey ?? null)
@@ -257,10 +258,20 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
         <span className="flex-1" />
 
         {flags?.trashed ? (
-          <Button onClick={fileAway(restore)} title="Move back to Inbox">
-            <InboxIcon className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Restore</span>
-          </Button>
+          <>
+            <Button onClick={fileAway(restore)} title="Move back to Inbox">
+              <InboxIcon className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Restore</span>
+            </Button>
+            <ConfirmButton
+              label="Delete forever"
+              confirmLabel="Really delete?"
+              title="Permanently delete from relays and this device"
+              onConfirm={fileAway(deleteForever)}
+            >
+              <TrashIcon className="h-3.5 w-3.5" />
+            </ConfirmButton>
+          </>
         ) : (
           <>
             <Button

@@ -24,7 +24,17 @@ export interface DecodeFailure {
   routine: boolean
 }
 
-export type DecodeResult = { email: Email } | { failure: DecodeFailure }
+export type DecodeResult =
+  | {
+      email: Email
+      /**
+       * The wrap author's ephemeral key, when the sender embedded it
+       * (WRAP_KEY_TAG). Caller persists it (store.saveWrapKey) so a later
+       * "delete forever" can author a NIP-09 kind-5 the relays will honor.
+       */
+      wrapSecret?: string
+    }
+  | { failure: DecodeFailure }
 
 /**
  * May we display the RFC 2822 `From:` header as the sender, and on what basis?
@@ -128,7 +138,7 @@ export async function decodeGiftWrap(
     return { failure: { reason: result.reason, routine: result.reason === 'not-for-us' } }
   }
 
-  const { seal, rumor } = result
+  const { seal, rumor, wrapSecret } = result
 
   try {
     // §4: content is a byte string. postal-mime must be handed real bytes —
@@ -163,6 +173,7 @@ export async function decodeGiftWrap(
     const ccAddresses = (parsed.cc ?? []).map(toDisplay)
 
     return {
+      wrapSecret,
       email: {
         id: event.id,
         messageId: parsed.messageId,

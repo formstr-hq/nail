@@ -137,9 +137,23 @@ kind 1059  gift wrap    ephemeral key; tags: [["p", recipient]]
                         content: nip44(rumor, convKey(sender, recipient))
       └ kind 1301 rumor UNSIGNED. pubkey = true sender.
                         created_at = now (the canonical timestamp)
-                        tags: [["p", recipient], ["deliver", addr]…]
+                        tags: [["p", recipient], ["deliver", addr]…,
+                               ["wrapkey", hex(ephemeral wrap sk)]]
                         content: full RFC 2822 document
 ```
+
+The `wrapkey` rumor tag carries the gift wrap's own ephemeral signing key to
+the recipient (only they can read a rumor — it is NIP-44-encrypted to their
+key inside the seal). It exists for **deletion**: NIP-09 only honors a kind-5
+from the deleted event's own author, and the wrap's author is this throwaway
+key, so without it a recipient could never remove their own mail from relays.
+The key confers a delete-only capability (it cannot decrypt anything), and the
+sender/bridge holds the same capability inherently as the wrap's author. On
+unwrap the client checks `pubkey(wrapkey) === wrap.pubkey` and rejects the
+wrap as `wrapkey-mismatch` otherwise — a mismatching tag means every future
+deletion would fail silently at the relay. Mail wrapped before the tag existed
+can only be deleted best-effort, with a recipient-signed kind-5 most relays
+ignore (see client `lib/nostr/delete.ts`).
 
 The kind-13 seal is **mandatory**. NIP-59 does not make it optional, and every
 trust decision in this system keys off `seal.pubkey`.
@@ -152,7 +166,9 @@ On receipt, in order:
 2. `seal.kind === 13`.
 3. **`rumor.pubkey === seal.pubkey`.** See [§5](#5-trust-model).
 4. `rumor.kind === 1301`.
-5. RFC 2822 `From:` is authoritative **only where the claim is backed by
+5. If a `wrapkey` tag is present, `pubkey(wrapkey)` must equal the wrap's
+   `pubkey` — else reject as `wrapkey-mismatch` (see §4 above).
+6. RFC 2822 `From:` is authoritative **only where the claim is backed by
    something**. Three cases qualify, and nothing else does:
    - `seal.pubkey` is the configured bridge — the bridge already refused to
      relay a `From` the sending key does not own (§5);

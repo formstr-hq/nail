@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { generateSecretKey, getPublicKey, getEventHash, finalizeEvent } from "nostr-tools/pure";
+import { generateSecretKey, getPublicKey, getEventHash, finalizeEvent, verifyEvent } from "nostr-tools/pure";
 import { getConversationKey, encrypt } from "nostr-tools/nip44";
+import { hexToBytes } from "nostr-tools/utils";
 import { keySigner } from "./key-signer.js";
-import { buildMailRumor, sealAndWrap, unwrapAndVerify, deliverTargets } from "./mail.js";
+import { buildMailRumor, sealAndWrap, unwrapAndVerify, deliverTargets, WRAP_KEY_TAG } from "./mail.js";
 import { KIND_MAIL, KIND_GIFTWRAP } from "./constants.js";
 
 const RFC = "From: a@mailstr.app\r\nTo: b@gmail.com\r\nSubject: hi\r\n\r\nbody";
@@ -87,6 +88,88 @@ describe("round trip", () => {
 
     const result = await unwrapAndVerify(wrap, eve.signer);
     expect(result).toEqual({ ok: false, reason: "not-for-us" });
+  });
+});
+
+describe("wrapkey — the deletable-mail tag", () => {
+  it("is absent when no wrap secret is given (legacy wrapping)", async () => {
+    const alice = actor(), bob = actor();
+    const rumor = buildMailRumor({
+      senderPubkey: alice.pk, recipientPubkey: bob.pk, rfc2822: RFC,
+    });
+    expect(rumor.tags.some((t) => t[0] === WRAP_KEY_TAG)).toBe(false);
+
+    const wrap = await sealAndWrap(rumor, bob.pk, alice.signer);
+    const result = await unwrapAndVerify(wrap, bob.signer);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.wrapSecret).toBeUndefined();
+  });
+
+  it("commits the ephemeral key to the rumor id and returns it on unwrap", async () => {
+    const alice = actor(), bob = actor();
+    const ephemeralSk = generateSecretKey();
+    const rumor = buildMailRumor({
+      senderPubkey: alice.pk, recipientPubkey: bob.pk, rfc2822: RFC,
+      wrapSecret: ephemeralSk,
+    });
+
+    // The tag must be committed to by the rumor's id: otherwise the sender
+    // could swap the embedded key without invalidating anything.
+    const bare = buildMailRumor({
+      senderPubkey: alice.pk, recipientPubkey: bob.pk, rfc2822: RFC,
+    });
+    expect(rumor.id).not.toBe(bare.id);
+
+    const wrap = await sealAndWrap(rumor, bob.pk, alice.signer, ephemeralSk);
+    expect(wrap.pubkey).toBe(getPublicKey(ephemeralSk));
+
+    const result = await unwrapAndVerify(wrap, bob.signer);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.wrapSecret).toBeDefined();
+
+    // The returned key authors a NIP-09 kind-5 that relays must honor: its
+    // pubkey IS the wrap's author, so the author-match rule cannot reject it.
+    const deletion = finalizeEvent(
+      {
+        kind: 5,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [["e", wrap.id], ["k", String(KIND_GIFTWRAP)]],
+        content: "",
+      },
+      hexToBytes(result.wrapSecret!),
+    );
+    expect(deletion.pubkey).toBe(wrap.pubkey);
+    expect(verifyEvent(deletion)).toBe(true);
+    expect(deletion.tags).toContainEqual(["e", wrap.id]);
+  });
+
+  it("rejects a rumor embedding a key that does not sign the wrap", async () => {
+    const alice = actor(), bob = actor();
+    // Mallory embeds HER key but the wrap is signed by a different ephemeral
+    // key — deletions authored from the rumor would silently fail at relays.
+    const rumor = buildMailRumor({
+      senderPubkey: alice.pk, recipientPubkey: bob.pk, rfc2822: RFC,
+      wrapSecret: generateSecretKey(),
+    });
+    const wrap = await sealAndWrap(rumor, bob.pk, alice.signer, generateSecretKey());
+
+    const result = await unwrapAndVerify(wrap, bob.signer);
+    expect(result).toEqual({ ok: false, reason: "wrapkey-mismatch" });
+  });
+
+  it("rejects a wrapkey that is not a parseable secret at all", async () => {
+    const alice = actor(), bob = actor();
+    const rumor: any = buildMailRumor({
+      senderPubkey: alice.pk, recipientPubkey: bob.pk, rfc2822: RFC,
+    });
+    rumor.tags.push([WRAP_KEY_TAG, "not-hex-not-a-key"]);
+    rumor.id = getEventHash(rumor);
+
+    const wrap = await sealAndWrap(rumor, bob.pk, alice.signer);
+    const result = await unwrapAndVerify(wrap, bob.signer);
+    expect(result).toEqual({ ok: false, reason: "wrapkey-mismatch" });
   });
 });
 

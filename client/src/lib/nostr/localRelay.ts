@@ -21,14 +21,41 @@ import { DEFAULT_RELAYS, KIND_DM_RELAYS, KIND_NIP65_RELAYS, withHardcodedRelay }
  */
 let client: LocalRelayClient | null = null
 
+/**
+ * Why the relay worker never came up, if it didn't. On browsers that reject
+ * the worker outright (Safari < 15 throws on module workers — see the spawn
+ * below) the mailbox otherwise hangs with no explanation; useInbox polls this
+ * to turn the silent hang into an honest error.
+ */
+let workerBootError: string | null = null
+export function localRelayBootError(): string | null {
+  return workerBootError
+}
+
 export function getLocalRelay(): LocalRelayClient {
   if (client) return client
   // Spawn our own worker entry (see relay.worker.ts) rather than the package's
   // prebuilt `/worker` subpath: a bare-specifier worker URL resolves under
   // `vite build` but not `vite dev`, which left the worker never running.
-  const worker = new Worker(new URL('./relay.worker.ts', import.meta.url), {
-    type: 'module',
-  })
+  //
+  // Dev must spawn a MODULE worker (Vite serves sources as ESM). Production
+  // deliberately spawns a CLASSIC one: vite.config.ts sets worker.format to
+  // iife, because Safari before 15 (every iPhone capped at iOS 15) throws on
+  // module workers, and this worker runs the entire mailbox — that throw is
+  // exactly what "the client doesn't work on iOS Safari" looks like.
+  let worker: Worker
+  try {
+    worker = new Worker(
+      new URL('./relay.worker.ts', import.meta.url),
+      import.meta.env.DEV ? { type: 'module' } : undefined,
+    )
+  } catch (e) {
+    workerBootError = e instanceof Error ? e.message : String(e)
+    throw e
+  }
+  worker.onerror = (e) => {
+    workerBootError = e.message || 'mail worker failed to start'
+  }
   client = new LocalRelayClient(workerChannel(worker), {
     // The worker asks us to sign NIP-42 AUTH challenges. DM relays routinely
     // require AUTH before they will serve kind-1059 gift wraps (it protects the

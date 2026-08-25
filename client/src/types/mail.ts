@@ -71,6 +71,13 @@ export interface MailFlags {
   read?: boolean
   archived?: boolean
   trashed?: boolean
+  /**
+   * Permanently deleted. The kind-5 deletion is a separate, best-effort purge
+   * of the wrap from relays (see lib/nostr/delete.ts); THIS flag is the
+   * cross-device record that the mail is gone, so it stays hidden even on
+   * relays that ignored the deletion and keep serving the wrap.
+   */
+  deleted?: boolean
   updatedAt: number
 }
 

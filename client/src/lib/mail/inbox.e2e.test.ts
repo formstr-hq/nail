@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import { generateSecretKey, getPublicKey } from 'nostr-tools/pure'
+import { generateSecretKey, getPublicKey, finalizeEvent } from 'nostr-tools/pure'
+import { hexToBytes } from 'nostr-tools/utils'
 import type { Event } from 'nostr-tools'
 import {
   RelayService,
@@ -96,5 +97,78 @@ describe('inbox receive over the local relay', () => {
     expect(emails).toHaveLength(1)
     expect(emails[0].from.address).toBe('me@mailstr.app')
     expect(emails[0].subject).toBe('e2e')
+  })
+
+  // The whole "delete forever" mechanism, end to end in memory: a wrap that
+  // embeds its author's ephemeral key (WRAP_KEY_TAG) is decodable, the
+  // captured secret authors a NIP-09 kind-5, and the local relay — which only
+  // honors deletions whose author matches the target event — purges the wrap
+  // from the store. A fresh observe then replays nothing. This is also the
+  // regression guard for the claim client code makes in lib/nostr/delete.ts.
+  it('delete forever: the embedded wrap key purges the wrap from the local relay', async () => {
+    const { f, client } = await wire()
+    client.setActiveAccount(ME)
+    client.setDmRelays(['wss://dm1'])
+    await settle()
+
+    const ephemeralSk = generateSecretKey()
+    const rumor = buildMailRumor({
+      senderPubkey: ME,
+      recipientPubkey: ME,
+      rfc2822: RFC,
+      wrapSecret: ephemeralSk,
+    })
+    const wrap = await sealAndWrap(rumor, ME, keySigner(ME_SK), ephemeralSk)
+
+    const decodes: Promise<string | undefined>[] = []
+    const first = client.observe(
+      [{ kinds: [1059], '#p': [ME] }],
+      {
+        onEvent: (e: Event) => {
+          decodes.push(
+            decodeGiftWrap(e, keySigner(ME_SK), null, ME).then((out) =>
+              'email' in out ? out.wrapSecret : undefined,
+            ),
+          )
+        },
+      },
+      { relays: ['wss://dm1'] },
+    )
+    await settle()
+
+    const sock = f.last('wss://dm1')
+    sock.open()
+    sock.emit(['EVENT', reqId(sock), wrap])
+    sock.emit(['EOSE', reqId(sock)])
+    await settle()
+
+    const secrets = await Promise.all(decodes)
+    expect(secrets[0]).toBeDefined()
+
+    // Delete as the wrap's author — exactly what publishGiftwrapDeletion does.
+    const deletion = finalizeEvent(
+      {
+        kind: 5,
+        created_at: NOW,
+        tags: [['e', wrap.id], ['k', '1059']],
+        content: '',
+      },
+      hexToBytes(secrets[0]!),
+    )
+    expect(deletion.pubkey).toBe(wrap.pubkey)
+    client.publish(deletion, { relays: ['wss://dm1'] })
+    await settle()
+
+    first.unobserve()
+
+    // A brand-new observe replays the store: the purged wrap must be gone.
+    const replayed: Event[] = []
+    client.observe(
+      [{ kinds: [1059], '#p': [ME] }],
+      { onEvent: (e: Event) => replayed.push(e) },
+      { relays: ['wss://dm1'] },
+    )
+    await settle()
+    expect(replayed).toHaveLength(0)
   })
 })

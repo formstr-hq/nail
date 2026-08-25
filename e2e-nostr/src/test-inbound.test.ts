@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
 import nodemailer from "nodemailer";
 import { generateSecretKey, getPublicKey } from "nostr-tools/pure";
+import { hexToBytes } from "nostr-tools/utils";
 import { unwrapAndVerify, keySigner, messageStringToBytes } from "@nostr-bridge/protocol/index.js";
 import { createMockRelay } from "nostr-mock-relay";
 import { registerNip05, startNip05Server, stopNip05Server } from "./mocks.js";
@@ -66,6 +67,13 @@ describe("inbound email → Nostr DM", () => {
       if (!result.ok) throw new Error(`unwrap failed: ${result.reason}`);
       const rumor = result.rumor;
       expect(rumor.content).toContain(marker);
+
+      // The bridge embeds the wrap's ephemeral signing key (WRAP_KEY_TAG) so
+      // the recipient can author a NIP-09 deletion the way relays require —
+      // from the wrap's own author. Assert the loop closes: the embedded key
+      // really is what signed this wrap.
+      expect(result.wrapSecret).toBeDefined();
+      expect(getPublicKey(hexToBytes(result.wrapSecret!))).toBe(wrap.pubkey);
     },
     env.deliveryTimeoutMs + 10_000,
   );
