@@ -65,9 +65,17 @@ setting, once the core is solid.
 
 ## Compose
 
-- An **Encrypt** toggle in the composer, enabled **only when every recipient
-  (To + CC) has a key in the keyring**. Missing one → toggle disabled, with the
-  reason inline ("No PGP key for bob@gmail.com — import one to encrypt").
+- An **Encrypt** toggle in the composer, available **only when every recipient
+  (To + CC) has a key in the keyring**. Missing one → toggle unavailable, with
+  the reason inline ("No PGP key for bob@gmail.com — import one to encrypt").
+- **Encrypt-by-default, with a cleartext-provider exception.** When encryption
+  is possible the toggle defaults **on** — protecting mail is the point, and
+  requiring a click each time trains people to skip it. The exception: if any
+  recipient is on a known cleartext-only provider (gmail/outlook/yahoo/…), it
+  defaults **off**, because a webmail user typically can't read PGP and silently
+  encrypting hands them an unreadable blob. Either way it stays a live per-
+  message toggle, and a manual flip sticks for that draft (a reactive default
+  must never fight a deliberate choice).
 - When on: encrypt the body to **all recipients plus self** (so the Sent copy in
   our own self-wrap stays readable), and **sign by default** with the user's key.
 - **Inline PGP** (armored `-----BEGIN PGP MESSAGE-----` body) for v1. **PGP/MIME**
