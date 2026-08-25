@@ -70,26 +70,40 @@ needs no keyring entry); everyone else comes from the correspondent keyring. On
 read, a message is decrypted by trying every own alias key, since the message is
 encrypted only to whichever alias it was sent to.
 
-## Key discovery — keyserver (keys.openpgp.org)
+## Key discovery — WKD first, keyserver fallback
 
 The feature isn't complete without discovery: a manual-import-only keyring means
-encryption almost never happens, because nobody pastes keys. So mailstr both
-**looks up** and **publishes** keys through a VKS keyserver — `keys.openpgp.org`
-by default (`VITE_PGP_KEYSERVER` overrides).
+encryption almost never happens, because nobody pastes keys. So the composer
+looks a recipient's key up automatically, from two sources in preference order.
 
-Why this keyserver specifically: unlike the defunct SKS network (which let anyone
-upload any key for any address), keys.openpgp.org **verifies email ownership**
-before serving a key by address. A by-email hit therefore means "someone who
-controls that mailbox published this key" — a real, if modest, binding, and
-exactly the signal the composer wants. It also serves
-`Access-Control-Allow-Origin: *`, so the browser calls it directly — no bridge
-or proxy, and only public keys ever cross the boundary.
+**1. WKD (Web Key Directory) — preferred** (`lib/pgp/wkd.ts`). The key is served
+by the recipient's OWN mail domain at
+`https://openpgpkey.<domain>/.well-known/openpgpkey/<domain>/hu/<zbase32(sha1(localpart))>`
+(advanced method; the direct `https://<domain>/.well-known/openpgpkey/...` layout
+is tried as fallback). This is more authoritative than any keyserver — the domain
+that runs the mailbox vouches for its own user — and it's what the serious PGP
+providers use. **Proton, Mailbox, Posteo publish WKD; Proton even serves
+permissive CORS**, so the browser fetches those keys directly. Domains that block
+CORS or don't publish WKD just yield null and we fall through.
 
-**Lookup** (`GET /vks/v1/by-email/<addr>`): at compose time, every recipient we
-don't already hold a key for is looked up once per session (the endpoint
-rate-limits by-email hard, so we never retry a miss). A hit is saved to the
-synced keyring, which flips the recipient from cleartext to encryptable with no
-user action — this is what turns "have a key ⇒ encrypt" into the default
+**2. keys.openpgp.org — fallback** (`lib/pgp/keyserver.ts`,
+`VITE_PGP_KEYSERVER` overrides). For domains without WKD. Unlike the defunct SKS
+network (anyone could upload any key for any address), keys.openpgp.org
+**verifies email ownership** before serving a key by address, so a by-email hit
+is a real binding. It serves `Access-Control-Allow-Origin: *`, so the browser
+calls it directly too — no bridge or proxy, and only public keys ever cross the
+boundary.
+
+A browser-direct WKD lookup only works where the recipient domain sends CORS
+headers. A **bridge proxy** for CORS-blocking domains (the browser calls our
+endpoint, the bridge fetches the WKD URL server-to-server) is the natural next
+step to widen reach; not required for the CORS-friendly providers above.
+
+**Lookup flow** (`usePgpDiscovery`): at compose time, every recipient we don't
+already hold a key for is discovered once per session (WKD then keyserver; the
+keyserver rate-limits by-email hard, so we never retry a miss). A hit is saved to
+the synced keyring, which flips the recipient from cleartext to encryptable with
+no user action — this is what turns "have a key ⇒ encrypt" into the default
 experience. A miss or any error is silent and just leaves that recipient as
 cleartext; discovery never blocks or errors the send.
 

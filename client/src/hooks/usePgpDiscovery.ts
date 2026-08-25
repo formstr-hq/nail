@@ -3,6 +3,20 @@ import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { addressesMissingKeys, addToKeyring, hasAnyOwnKey } from '@/lib/pgp/keyring'
 import { lookupByEmail } from '@/lib/pgp/keyserver'
+import { lookupByWkd } from '@/lib/pgp/wkd'
+
+/**
+ * Discover a public key for an address: WKD first, then a keyserver.
+ *
+ * WKD is preferred because it's more authoritative — the key is served by the
+ * domain that runs the mailbox (Proton, Mailbox, Posteo…), so the domain vouches
+ * for its own user. keys.openpgp.org is the fallback for domains that don't
+ * publish WKD (or block CORS), where a verified keyserver record is still a real
+ * signal. Both degrade to null silently.
+ */
+async function discoverKey(address: string): Promise<string | null> {
+  return (await lookupByWkd(address)) ?? (await lookupByEmail(address))
+}
 
 /**
  * Automatic key discovery for the composer.
@@ -55,7 +69,7 @@ export function usePgpDiscovery(recipients: string[]): { discovering: boolean } 
       let found = false
       for (const address of missing) {
         attempted.current.add(address.toLowerCase())
-        const armored = await lookupByEmail(address)
+        const armored = await discoverKey(address)
         if (!alive) return
         if (armored) {
           try {
