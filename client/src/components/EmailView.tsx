@@ -103,6 +103,16 @@ function MessageBody({ email }: { email: Email }) {
 
   const pgp = usePgpMessage(email, passphraseNonce)
 
+  // Every hook must run before the conditional PGP returns below. usePgpMessage
+  // starts at 'none' and flips to 'decrypted'/'locked'/… after the async
+  // decrypt, so a hook placed after those returns would run on the first render
+  // but be skipped on the re-render — "rendered fewer hooks than expected".
+  const blocked = useMemo(
+    () => Boolean(email.bodyHtml) && hasRemoteContent(email.bodyHtml!) && !allowRemote,
+    [email.bodyHtml, allowRemote],
+  )
+  useEffect(() => () => observerRef.current?.disconnect(), [])
+
   // PGP bodies are handled before the normal HTML/plaintext render: a decrypted
   // message is plaintext, and the locked/no-key/error states each get an honest
   // notice rather than dumping the armored blob as if it were the message.
@@ -158,11 +168,6 @@ function MessageBody({ email }: { email: Email }) {
     )
   }
 
-  const blocked = useMemo(
-    () => Boolean(email.bodyHtml) && hasRemoteContent(email.bodyHtml!) && !allowRemote,
-    [email.bodyHtml, allowRemote],
-  )
-
   // Remounts the frame when the policy or theme changes, so relaxing the CSP
   // reloads the images and a theme switch re-renders in the new palette rather
   // than leaving the old render in place.
@@ -184,8 +189,6 @@ function MessageBody({ email }: { email: Email }) {
     observerRef.current = new ResizeObserver(fit)
     observerRef.current.observe(doc.documentElement)
   }
-
-  useEffect(() => () => observerRef.current?.disconnect(), [])
 
   if (!email.bodyHtml) {
     return <PlainBody text={email.body} />
