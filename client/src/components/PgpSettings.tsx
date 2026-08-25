@@ -4,6 +4,7 @@ import { useSettingsStore } from '@/store/settings'
 import { useOwnedAddresses } from '@/hooks/useOwnedAddresses'
 import { generateKey, readKeyInfo, type KeyInfo } from '@/lib/pgp/openpgp'
 import { addToKeyring, removeFromKeyring, keyringEntries, type KeyringEntry } from '@/lib/pgp/keyring'
+import { publishKey } from '@/lib/pgp/keyserver'
 import { Button } from '@/components/ui/Button'
 import { AlertIcon, KeyIcon, TrashIcon, PlusIcon } from '@/components/ui/icons'
 
@@ -268,6 +269,14 @@ function NoOwnKey({
                 })
                 setMode('idle')
                 setPassphrase('')
+                // Publish the PUBLIC key to the keyserver so others can discover
+                // it and encrypt to this user. Best-effort: a failure here never
+                // undoes the (already saved) key — it just means the user isn't
+                // discoverable yet. The keyserver emails a verification link to
+                // the address; one click makes it searchable by email.
+                void publishKey(gen.publicKey, [identityAddress]).catch((e) =>
+                  console.warn('[pgp] keyserver publish failed', e),
+                )
               } catch (e) {
                 setError(e instanceof Error ? e.message : String(e))
               } finally {
