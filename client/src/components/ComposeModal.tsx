@@ -11,8 +11,11 @@ import type { ResolveContext } from '@/lib/mail/resolve'
 import type { Draft } from '@/lib/mail/draft'
 import { useContacts } from '@/hooks/useContacts'
 import { searchContacts } from '@/lib/mail/contacts'
+import { addressesMissingKeys } from '@/lib/pgp/keyring'
+import { cleartextRecipients, encryptBody } from '@/lib/pgp/compose'
+import { getSessionPassphrase, setSessionPassphrase } from '@/lib/pgp/session'
 import { Button, IconButton } from '@/components/ui/Button'
-import { XIcon, MinimizeIcon, ExpandIcon, AlertIcon } from '@/components/ui/icons'
+import { XIcon, MinimizeIcon, ExpandIcon, AlertIcon, LockIcon } from '@/components/ui/icons'
 
 interface ComposeModalProps {
   onClose: () => void
@@ -149,6 +152,36 @@ export function ComposeModal({
   const npubBlocked = fromIsNpub && hasLegacyRecipient
   const hasAlias = ownedAliases.length > 0
 
+  // --- PGP encryption gate ---
+  // Encrypt is offered only once the user holds a key AND we have a public key
+  // for every recipient — a body encrypted to a missing recipient is a body
+  // they can't read. `missingKeys` names the gaps so the UI can explain why the
+  // toggle is off rather than just disabling it silently.
+  const [encrypt, setEncrypt] = useState(false)
+  const hasOwnPgpKey = Boolean(settings.pgpPublicKey && settings.pgpPrivateKey)
+  const missingKeys = useMemo(
+    () =>
+      recipients.length
+        ? addressesMissingKeys(
+            { pgpKeyring: settings.pgpKeyring, pgpPublicKey: settings.pgpPublicKey, ownAddresses: selfAddresses },
+            recipients,
+          )
+        : [],
+    [recipients, settings.pgpKeyring, settings.pgpPublicKey, selfAddresses],
+  )
+  const canEncrypt = hasOwnPgpKey && recipients.length > 0 && missingKeys.length === 0
+  // Turn the toggle off by itself the moment it stops being possible (a
+  // recipient without a key was added), so a stale "on" never sends plaintext
+  // while the UI still reads as encrypted.
+  useEffect(() => {
+    if (encrypt && !canEncrypt) setEncrypt(false)
+  }, [encrypt, canEncrypt])
+  // Plaintext-provider nudge: only meaningful when NOT encrypting.
+  const cleartext = useMemo(
+    () => (encrypt ? [] : cleartextRecipients(recipients)),
+    [encrypt, recipients],
+  )
+
   // --- recipient autocomplete over past correspondents ---
   const [recipientFocused, setRecipientFocused] = useState(false)
   const [activeSuggestion, setActiveSuggestion] = useState(0)
@@ -252,18 +285,41 @@ export function ComposeModal({
 
   async function handleSend() {
     if (!account || !active || !to.trim() || !subject.trim()) return
+    const toList = to.split(',').map((s) => s.trim()).filter(Boolean)
     setSending(true)
     setError('')
     try {
+      // Encrypt the body in place when the toggle is on: the inline-PGP block
+      // replaces the plaintext, so every wrap (each recipient plus the Sent
+      // self-copy) carries the armored body and send.ts needs no PGP awareness.
+      let outgoingBody = body
+      if (encrypt) {
+        let passphrase = settings.pgpPassphraseProtected ? getSessionPassphrase() ?? undefined : undefined
+        if (settings.pgpPassphraseProtected && !passphrase) {
+          const entered = window.prompt('Enter your PGP key passphrase to sign this message')
+          if (!entered) {
+            setError('A passphrase is required to sign and send an encrypted message.')
+            setSending(false)
+            return
+          }
+          setSessionPassphrase(entered)
+          passphrase = entered
+        }
+        outgoingBody = await encryptBody({
+          body,
+          recipients: toList,
+          settings,
+          ownAddresses: selfAddresses,
+          passphrase,
+        })
+      }
+
       await sendMail({
         from: { address: fromAddress },
         senderPubkey: account.pubkey,
-        to: to
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
+        to: toList,
         subject,
-        body,
+        body: outgoingBody,
         inReplyTo: draft?.inReplyTo,
         references: draft?.references,
         ctx,
@@ -425,6 +481,29 @@ export function ComposeModal({
           </div>
         )}
 
+        {encrypt && (
+          <div className="flex items-start gap-2 border-t border-border bg-background/60 px-3.5 py-2">
+            <LockIcon className="mt-px h-3.5 w-3.5 flex-none text-muted-foreground" />
+            <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+              Encrypted with PGP. The subject line is <em>not</em> encrypted.
+            </p>
+          </div>
+        )}
+
+        {cleartext.length > 0 && (
+          <div className="flex items-start gap-2 border-t border-border bg-background/60 px-3.5 py-2">
+            <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-muted-foreground" />
+            <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+              {cleartext.join(', ')} can read this message on their servers.
+              {canEncrypt
+                ? ' Turn on Encrypt to protect it.'
+                : hasOwnPgpKey
+                  ? ' Import their PGP key to encrypt.'
+                  : ''}
+            </p>
+          </div>
+        )}
+
         <div className="flex items-center gap-3 border-t border-border px-3.5 py-2.5">
           <div className="min-w-0 flex-1">
             <div className="eyebrow">From</div>
@@ -466,6 +545,34 @@ export function ComposeModal({
               </a>
             )}
           </div>
+          {hasOwnPgpKey && (
+            <button
+              type="button"
+              // Enabled only when every recipient has a key; the title carries
+              // the reason when it's not, so the disabled state is never mute.
+              disabled={!canEncrypt}
+              onClick={() => setEncrypt((v) => !v)}
+              title={
+                canEncrypt
+                  ? encrypt
+                    ? 'Encryption on — click to turn off'
+                    : 'Encrypt this message with PGP'
+                  : missingKeys.length
+                    ? `No PGP key for ${missingKeys.join(', ')} — import one to encrypt`
+                    : 'Add a recipient to encrypt'
+              }
+              className={[
+                'flex flex-none items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-colors',
+                encrypt
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-border text-muted-foreground hover:bg-accent',
+                'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
+              ].join(' ')}
+            >
+              <LockIcon className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{encrypt ? 'Encrypted' : 'Encrypt'}</span>
+            </button>
+          )}
           <Button variant="primary" onClick={handleSend} disabled={!canSend}>
             {sending ? 'Sending…' : 'Send'}
           </Button>
