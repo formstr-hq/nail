@@ -19,6 +19,7 @@
     "@formstr/signer": "^0.2.2",
     "nostr-signer-capacitor-plugin": "^0.0.5",
     "nostr-tools": "^2.23.9",
+    "openpgp": "^6.3.1",
     "postal-mime": "^2.3.9",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
