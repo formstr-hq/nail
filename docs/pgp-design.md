@@ -107,19 +107,25 @@ no user action — this is what turns "have a key ⇒ encrypt" into the default
 experience. A miss or any error is silent and just leaves that recipient as
 cleartext; discovery never blocks or errors the send.
 
-**Publish** (`POST /vks/v1/upload` then `POST /vks/v1/request-verify`): when a
-user **generates** a key, we upload the PUBLIC half so others can discover it,
-then request email verification for the address. Upload makes the key
-retrievable by fingerprint immediately; by-email discovery only works after the
-address owner clicks the verification link the keyserver emails them (for a
-mailstr address, that email arrives through the bridge). Best-effort — a publish
-failure never undoes the already-saved key, it just means the user isn't
-discoverable yet. Only the public key is ever uploaded; the private key never
-leaves the encrypted settings blob.
+**Publish** — on key **generation** the public half goes to two places
+(best-effort, fire-and-forget; a publish failure never undoes the already-saved
+key, and the private key never leaves the encrypted settings blob):
 
-**Still manual as a fallback:** paste/import remains, for correspondents who
-haven't published or aren't on this keyserver. WKD (domain-served keys) is a
-natural second discovery source for a later pass.
+- **Our own WKD** (`lib/pgp/ownWkd.ts` → backend `/api/wkd`), for our-domain
+  addresses. This is the authoritative path: the backend serves the key at
+  `mailstr.app/.well-known/openpgpkey/...`, no email round-trip, because it
+  already vouches for the identity via NIP-05. The client sends the binary key
+  (base64) over a NIP-98-authed PUT; the backend enforces that the signing key
+  **owns** the address before storing it, and serves it CORS-open so any browser
+  PGP client can read it. (Backend: `formstr-backend` — migration + `pgp_keys`
+  table + `wkdController`; needs the nginx rewrite of `/.well-known/openpgpkey/*`
+  → `/api/wkd`, mirroring the existing `nostr.json` mapping.)
+- **keys.openpgp.org** (`POST /vks/v1/upload` then `/request-verify`), as the
+  cross-provider fallback. Retrievable by fingerprint at once; by-email only
+  after the owner clicks the verification link it emails them.
+
+**Still manual as a fallback:** paste/import remains, for correspondents on a
+domain that publishes neither WKD nor to keys.openpgp.org.
 
 ## Compose
 
