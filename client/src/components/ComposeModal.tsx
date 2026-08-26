@@ -16,7 +16,7 @@ import { cleartextRecipients, encryptBody } from '@/lib/pgp/compose'
 import { getSessionPassphrase, setSessionPassphrase } from '@/lib/pgp/session'
 import { usePgpDiscovery } from '@/hooks/usePgpDiscovery'
 import { Button, IconButton } from '@/components/ui/Button'
-import { XIcon, MinimizeIcon, ExpandIcon, AlertIcon, LockIcon } from '@/components/ui/icons'
+import { XIcon, MinimizeIcon, ExpandIcon, AlertIcon, LockIcon, LockOpenIcon } from '@/components/ui/icons'
 
 interface ComposeModalProps {
   onClose: () => void
@@ -575,32 +575,38 @@ export function ComposeModal({
           {hasAnyOwnKey(settings) && (
             <button
               type="button"
-              // Shown whenever the user has any alias key; enabled only when the
-              // From alias has a key AND every recipient does. The title carries
-              // the reason when disabled, so the state is never mute.
+              // A lock STATUS indicator: green closed lock when this message will
+              // be encrypted, red open lock when it won't. Still clickable while
+              // possible, so it doubles as the manual on/off — but reads as an
+              // at-a-glance state, not a labelled action. When encryption isn't
+              // possible the title carries the reason so the state is never mute.
               disabled={!canEncrypt}
               onClick={() => setUserOverride(!encrypt)}
+              aria-label={encrypt ? 'Encrypted — click to turn off' : 'Not encrypted'}
               title={
                 canEncrypt
                   ? encrypt
-                    ? 'Encryption on — click to turn off'
-                    : 'Encrypt this message with PGP'
+                    ? 'Encrypted with PGP — click to turn off'
+                    : 'Not encrypted — click to encrypt'
                   : !hasFromKey
-                    ? `No PGP key for ${fromAddress} — generate one in Settings to encrypt from it`
+                    ? `Not encrypted: no PGP key for ${fromAddress} — generate one in Settings`
                     : missingKeys.length
-                      ? `No PGP key for ${missingKeys.join(', ')} — import one to encrypt`
-                      : 'Add a recipient to encrypt'
+                      ? `Not encrypted: no PGP key for ${missingKeys.join(', ')}`
+                      : 'Not encrypted — add a recipient to encrypt'
               }
               className={[
-                'flex flex-none items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-colors',
+                'flex h-8 w-8 flex-none items-center justify-center rounded-md transition-colors',
                 encrypt
-                  ? 'border-primary bg-primary/10 text-primary'
-                  : 'border-border text-muted-foreground hover:bg-accent',
-                'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
+                  ? 'text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-500'
+                  : 'text-destructive hover:bg-destructive/10',
+                'disabled:cursor-not-allowed disabled:hover:bg-transparent',
               ].join(' ')}
             >
-              <LockIcon className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{encrypt ? 'Encrypted' : 'Encrypt'}</span>
+              {encrypt ? (
+                <LockIcon className="h-4 w-4" />
+              ) : (
+                <LockOpenIcon className="h-4 w-4" />
+              )}
             </button>
           )}
           <Button variant="primary" onClick={handleSend} disabled={!canSend}>
