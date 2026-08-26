@@ -1,9 +1,9 @@
 import { validatePublicKey } from './openpgp'
 
 /**
- * Discovery and publication against a VKS keyserver (keys.openpgp.org by
- * default) — the "shared registry" that lets mailstr interoperate with the
- * outside PGP world without manual key exchange.
+ * Keyserver LOOKUP against a VKS keyserver (keys.openpgp.org by default) — a
+ * discovery fallback that lets mailstr find a correspondent's key when WKD
+ * doesn't have it, without manual key exchange.
  *
  * Why this one: keys.openpgp.org is the modern, maintained keyserver and, unlike
  * the old SKS network, it VERIFIES email ownership before serving a key by
@@ -12,12 +12,13 @@ import { validatePublicKey } from './openpgp'
  * wants: a key came back ⇒ this recipient uses PGP ⇒ encrypt to them.
  *
  * It serves `Access-Control-Allow-Origin: *`, so the browser calls it directly;
- * no bridge or proxy involved. Only PUBLIC keys ever cross this boundary.
+ * no bridge or proxy involved.
  *
- * The publish side is two steps by design: an upload makes a key retrievable by
- * FINGERPRINT immediately, but retrievable by EMAIL only after the address owner
- * clicks a verification link the keyserver emails them. We do both — upload then
- * request-verify — so generating a key also starts making the user discoverable.
+ * We deliberately do NOT publish here — our own keys go to our WKD directory
+ * (lib/pgp/ownWkd.ts), which is authoritative and needs no email verification.
+ * Publishing to a third-party keyserver would add a verification step and
+ * permanently register the address↔key link off-domain. This module is
+ * lookup-only; a hit here just means the correspondent chose to publish there.
  */
 
 const DEFAULT_KEYSERVER = 'https://keys.openpgp.org'
@@ -53,62 +54,4 @@ export async function lookupByEmail(email: string): Promise<string | null> {
   } catch {
     return null
   }
-}
-
-/** The keyserver's reply to an upload / verification request. */
-export interface UploadResult {
-  keyFingerprint: string
-  /** Opaque token, needed to request email verification for this upload. */
-  token: string
-  /** Per-address publication state: unpublished | published | pending | revoked. */
-  status: Record<string, string>
-}
-
-/**
- * Upload an armored public key. Makes it retrievable by fingerprint at once;
- * addresses come back `unpublished` until verified (see requestVerify).
- */
-export async function uploadKey(armoredPublicKey: string): Promise<UploadResult> {
-  const res = await fetch(`${baseUrl()}/vks/v1/upload`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ keytext: armoredPublicKey }),
-  })
-  if (!res.ok) throw new Error(`Keyserver upload failed (${res.status})`)
-  const json = (await res.json()) as { key_fpr: string; token: string; status: Record<string, string> }
-  return { keyFingerprint: json.key_fpr, token: json.token, status: json.status }
-}
-
-/**
- * Ask the keyserver to email verification links for the given addresses, so the
- * key becomes discoverable BY EMAIL once the owner confirms. `token` comes from
- * the preceding upload.
- */
-export async function requestVerify(token: string, addresses: string[]): Promise<UploadResult> {
-  const res = await fetch(`${baseUrl()}/vks/v1/request-verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token, addresses }),
-  })
-  if (!res.ok) throw new Error(`Keyserver verification request failed (${res.status})`)
-  const json = (await res.json()) as { key_fpr: string; token: string; status: Record<string, string> }
-  return { keyFingerprint: json.key_fpr, token: json.token, status: json.status }
-}
-
-/**
- * Publish a freshly generated key: upload it, then request email verification
- * for its addresses so it becomes discoverable by email (not just fingerprint).
- *
- * Best-effort by contract — the caller treats a rejection as "not published
- * yet", never as a reason to fail key generation. The verification email lands
- * in the user's own mailbox (for a mailstr address, through the bridge), where
- * one click finishes the job.
- */
-export async function publishKey(
-  armoredPublicKey: string,
-  addresses: string[],
-): Promise<UploadResult> {
-  const uploaded = await uploadKey(armoredPublicKey)
-  if (addresses.length === 0) return uploaded
-  return requestVerify(uploaded.token, addresses)
 }
