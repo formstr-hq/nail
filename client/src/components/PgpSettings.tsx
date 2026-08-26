@@ -6,33 +6,29 @@ import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
 import type { PgpKeypair } from '@/lib/nostr/settings'
 import { generateKey, readKeyInfo } from '@/lib/pgp/openpgp'
 import { keyringKey, addToKeyring, removeFromKeyring, keyringEntries, type KeyringEntry } from '@/lib/pgp/keyring'
-import { publishKey } from '@/lib/pgp/keyserver'
 import { publishToOwnWkd } from '@/lib/pgp/ownWkd'
 import { Button } from '@/components/ui/Button'
 import { AlertIcon, KeyIcon, TrashIcon, PlusIcon } from '@/components/ui/icons'
 
 /**
- * Publish a freshly generated public key everywhere it should be discoverable —
- * best-effort, and deliberately fire-and-forget so it never blocks or fails key
- * generation (the key is already saved by the time this runs).
+ * Publish a freshly generated public key to our own WKD directory — best-effort
+ * and fire-and-forget, so it never blocks or fails key generation (the key is
+ * already saved by the time this runs).
  *
- *  - Our OWN domain's addresses go to our backend's WKD directory: the
- *    authoritative path (no email round-trip; the backend already vouches for
- *    the identity via NIP-05). Needs the active signer for the NIP-98 auth.
- *  - Every address also goes to keys.openpgp.org as the cross-provider fallback,
- *    which emails a verification link before it's searchable by email.
+ * Only our-domain addresses, and only to OUR WKD: the backend already vouches
+ * for the identity via NIP-05, so it's authoritative with no email round-trip.
+ * We deliberately do NOT publish to keys.openpgp.org — that would email a
+ * verification step and permanently register the address↔key link on a third
+ * party. (Keyserver LOOKUP stays, as a discovery fallback for correspondents
+ * who chose to publish there themselves.)
  */
 function publishOwnKey(address: string, armoredPublicKey: string): void {
   const { account, active } = useAccountStore.getState()
   const domain = address.split('@')[1]?.toLowerCase()
+  if (!active || !account || domain !== BRIDGE_DOMAIN.toLowerCase()) return
 
-  if (active && account && domain === BRIDGE_DOMAIN.toLowerCase()) {
-    void publishToOwnWkd({ address, armoredPublicKey, active }).catch((e) =>
-      console.warn('[pgp] WKD publish failed', e),
-    )
-  }
-  void publishKey(armoredPublicKey, [address]).catch((e) =>
-    console.warn('[pgp] keyserver publish failed', e),
+  void publishToOwnWkd({ address, armoredPublicKey, active }).catch((e) =>
+    console.warn('[pgp] WKD publish failed', e),
   )
 }
 
