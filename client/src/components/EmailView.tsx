@@ -103,6 +103,38 @@ function MessageBody({ email }: { email: Email }) {
 
   const pgp = usePgpMessage(email, passphraseNonce)
 
+  // All hooks must run before any conditional return, or the hook count changes
+  // across renders as `pgp.kind` resolves — React's "rendered fewer hooks than
+  // expected" crash. So every hook lives here, above the PGP/HTML branches.
+  const blocked = useMemo(
+    () => Boolean(email.bodyHtml) && hasRemoteContent(email.bodyHtml!) && !allowRemote,
+    [email.bodyHtml, allowRemote],
+  )
+
+  useEffect(() => () => observerRef.current?.disconnect(), [])
+
+  // Remounts the frame when the policy or theme changes, so relaxing the CSP
+  // reloads the images and a theme switch re-renders in the new palette rather
+  // than leaving the old render in place.
+  const frameKey = `${email.id}:${allowRemote}:${dark ? 'd' : 'l'}`
+
+  // Size the frame to its own content so the message scrolls with the reading
+  // pane instead of trapping a second scrollbar inside a fixed-height box. This
+  // reads the framed document directly (allow-same-origin), and a ResizeObserver
+  // keeps it in step as images and late layout settle after load.
+  function fitToContent(e: React.SyntheticEvent<HTMLIFrameElement>) {
+    const iframe = e.currentTarget
+    const doc = iframe.contentDocument
+    if (!doc) return
+    const fit = () => {
+      iframe.style.height = `${doc.documentElement.scrollHeight}px`
+    }
+    fit()
+    observerRef.current?.disconnect()
+    observerRef.current = new ResizeObserver(fit)
+    observerRef.current.observe(doc.documentElement)
+  }
+
   // PGP bodies are handled before the normal HTML/plaintext render: a decrypted
   // message is plaintext, and the locked/no-key/error states each get an honest
   // notice rather than dumping the armored blob as if it were the message.
@@ -157,35 +189,6 @@ function MessageBody({ email }: { email: Email }) {
       </div>
     )
   }
-
-  const blocked = useMemo(
-    () => Boolean(email.bodyHtml) && hasRemoteContent(email.bodyHtml!) && !allowRemote,
-    [email.bodyHtml, allowRemote],
-  )
-
-  // Remounts the frame when the policy or theme changes, so relaxing the CSP
-  // reloads the images and a theme switch re-renders in the new palette rather
-  // than leaving the old render in place.
-  const frameKey = `${email.id}:${allowRemote}:${dark ? 'd' : 'l'}`
-
-  // Size the frame to its own content so the message scrolls with the reading
-  // pane instead of trapping a second scrollbar inside a fixed-height box. This
-  // reads the framed document directly (allow-same-origin), and a ResizeObserver
-  // keeps it in step as images and late layout settle after load.
-  function fitToContent(e: React.SyntheticEvent<HTMLIFrameElement>) {
-    const iframe = e.currentTarget
-    const doc = iframe.contentDocument
-    if (!doc) return
-    const fit = () => {
-      iframe.style.height = `${doc.documentElement.scrollHeight}px`
-    }
-    fit()
-    observerRef.current?.disconnect()
-    observerRef.current = new ResizeObserver(fit)
-    observerRef.current.observe(doc.documentElement)
-  }
-
-  useEffect(() => () => observerRef.current?.disconnect(), [])
 
   if (!email.bodyHtml) {
     return <PlainBody text={email.body} />
