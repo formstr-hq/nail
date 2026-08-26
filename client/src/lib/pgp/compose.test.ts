@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { generateKey, decryptMessage, isPgpMessage, type GeneratedKey } from './openpgp'
 import { addToKeyring } from './keyring'
-import { cleartextRecipients, encryptBody } from './compose'
+import { encryptBody } from './compose'
 
 let me: GeneratedKey
 let bob: GeneratedKey
@@ -12,19 +12,6 @@ beforeAll(async () => {
     generateKey({ name: 'Bob', email: 'bob@gmail.com' }),
   ])
 }, 30_000)
-
-describe('cleartextRecipients', () => {
-  it('flags known plaintext providers, case-insensitively', () => {
-    expect(cleartextRecipients(['bob@Gmail.com', 'x@outlook.com', 'a@mailstr.app'])).toEqual([
-      'bob@Gmail.com',
-      'x@outlook.com',
-    ])
-  })
-
-  it('does not flag addresses we can’t parse a domain from', () => {
-    expect(cleartextRecipients(['npub1abc', 'plainstring'])).toEqual([])
-  })
-})
 
 describe('encryptBody', () => {
   /** Settings with `me@mailstr.app` as an own alias key and Bob in the keyring. */

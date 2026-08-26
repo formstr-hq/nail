@@ -12,7 +12,7 @@ import type { Draft } from '@/lib/mail/draft'
 import { useContacts } from '@/hooks/useContacts'
 import { searchContacts } from '@/lib/mail/contacts'
 import { addressesMissingKeys, ownKeypairFor } from '@/lib/pgp/keyring'
-import { cleartextRecipients, encryptBody } from '@/lib/pgp/compose'
+import { encryptBody } from '@/lib/pgp/compose'
 import { getSessionPassphrase, setSessionPassphrase } from '@/lib/pgp/session'
 import { usePgpDiscovery } from '@/hooks/usePgpDiscovery'
 import { Button, IconButton } from '@/components/ui/Button'
@@ -194,10 +194,6 @@ export function ComposeModal({
   useEffect(() => {
     if (!canEncrypt && userOverride !== null) setUserOverride(null)
   }, [canEncrypt, userOverride])
-  // The plaintext-provider nudge is now ONLY a warning, not a default-setter:
-  // when we're sending cleartext to a provider that can read it, say so.
-  const cleartext = encrypt ? [] : cleartextRecipients(recipients)
-
   // Why the message will go out unencrypted, if it will — used to explain the
   // red lock when the user clicks it. `action` promotes the fix to a CTA when
   // there's a concrete next step (set up a key). `null` means it IS encrypted.
@@ -540,20 +536,6 @@ export function ComposeModal({
             <LockIcon className="mt-px h-3.5 w-3.5 flex-none text-muted-foreground" />
             <p className="text-[11.5px] leading-relaxed text-muted-foreground">
               Encrypted with PGP. The subject line is <em>not</em> encrypted.
-            </p>
-          </div>
-        )}
-
-        {cleartext.length > 0 && (
-          <div className="flex items-start gap-2 border-t border-border bg-background/60 px-3.5 py-2">
-            <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-muted-foreground" />
-            <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-              {cleartext.join(', ')} can read this message on their servers.
-              {canEncrypt
-                ? ' Turn on Encrypt to protect it.'
-                : hasFromKey
-                  ? ' Import their PGP key to encrypt.'
-                  : ''}
             </p>
           </div>
         )}

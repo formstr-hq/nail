@@ -130,28 +130,31 @@ domain that publishes neither WKD nor to keys.openpgp.org.
 
 ## Compose
 
-- An **Encrypt** toggle in the composer, available **only when every recipient
-  (To + CC) has a key in the keyring**. Missing one → toggle unavailable, with
-  the reason inline ("No PGP key for bob@gmail.com — import one to encrypt").
-- **Encrypt-by-default, with a cleartext-provider exception.** When encryption
-  is possible the toggle defaults **on** — protecting mail is the point, and
-  requiring a click each time trains people to skip it. The exception: if any
-  recipient is on a known cleartext-only provider (gmail/outlook/yahoo/…), it
-  defaults **off**, because a webmail user typically can't read PGP and silently
-  encrypting hands them an unreadable blob. Either way it stays a live per-
-  message toggle, and a manual flip sticks for that draft (a reactive default
-  must never fight a deliberate choice).
+- A **lock indicator** in the composer footer, not a labelled button: a **green
+  closed lock** when the message will be encrypted, a **red open lock** when it
+  won't. It doubles as the control — green→click turns encryption off; a red lock
+  that CAN encrypt turns it on; a red lock that can't opens a small popover
+  explaining WHY (no key for the From alias, a recipient with no key, no
+  recipient yet, or manually off) with a **"Set up encryption"** CTA into
+  Settings › Encryption when the fix is generating a key.
+- **Encrypt-by-default.** When encryption is possible (see below) it defaults
+  **on** — protecting mail is the point, and holding a key for every recipient is
+  itself the signal they use PGP. A manual flip sticks for that draft (a reactive
+  default must never fight a deliberate choice) until encryption stops being
+  possible.
+- **Possible when** the FROM alias has a key AND every recipient has a public key
+  (own or discovered). Per-alias: switching From to a keyless alias flips the
+  lock red, with the reason in the popover.
 - When on: encrypt the body to **all recipients plus the From alias itself** (so
   the Sent copy in our own self-wrap stays readable), and **sign** with the
-  **From alias's** key. Per-alias means the toggle needs a key for the specific
-  From address; switching From to an alias without a key disables it, with the
-  reason shown.
+  **From alias's** key.
 - **Inline PGP** (armored `-----BEGIN PGP MESSAGE-----` body) for v1. **PGP/MIME**
   (which covers attachments and HTML cleanly) is the phase-2 upgrade; call it out
   as a known limitation rather than half-doing it.
 - **Subject stays plaintext.** Threading and the mailbox list key off it
   (`Email.subject`, RFC 2822 headers). This matches every real PGP mail client;
-  note it honestly in the UI so nobody assumes the subject is protected.
+  a banner on the encrypted state notes it so nobody assumes the subject is
+  protected.
 
 ## Read
 
@@ -168,12 +171,10 @@ domain that publishes neither WKD nor to keys.openpgp.org.
 
 ## Warnings
 
-- **Plaintext-provider banner**: when composing unencrypted to a recipient on a
-  known cleartext provider (gmail.com, outlook/hotmail, yahoo, proton's
-  non-PGP addresses, …), show a dismissible "this message can be read by the
-  provider" notice. A small static domain list to start; not a security control,
-  just an honest nudge.
-- **Missing-key state** on the Encrypt toggle as above.
+- **The red lock IS the unencrypted warning** — clicking it explains why the
+  message will go out in cleartext and offers the fix. (An earlier
+  "provider can read this" banner was removed as redundant with the lock; the
+  lock, not a domain list, is the single at-a-glance indicator.)
 - **Bad signature** on read is the one hard, non-dismissible warning.
 
 ## Stated limitations (write these into the UI, not just the docs)
@@ -198,8 +199,8 @@ domain that publishes neither WKD nor to keys.openpgp.org.
    fingerprint; keyring management (add/remove correspondent keys).
 4. Read path: detect + decrypt + signature state in `receive.ts` and
    `EmailView`.
-5. Compose path: recipient-gated Encrypt toggle (default-on when possible),
-   encrypt-to-all-plus-self, sign, plaintext-provider warning.
+5. Compose path: green/red lock indicator (default-on when possible, click-to-
+   explain when red), encrypt-to-all-plus-self, sign with the From alias key.
 6. Keyserver: lookup at compose time (auto-enrich the keyring) and publish on
    key generation (`lib/pgp/keyserver.ts`).
 7. Docs + honest in-UI limitation copy.
