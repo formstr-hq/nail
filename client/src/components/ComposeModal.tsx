@@ -11,7 +11,7 @@ import type { ResolveContext } from '@/lib/mail/resolve'
 import type { Draft } from '@/lib/mail/draft'
 import { useContacts } from '@/hooks/useContacts'
 import { searchContacts } from '@/lib/mail/contacts'
-import { addressesMissingKeys, ownKeypairFor, hasAnyOwnKey } from '@/lib/pgp/keyring'
+import { addressesMissingKeys, ownKeypairFor } from '@/lib/pgp/keyring'
 import { cleartextRecipients, encryptBody } from '@/lib/pgp/compose'
 import { getSessionPassphrase, setSessionPassphrase } from '@/lib/pgp/session'
 import { usePgpDiscovery } from '@/hooks/usePgpDiscovery'
@@ -32,6 +32,8 @@ interface ComposeModalProps {
   // already-open composer instead of silently replacing its draft.
   minimized: boolean
   setMinimized: (minimized: boolean) => void
+  /** Opens Settings on the Encryption tab — the CTA when the user has no key. */
+  onOpenEncryptionSettings: () => void
 }
 
 /** Split a comma-separated recipient string into its committed part + the token
@@ -59,6 +61,7 @@ export function ComposeModal({
   ownedAliases,
   minimized,
   setMinimized,
+  onOpenEncryptionSettings,
 }: ComposeModalProps) {
   const { account, active } = useAccountStore()
   const { settings } = useSettingsStore()
@@ -194,6 +197,30 @@ export function ComposeModal({
   // The plaintext-provider nudge is now ONLY a warning, not a default-setter:
   // when we're sending cleartext to a provider that can read it, say so.
   const cleartext = encrypt ? [] : cleartextRecipients(recipients)
+
+  // Why the message will go out unencrypted, if it will — used to explain the
+  // red lock when the user clicks it. `action` promotes the fix to a CTA when
+  // there's a concrete next step (set up a key). `null` means it IS encrypted.
+  const noEncryptReason: { text: string; cta?: string; action?: () => void } | null = encrypt
+    ? null
+    : !hasFromKey
+      ? {
+          text: `You don't have a PGP key for ${fromAddress}.`,
+          cta: 'Set up encryption',
+          action: onOpenEncryptionSettings,
+        }
+      : recipients.length === 0
+        ? { text: 'Add a recipient to encrypt this message.' }
+        : missingKeys.length
+          ? {
+              text: `No encryption key found for ${missingKeys.join(', ')} — they can't receive encrypted mail.`,
+            }
+          : {
+              // canEncrypt is true but the user turned it off manually.
+              text: 'Encryption is off for this message. Click the lock to turn it on.',
+            }
+  // Anchored popover explaining the red lock; toggled by clicking it.
+  const [showLockInfo, setShowLockInfo] = useState(false)
 
   // --- recipient autocomplete over past correspondents ---
   const [recipientFocused, setRecipientFocused] = useState(false)
@@ -572,43 +599,64 @@ export function ComposeModal({
               </a>
             )}
           </div>
-          {hasAnyOwnKey(settings) && (
+          <div className="relative flex-none">
             <button
               type="button"
               // A lock STATUS indicator: green closed lock when this message will
-              // be encrypted, red open lock when it won't. Still clickable while
-              // possible, so it doubles as the manual on/off — but reads as an
-              // at-a-glance state, not a labelled action. When encryption isn't
-              // possible the title carries the reason so the state is never mute.
-              disabled={!canEncrypt}
-              onClick={() => setUserOverride(!encrypt)}
-              aria-label={encrypt ? 'Encrypted — click to turn off' : 'Not encrypted'}
+              // be encrypted, red open lock when it won't. Green → click toggles
+              // encryption off; red → click reveals WHY it's off (a popover with
+              // the reason, and a CTA to set up a key when that's the fix).
+              onClick={() => {
+                if (encrypt) setUserOverride(false)
+                else if (canEncrypt) setUserOverride(true)
+                else setShowLockInfo((v) => !v)
+              }}
+              aria-label={encrypt ? 'Encrypted — click to turn off' : 'Not encrypted — why?'}
               title={
-                canEncrypt
-                  ? encrypt
-                    ? 'Encrypted with PGP — click to turn off'
-                    : 'Not encrypted — click to encrypt'
-                  : !hasFromKey
-                    ? `Not encrypted: no PGP key for ${fromAddress} — generate one in Settings`
-                    : missingKeys.length
-                      ? `Not encrypted: no PGP key for ${missingKeys.join(', ')}`
-                      : 'Not encrypted — add a recipient to encrypt'
+                encrypt
+                  ? 'Encrypted with PGP — click to turn off'
+                  : canEncrypt
+                    ? 'Not encrypted — click to encrypt'
+                    : 'Not encrypted — click to see why'
               }
               className={[
-                'flex h-8 w-8 flex-none items-center justify-center rounded-md transition-colors',
+                'flex h-8 w-8 items-center justify-center rounded-md transition-colors',
                 encrypt
                   ? 'text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-500'
                   : 'text-destructive hover:bg-destructive/10',
-                'disabled:cursor-not-allowed disabled:hover:bg-transparent',
               ].join(' ')}
             >
-              {encrypt ? (
-                <LockIcon className="h-4 w-4" />
-              ) : (
-                <LockOpenIcon className="h-4 w-4" />
-              )}
+              {encrypt ? <LockIcon className="h-4 w-4" /> : <LockOpenIcon className="h-4 w-4" />}
             </button>
-          )}
+
+            {showLockInfo && noEncryptReason && (
+              <>
+                {/* Click-away layer so the popover closes on any outside click. */}
+                <div className="fixed inset-0 z-40" onClick={() => setShowLockInfo(false)} />
+                <div className="absolute bottom-full right-0 z-50 mb-2 w-60 rounded-md border border-border bg-card p-3 shadow-lg">
+                  <div className="flex items-start gap-2">
+                    <LockOpenIcon className="mt-px h-3.5 w-3.5 flex-none text-destructive" />
+                    <p className="text-[11.5px] leading-relaxed text-foreground">
+                      {noEncryptReason.text}
+                    </p>
+                  </div>
+                  {noEncryptReason.action && (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      className="mt-2 w-full"
+                      onClick={() => {
+                        setShowLockInfo(false)
+                        noEncryptReason.action!()
+                      }}
+                    >
+                      {noEncryptReason.cta}
+                    </Button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
           <Button variant="primary" onClick={handleSend} disabled={!canSend}>
             {sending ? 'Sending…' : 'Send'}
           </Button>
