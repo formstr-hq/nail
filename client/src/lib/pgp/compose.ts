@@ -1,33 +1,6 @@
 import type { MailSettings } from '@/lib/nostr/settings'
 import { encryptMessage } from './openpgp'
-import { keyForAddress, ownKeypairFor, keyringKey } from './keyring'
-
-/**
- * Mail providers that can read message bodies server-side. Sending them
- * plaintext isn't wrong — it's how most email works — but it's worth an honest
- * nudge, so the composer can say "this can be read by the provider". Not a
- * security control, just a prompt; a short static list, matched on the domain.
- */
-const CLEARTEXT_PROVIDERS = new Set([
-  'gmail.com',
-  'googlemail.com',
-  'outlook.com',
-  'hotmail.com',
-  'live.com',
-  'yahoo.com',
-  'ymail.com',
-  'icloud.com',
-  'me.com',
-  'aol.com',
-])
-
-/** Addresses among the recipients whose provider can read plaintext. */
-export function cleartextRecipients(addresses: string[]): string[] {
-  return addresses.filter((a) => {
-    const domain = keyringKey(a).split('@')[1]
-    return domain ? CLEARTEXT_PROVIDERS.has(domain) : false
-  })
-}
+import { keyForAddress, ownKeypairFor } from './keyring'
 
 /**
  * Encrypt and sign a plaintext body to every recipient plus the sender, using
