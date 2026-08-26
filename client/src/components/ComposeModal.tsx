@@ -297,7 +297,9 @@ export function ComposeModal({
   }, [minimized])
 
   async function handleSend() {
-    if (!account || !active || !to.trim() || !subject.trim()) return
+    // A subject is not required — RFC 2822 allows an empty one, and the reader
+    // shows "(no subject)". Only a recipient is mandatory.
+    if (!account || !active || !to.trim()) return
     const toList = to.split(',').map((s) => s.trim()).filter(Boolean)
     setSending(true)
     setError('')
@@ -366,7 +368,7 @@ export function ComposeModal({
     )
   }
 
-  const canSend = Boolean(to.trim() && subject.trim()) && !sending && !npubBlocked
+  const canSend = Boolean(to.trim()) && !sending && !npubBlocked
 
   return (
     <div
