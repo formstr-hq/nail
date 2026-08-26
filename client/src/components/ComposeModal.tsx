@@ -400,7 +400,9 @@ export function ComposeModal({
       // the app stays usable while composing — the outside-click-to-minimize
       // effect above handles tucking the panel away. On phones the backdrop is
       // solid and is the way out of the sheet.
-      className="pointer-events-auto fixed inset-0 z-50 flex flex-col justify-end bg-foreground/20 md:pointer-events-none md:items-end md:bg-transparent md:p-6"
+      // Phones: a full-screen sheet (the windowed bottom-sheet felt cramped).
+      // md+: a docked panel from the bottom-right that leaves the app usable.
+      className="pointer-events-auto fixed inset-0 z-50 flex flex-col bg-foreground/20 md:pointer-events-none md:items-end md:justify-end md:bg-transparent md:p-6"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) requestClose()
       }}
@@ -410,7 +412,10 @@ export function ComposeModal({
         role="dialog"
         aria-modal="true"
         aria-label="New message"
-        className="pointer-events-auto safe-bottom flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:h-[32rem] md:max-w-xl md:rounded-xl"
+        // Full height on phones (safe-area padded top and bottom so the header
+        // clears the notch and the footer clears the home bar; the insets are 0
+        // on desktop, so these are inert there); a fixed docked card from md up.
+        className="pointer-events-auto safe-top safe-bottom flex h-full w-full flex-col overflow-hidden border border-border bg-card shadow-2xl md:h-[32rem] md:max-w-xl md:rounded-xl"
       >
         <div className="flex items-center gap-1 border-b border-border px-3 py-2">
           <span className="eyebrow flex-1">{draft?.inReplyTo ? 'Reply' : 'New message'}</span>
