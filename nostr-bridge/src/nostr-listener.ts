@@ -2,9 +2,14 @@ import { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools";
 import { config } from "./config.js";
 import { keySigner } from "./protocol/key-signer.js";
-import { unwrapAndVerify, deliverTargets, buildMailRumor, sealAndWrap } from "./protocol/mail.js";
+import { unwrapAndVerify, deliverTargets, buildMailRumor, buildRumor, sealAndWrap } from "./protocol/mail.js";
 import { messageStringToBytes } from "./protocol/bytes.js";
-import { KIND_GIFTWRAP, MAX_RUMOR_AGE_SECONDS } from "./protocol/constants.js";
+import {
+  KIND_GIFTWRAP,
+  KIND_GIFTWRAP_EPHEMERAL,
+  KIND_DELIVERY_RECEIPT,
+  MAX_RUMOR_AGE_SECONDS,
+} from "./protocol/constants.js";
 import { authorizeSender, selectDeliverTargets } from "./outbound.js";
 import { createPostfixTransport, injectIntoPostfix } from "./smtp-injector.js";
 
@@ -60,6 +65,39 @@ async function sendBounce(
     await Promise.allSettled(pool.publish(relays, wrap));
   } catch (err) {
     console.error("nostr-bridge: failed to send bounce:", (err as Error).message);
+  }
+}
+
+/**
+ * Delivery receipt: once mail is handed to Postfix, tell the sender so their
+ * client can show it as delivered. Sent as an EPHEMERAL gift wrap — relays
+ * broadcast it to the sender's live subscription but never persist it, which is
+ * exactly right for a transient, best-effort confirmation. Mirrors sendBounce.
+ */
+async function sendDeliveryReceipt(
+  pool: SimplePool,
+  relays: string[],
+  recipientPubkey: string,
+  messageId: string | undefined,
+  deliveredTo: string[],
+): Promise<void> {
+  try {
+    const rumor = buildRumor({
+      senderPubkey: config.bridgePubkey,
+      recipientPubkey,
+      kind: KIND_DELIVERY_RECEIPT,
+      content: JSON.stringify({ v: 1, messageId, deliveredTo }),
+    });
+    const wrap = await sealAndWrap(rumor, recipientPubkey, bridgeSigner, {
+      wrapKind: KIND_GIFTWRAP_EPHEMERAL,
+    });
+    const results = await Promise.allSettled(pool.publish(relays, wrap));
+    const ok = results.filter((r) => r.status === "fulfilled").length;
+    console.log(
+      `nostr-bridge: delivery receipt ${messageId ?? "(no message-id)"} → ${recipientPubkey.slice(0, 8)} (${ok}/${results.length} relays)`,
+    );
+  } catch (err) {
+    console.error("nostr-bridge: failed to send delivery receipt:", (err as Error).message);
   }
 }
 
@@ -138,6 +176,13 @@ export async function handleWrap(
       raw: Buffer.from(messageStringToBytes(rumor.content)),
     });
     console.log(`nostr-bridge: relayed from ${auth.address} to ${deliver.join(", ")}`);
+
+    // The mail is now Postfix's problem — tell the sender it left the bridge, so
+    // their client can mark it delivered. `Message-ID` correlates the receipt to
+    // the sender's Sent copy; both are built from the one RFC 2822 message.
+    const midMatch = /^Message-ID:\s*(.*)$/im.exec(rumor.content);
+    const messageId = midMatch?.[1]?.trim() || undefined;
+    void sendDeliveryReceipt(pool, relays, seal.pubkey, messageId, deliver);
   } catch (err) {
     console.error("nostr-bridge: Postfix injection failed:", (err as Error).message);
     await sendBounce(pool, relays, seal.pubkey, "Downstream mail server unavailable");

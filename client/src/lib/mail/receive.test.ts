@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { generateSecretKey, getPublicKey, getEventHash } from 'nostr-tools/pure'
 import { nip19 } from 'nostr-tools'
-import { buildMailRumor, sealAndWrap, keySigner } from '@protocol'
+import {
+  buildMailRumor,
+  buildRumor,
+  sealAndWrap,
+  keySigner,
+  KIND_DELIVERY_RECEIPT,
+  KIND_GIFTWRAP_EPHEMERAL,
+} from '@protocol'
 import { decodeGiftWrap } from './receive'
 import { clearProbeCache } from '@/lib/nostr/nip05'
 
@@ -168,5 +175,41 @@ describe('decodeGiftWrap sender proof', () => {
     if (!('email' in out)) return
     expect(out.email.senderProof).toBe('none')
     expect(out.email.from.address).toBe(nip19.npubEncode(BRIDGE))
+  })
+})
+
+describe('decodeGiftWrap delivery receipt', () => {
+  /** An ephemeral delivery-receipt wrap addressed to ME, sealed by `sealerSk`. */
+  async function receiptFrom(sealerSk: Uint8Array, messageId: string) {
+    const rumor = buildRumor({
+      senderPubkey: getPublicKey(sealerSk),
+      recipientPubkey: ME,
+      kind: KIND_DELIVERY_RECEIPT,
+      content: JSON.stringify({ v: 1, messageId, deliveredTo: ['bob@gmail.com'] }),
+    })
+    return sealAndWrap(rumor, ME, keySigner(sealerSk), { wrapKind: KIND_GIFTWRAP_EPHEMERAL })
+  }
+
+  // The receipt is how the bridge confirms it relayed our mail. Only the
+  // configured bridge's seal counts, and it decodes to a receipt (not an email).
+  it('decodes a receipt sealed by the configured bridge', async () => {
+    const wrap = await receiptFrom(BRIDGE_SK, '<abc@mailstr.app>')
+    const out = await decodeGiftWrap(wrap, keySigner(ME_SK), BRIDGE, ME)
+
+    expect(out).toHaveProperty('receipt')
+    if (!('receipt' in out)) return
+    expect(out.receipt.messageId).toBe('<abc@mailstr.app>')
+    expect(out.receipt.deliveredTo).toEqual(['bob@gmail.com'])
+  })
+
+  // Anyone can gift-wrap a fake "delivered" for your mail, so a receipt from any
+  // key other than the configured bridge must be ignored (routine, not an error).
+  it('ignores a receipt not sealed by the configured bridge', async () => {
+    const wrap = await receiptFrom(SENDER_SK, '<abc@mailstr.app>')
+    const out = await decodeGiftWrap(wrap, keySigner(ME_SK), BRIDGE, ME)
+
+    expect(out).toHaveProperty('failure')
+    if (!('failure' in out)) return
+    expect(out.failure.routine).toBe(true)
   })
 })

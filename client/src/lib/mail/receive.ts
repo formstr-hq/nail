@@ -3,6 +3,8 @@ import {
   unwrapAndVerify,
   messageStringToBytes,
   parseImetaTags,
+  KIND_MAIL,
+  KIND_DELIVERY_RECEIPT,
   type ProtocolSigner,
 } from '@protocol'
 import { nip19 } from 'nostr-tools'
@@ -24,7 +26,18 @@ export interface DecodeFailure {
   routine: boolean
 }
 
-export type DecodeResult = { email: Email } | { failure: DecodeFailure }
+/** A bridge delivery receipt: the bridge confirming it relayed one of our sent
+ * messages onward. Not mail — it carries the delivered message's Message-ID so
+ * the sender's client can mark the matching Sent copy as delivered. */
+export interface DeliveryReceipt {
+  messageId?: string
+  deliveredTo?: string[]
+}
+
+export type DecodeResult =
+  | { email: Email }
+  | { receipt: DeliveryReceipt }
+  | { failure: DecodeFailure }
 
 /**
  * May we display the RFC 2822 `From:` header as the sender, and on what basis?
@@ -121,14 +134,33 @@ export async function decodeGiftWrap(
 ): Promise<DecodeResult> {
   // No staleness bound here: unlike the bridge, a mailbox legitimately shows
   // mail from months ago, and the replay concern (re-relaying a message) does
-  // not apply to rendering one.
-  const result = await unwrapAndVerify(event, signer, { maxAgeSeconds: Infinity })
+  // not apply to rendering one. We accept mail plus the bridge's delivery
+  // receipts; the receipt branch below decides what to do with those.
+  const result = await unwrapAndVerify(event, signer, {
+    maxAgeSeconds: Infinity,
+    acceptKinds: [KIND_MAIL, KIND_DELIVERY_RECEIPT],
+  })
 
   if (!result.ok) {
     return { failure: { reason: result.reason, routine: result.reason === 'not-for-us' } }
   }
 
   const { seal, rumor } = result
+
+  // Delivery receipt: honour it ONLY when the configured bridge sealed it —
+  // otherwise anyone could gift-wrap a fake "delivered" for your mail. A receipt
+  // from any other key is silently ignored (routine), not surfaced as an error.
+  if (rumor.kind === KIND_DELIVERY_RECEIPT) {
+    if (bridgePubkey === null || seal.pubkey !== bridgePubkey) {
+      return { failure: { reason: 'delivery-receipt not from configured bridge', routine: true } }
+    }
+    try {
+      const parsed = JSON.parse(rumor.content) as DeliveryReceipt
+      return { receipt: { messageId: parsed.messageId, deliveredTo: parsed.deliveredTo } }
+    } catch {
+      return { failure: { reason: 'malformed delivery-receipt content', routine: false } }
+    }
+  }
 
   try {
     // §4: content is a byte string. postal-mime must be handed real bytes —

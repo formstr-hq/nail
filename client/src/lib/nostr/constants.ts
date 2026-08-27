@@ -7,6 +7,18 @@ export const BRIDGE_NIP05_NAME = '_smtp'
 
 export const KIND_MAIL = 1301
 export const KIND_GIFTWRAP = 1059
+
+// Ephemeral gift-wrap outer kind (NIP-01 ephemeral range). The bridge sends
+// delivery receipts wrapped in this kind so relays broadcast but never persist
+// them. The inbox subscription must include it alongside KIND_GIFTWRAP or the
+// relay filters the acks out. Keep in sync with @protocol's constants.
+export const KIND_GIFTWRAP_EPHEMERAL = 21059
+
+// Inner rumor kind of a bridge delivery receipt (see @protocol constants). Its
+// content is `{ v, messageId, deliveredTo }`; the receive path routes on it to
+// mark the matching Sent message delivered rather than parsing it as mail.
+export const KIND_DELIVERY_RECEIPT = 1302
+
 export const KIND_DM_RELAYS = 10050
 export const KIND_NIP65_RELAYS = 10002
 export const KIND_LABEL = 1985

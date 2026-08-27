@@ -18,7 +18,8 @@ import { handleWrap } from "./nostr-listener.js";
 import { lookupNip05, type Nip05Result } from "./nip05.js";
 import { config } from "./config.js";
 import { keySigner } from "./protocol/key-signer.js";
-import { buildMailRumor, sealAndWrap } from "./protocol/mail.js";
+import { buildMailRumor, sealAndWrap, unwrapAndVerify } from "./protocol/mail.js";
+import { KIND_DELIVERY_RECEIPT, KIND_GIFTWRAP_EPHEMERAL } from "./protocol/constants.js";
 import { bytesToMessageString, messageStringToBytes } from "./protocol/bytes.js";
 import type { createPostfixTransport } from "./smtp-injector.js";
 
@@ -175,5 +176,47 @@ describe("handleWrap", () => {
 
     expect(mockedLookup).toHaveBeenCalled();
     expect(transport.sendMail).not.toHaveBeenCalled();
+  });
+
+  // After a message is handed to Postfix, the bridge sends the sender an
+  // ephemeral delivery receipt carrying the Message-ID, so their client can
+  // show it as delivered. It must go to the sender (seal.pubkey), not the
+  // deliver targets.
+  it("sends a delivery receipt to the sender after a successful injection", async () => {
+    const alice = actor();
+    mockedLookup.mockResolvedValue(foundResult(alice.pk));
+
+    const rumor = buildMailRumor({
+      senderPubkey: alice.pk,
+      recipientPubkey: config.bridgePubkey,
+      rfc2822:
+        "From: alice@mailstr.app\r\nTo: bob@gmail.com\r\nMessage-ID: <abc123@mailstr.app>\r\n\r\nhi",
+      deliverTo: ["bob@gmail.com"],
+    });
+    const wrap = await sealAndWrap(rumor, config.bridgePubkey, alice.signer);
+
+    const transport = fakeTransport();
+    const pool = fakePool();
+    await handleWrap(pool, ["wss://relay.example"], transport, wrap);
+
+    expect(transport.sendMail).toHaveBeenCalledTimes(1);
+
+    // The receipt is fire-and-forget (does not block injection), so wait for the
+    // publish, then unwrap it as the sender to confirm contents.
+    await vi.waitFor(() => expect(pool.publish).toHaveBeenCalled());
+    const receiptWrap = vi.mocked(pool.publish).mock.calls[0][1];
+    expect(receiptWrap.kind).toBe(KIND_GIFTWRAP_EPHEMERAL);
+
+    const unwrapped = await unwrapAndVerify(receiptWrap, alice.signer, {
+      maxAgeSeconds: Infinity,
+      acceptKinds: [KIND_DELIVERY_RECEIPT],
+    });
+    expect(unwrapped.ok).toBe(true);
+    if (unwrapped.ok) {
+      expect(unwrapped.seal.pubkey).toBe(config.bridgePubkey);
+      const body = JSON.parse(unwrapped.rumor.content) as { messageId: string; deliveredTo: string[] };
+      expect(body.messageId).toBe("<abc123@mailstr.app>");
+      expect(body.deliveredTo).toEqual(["bob@gmail.com"]);
+    }
   });
 });
