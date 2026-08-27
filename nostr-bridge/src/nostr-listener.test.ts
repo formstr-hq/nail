@@ -18,7 +18,8 @@ import { handleWrap } from "./nostr-listener.js";
 import { lookupNip05, type Nip05Result } from "./nip05.js";
 import { config } from "./config.js";
 import { keySigner } from "./protocol/key-signer.js";
-import { buildMailRumor, sealAndWrap } from "./protocol/mail.js";
+import { buildMailRumor, buildRumor, sealAndWrap } from "./protocol/mail.js";
+import { KIND_GIFTWRAP_EPHEMERAL, KIND_HEALTH_PING } from "./protocol/constants.js";
 import { bytesToMessageString, messageStringToBytes } from "./protocol/bytes.js";
 import type { createPostfixTransport } from "./smtp-injector.js";
 
@@ -175,5 +176,30 @@ describe("handleWrap", () => {
 
     expect(mockedLookup).toHaveBeenCalled();
     expect(transport.sendMail).not.toHaveBeenCalled();
+  });
+
+  // The health-ping loopback rides the same subscription as mail. It must be
+  // recognised and consumed as a self-test signal — never injected into Postfix
+  // and never bounced.
+  it("ignores a health-ping wrap and does not treat it as mail", async () => {
+    const bridge = keySigner(config.bridgePrivkey);
+    const rumor = buildRumor({
+      senderPubkey: config.bridgePubkey,
+      recipientPubkey: config.bridgePubkey,
+      kind: KIND_HEALTH_PING,
+      content: "",
+      extraTags: [["nonce", "test-nonce"]],
+    });
+    const wrap = await sealAndWrap(rumor, config.bridgePubkey, bridge, {
+      wrapKind: KIND_GIFTWRAP_EPHEMERAL,
+    });
+
+    const transport = fakeTransport();
+    const pool = fakePool();
+    await handleWrap(pool, ["wss://relay.example"], transport, wrap);
+
+    expect(transport.sendMail).not.toHaveBeenCalled();
+    expect(pool.publish).not.toHaveBeenCalled(); // no bounce, no receipt
+    expect(mockedLookup).not.toHaveBeenCalled();
   });
 });

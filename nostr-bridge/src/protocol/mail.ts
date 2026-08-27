@@ -11,23 +11,43 @@ function randomPast(now: number): number {
   return now - Math.floor(Math.random() * TWO_DAYS);
 }
 
+/**
+ * Build any rumor (unsigned inner event) with a computed id. `p` is always the
+ * first tag — it names the recipient the seal is encrypted to. Callers add
+ * kind-specific tags via `extraTags` (mail's `deliver` targets, a health ping's
+ * `nonce`, …). The id is `getEventHash` over the same shape nostr-tools uses, so
+ * `unwrapAndVerify`'s shape and author checks hold on the far side.
+ */
+export function buildRumor(params: {
+  senderPubkey: string;
+  recipientPubkey: string;
+  kind: number;
+  content: string;
+  extraTags?: string[][];
+}): Rumor {
+  const rumor = {
+    kind: params.kind,
+    pubkey: params.senderPubkey,
+    created_at: Math.floor(Date.now() / 1000),
+    tags: [["p", params.recipientPubkey], ...(params.extraTags ?? [])],
+    content: params.content,
+  };
+  return { ...rumor, id: getEventHash(rumor) };
+}
+
 export function buildMailRumor(params: {
   senderPubkey: string;
   recipientPubkey: string;
   rfc2822: string;
   deliverTo?: string[];
 }): Rumor {
-  const tags: string[][] = [["p", params.recipientPubkey]];
-  for (const address of params.deliverTo ?? []) tags.push(["deliver", address]);
-
-  const rumor = {
+  return buildRumor({
+    senderPubkey: params.senderPubkey,
+    recipientPubkey: params.recipientPubkey,
     kind: KIND_MAIL,
-    pubkey: params.senderPubkey,
-    created_at: Math.floor(Date.now() / 1000),
-    tags,
     content: params.rfc2822,
-  };
-  return { ...rumor, id: getEventHash(rumor) };
+    extraTags: (params.deliverTo ?? []).map((address) => ["deliver", address]),
+  });
 }
 
 /** Structural check for the six fields `Rumor` requires (types.ts). A rumor
@@ -60,6 +80,7 @@ export async function sealAndWrap(
   rumor: Rumor,
   recipientPubkey: string,
   signer: ProtocolSigner,
+  opts: { wrapKind?: number } = {},
 ): Promise<Event> {
   const now = Math.floor(Date.now() / 1000);
 
@@ -74,7 +95,10 @@ export async function sealAndWrap(
   const ephemeralSk = generateSecretKey();
   return finalizeEvent(
     {
-      kind: KIND_GIFTWRAP,
+      // Mail uses the standard, persisted gift-wrap kind; transient control
+      // traffic (receipts, health pings) passes `wrapKind: KIND_GIFTWRAP_EPHEMERAL`
+      // so relays broadcast without storing it. The inner rumor kind is unchanged.
+      kind: opts.wrapKind ?? KIND_GIFTWRAP,
       created_at: randomPast(now),
       // `p` routes the wrap; `k` marks the *inner* kind so a recipient can tell
       // mailstr mail (1301) from other NIP-59 gift-wraps (e.g. NIP-17 DMs, also
@@ -103,10 +127,15 @@ export async function sealAndWrap(
 export async function unwrapAndVerify(
   wrap: Event,
   signer: ProtocolSigner,
-  opts: { maxAgeSeconds?: number; now?: number } = {},
+  opts: { maxAgeSeconds?: number; now?: number; acceptKinds?: number[] } = {},
 ): Promise<UnwrapResult> {
   const maxAge = opts.maxAgeSeconds ?? MAX_RUMOR_AGE_SECONDS;
   const now = opts.now ?? Math.floor(Date.now() / 1000);
+  // Rule 4 (§4): which inner kinds this caller is willing to accept. Defaults to
+  // mail only, so existing callers are unchanged; the bridge additionally accepts
+  // its health-ping loopback and the client accepts delivery receipts. Anything
+  // outside the set is still rejected as wrong-rumor-kind.
+  const acceptKinds = opts.acceptKinds ?? [KIND_MAIL];
 
   // Failure here is routine: relays hand us every wrap p-tagged to us, and
   // most are not ours to decrypt.
@@ -154,7 +183,7 @@ export async function unwrapAndVerify(
   // seal.pubkey, so a rumor claiming a different author is hostile.
   if (rumor.pubkey !== seal.pubkey) return { ok: false, reason: "author-mismatch" };
 
-  if (rumor.kind !== KIND_MAIL) return { ok: false, reason: "wrong-rumor-kind" };
+  if (!acceptKinds.includes(rumor.kind)) return { ok: false, reason: "wrong-rumor-kind" };
   if (now - rumor.created_at > maxAge) return { ok: false, reason: "expired" };
 
   return { ok: true, seal, rumor };

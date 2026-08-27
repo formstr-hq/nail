@@ -44,6 +44,14 @@ services:
       # (e.g. formstr-backend for welcome mail). Unset the key to disable it.
       - SEND_API_KEY=${SEND_API_KEY}
       - SEND_API_PORT=2500
+      # Receive-path watchdog: every HEALTH_INTERVAL_MS the bridge gift-wraps a
+      # health ping to itself and waits HEALTH_TIMEOUT_MS for it to round-trip;
+      # on failure it exits and restart:unless-stopped restarts it. /healthz on
+      # HEALTH_PORT reflects the last result for the Docker HEALTHCHECK. Lower
+      # HEALTH_INTERVAL_MS to exercise the self-heal in e2e tests.
+      - HEALTH_INTERVAL_MS=${HEALTH_INTERVAL_MS:-3600000}
+      - HEALTH_TIMEOUT_MS=${HEALTH_TIMEOUT_MS:-30000}
+      - HEALTH_PORT=2510
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
