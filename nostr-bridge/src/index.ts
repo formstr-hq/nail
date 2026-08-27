@@ -6,6 +6,7 @@ import { createLmtpServer } from "./lmtp-server.js";
 import { UserResolver } from "./user-resolver.js";
 import { createPostfixTransport } from "./smtp-injector.js";
 import { startNostrListener } from "./nostr-listener.js";
+import { startHealthServer } from "./health-server.js";
 import { createSendApp } from "./send-service.js";
 import { RelayWebSocket } from "./relay-socket.js";
 
@@ -46,6 +47,10 @@ startNostrListener(postfixTransport).catch((err) => {
   console.error("nostr-bridge: nostr listener failed to start:", err);
   process.exit(1);
 });
+
+// Reports the receive-path self-test result at /healthz for the Docker
+// HEALTHCHECK. Started after the listener so healthSnapshot() has meaning.
+startHealthServer();
 
 // Announce where to reach this bridge. Failure here is not fatal — mail still
 // flows for anyone who already knows the pubkey — so it only warns.

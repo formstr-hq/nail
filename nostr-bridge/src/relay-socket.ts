@@ -29,5 +29,19 @@ export class RelayWebSocket extends WebSocket {
       },
     };
     super(address, protocols, merged);
+
+    // Relay-connection lifecycle logging. The bridge silently losing its relay
+    // sockets is the failure this whole reliability pass is about, so make every
+    // open/close/error visible with the relay URL. These listeners are additive —
+    // nostr-tools' SimplePool attaches its own handlers independently.
+    this.on("open", () => console.log(`nostr-bridge: relay ws OPEN  ${address}`));
+    this.on("close", (code, reason) =>
+      console.warn(
+        `nostr-bridge: relay ws CLOSE ${address} (code ${code}${reason?.length ? `: ${reason.toString()}` : ""})`,
+      ),
+    );
+    this.on("error", (err) =>
+      console.warn(`nostr-bridge: relay ws ERROR ${address}: ${(err as Error).message}`),
+    );
   }
 }
