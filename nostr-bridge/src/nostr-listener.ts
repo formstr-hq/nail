@@ -273,9 +273,9 @@ function startWatchdog(pool: SimplePool, relays: string[]): void {
 }
 
 export async function startNostrListener(
+  pool: SimplePool,
   transport: ReturnType<typeof createPostfixTransport>,
 ): Promise<void> {
-  const pool = new SimplePool({ enableReconnect: true });
   const relays = config.bridgeRelays;
 
   console.log(`nostr-bridge: listening on ${relays.join(", ")}`);
