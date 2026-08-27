@@ -62,10 +62,25 @@ export function isFiled(flags: MailFlags | undefined): boolean {
   return !!(flags?.archived || flags?.trashed)
 }
 
+/**
+ * Message-IDs compare unreliably across the wire — the header form is `<id@host>`
+ * but postal-mime hands back the value with the angle brackets stripped. Normalise
+ * to the bare id before matching a bridge receipt to a Sent copy.
+ */
+export function normalizeMessageId(id: string | undefined): string {
+  return (id ?? '').trim().replace(/^</, '').replace(/>$/, '')
+}
+
 interface MailState {
   emails: Record<string, Email>   // keyed by event ID
   seenIds: Set<string>
   mailState: Record<string, MailFlags> // read/archived/trashed by gift-wrap id
+  // Normalised Message-IDs the bridge has confirmed delivered this session. In
+  // memory only and deliberately so — a delivery receipt is an ephemeral gift
+  // wrap (relays don't persist it), so the marker is a best-effort live signal,
+  // not durable state. Keyed by Message-ID because that is the one identifier
+  // shared between the bridge wrap and our Sent self-copy.
+  deliveredMessageIds: Set<string>
   selectedId: string | null
   folder: EmailFolder
   query: string
@@ -74,6 +89,8 @@ interface MailState {
   // this filters the view by which alias it was addressed from/to.
   inboxFilter: string | null
   addEmail: (email: Email) => void
+  /** Record a bridge delivery receipt so the matching Sent message shows delivered. */
+  markDelivered: (messageId: string | undefined) => void
   /** Merge a delta into a mail's flags and return the merged set for publishing. */
   setFlag: (id: string, patch: Partial<Omit<MailFlags, 'updatedAt'>>) => MailFlags
   /** Apply state learned from the relay, newest-wins by `updatedAt`. */
@@ -89,6 +106,7 @@ export const useMailStore = create<MailState>()((set, get) => ({
   emails: {},
   seenIds: new Set(),
   mailState: loadMailState(),
+  deliveredMessageIds: new Set(),
   selectedId: null,
   folder: 'inbox',
   query: '',
@@ -103,6 +121,12 @@ export const useMailStore = create<MailState>()((set, get) => ({
       emails: { ...s.emails, [email.id]: { ...email, read } },
       seenIds: new Set([...s.seenIds, email.id]),
     }))
+  },
+
+  markDelivered: (messageId) => {
+    const id = normalizeMessageId(messageId)
+    if (!id || get().deliveredMessageIds.has(id)) return
+    set((s) => ({ deliveredMessageIds: new Set([...s.deliveredMessageIds, id]) }))
   },
 
   setFlag: (id, patch) => {
@@ -170,6 +194,7 @@ export const useMailStore = create<MailState>()((set, get) => ({
     set({
       emails: {},
       seenIds: new Set(),
+      deliveredMessageIds: new Set(),
       selectedId: null,
       folder: 'inbox',
       query: '',

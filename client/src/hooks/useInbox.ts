@@ -4,7 +4,7 @@ import { useMailStore } from '@/store/mail'
 import { getLocalRelay, syncAccountRelays } from '@/lib/nostr/localRelay'
 import { decodeGiftWrap } from '@/lib/mail/receive'
 import { protocolSigner } from '@/lib/nostr/protocol-signer'
-import { KIND_GIFTWRAP, DEFAULT_RELAYS, withHardcodedRelay } from '@/lib/nostr/constants'
+import { KIND_GIFTWRAP, KIND_GIFTWRAP_EPHEMERAL, DEFAULT_RELAYS, withHardcodedRelay } from '@/lib/nostr/constants'
 import type { Event, Filter } from 'nostr-tools'
 
 /**
@@ -23,6 +23,7 @@ export type InboxStatus =
 export function useInbox(bridgePubkey: string | null) {
   const { account, active } = useAccountStore()
   const addEmail = useMailStore((s) => s.addEmail)
+  const markDelivered = useMailStore((s) => s.markDelivered)
   const [status, setStatus] = useState<InboxStatus>({ phase: 'connecting', decoding: 0 })
   // Bumped by retry() to re-run the effect after a failed connect.
   const [attempt, setAttempt] = useState(0)
@@ -65,6 +66,12 @@ export function useInbox(bridgePubkey: string | null) {
               addEmail(outcome.email)
               return
             }
+            // A bridge delivery receipt — mark the matching Sent message
+            // delivered. Correlated by Message-ID inside markDelivered.
+            if ('receipt' in outcome) {
+              markDelivered(outcome.receipt.messageId)
+              return
+            }
             // Routine: relays hand us every wrap p-tagged to us, and most are
             // other people's mail we cannot read. Only the rest is a signal.
             if (outcome.failure.routine) return
@@ -97,7 +104,9 @@ export function useInbox(bridgePubkey: string | null) {
       })
 
       const filter: Filter = {
-        kinds: [KIND_GIFTWRAP],
+        // Mail wraps plus ephemeral wraps — the bridge sends delivery receipts
+        // as KIND_GIFTWRAP_EPHEMERAL, which the relay filters out unless listed.
+        kinds: [KIND_GIFTWRAP, KIND_GIFTWRAP_EPHEMERAL],
         '#p': [account.pubkey],
       } as Filter
 
@@ -136,7 +145,7 @@ export function useInbox(bridgePubkey: string | null) {
       alive = false
       cleanup?.()
     }
-  }, [account, active, addEmail, bridgePubkey, attempt])
+  }, [account, active, addEmail, markDelivered, bridgePubkey, attempt])
 
   return { status, retry }
 }

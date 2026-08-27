@@ -1,4 +1,4 @@
-import { useMailStore, isFiled } from '@/store/mail'
+import { useMailStore, isFiled, normalizeMessageId } from '@/store/mail'
 import { useAccountStore } from '@/store/account'
 import { useMailActions } from '@/hooks/useMailActions'
 import { matchesAlias } from '@/lib/mail/aliasFilter'
@@ -6,7 +6,7 @@ import type { Email, EmailFolder } from '@/types/mail'
 import type { InboxStatus } from '@/hooks/useInbox'
 import { useState } from 'react'
 import { SenderProofLine } from '@/components/ui/SenderProof'
-import { SearchIcon, InboxIcon, AlertIcon, RefreshIcon } from '@/components/ui/icons'
+import { SearchIcon, InboxIcon, AlertIcon, RefreshIcon, CheckIcon } from '@/components/ui/icons'
 import { Button, IconButton } from '@/components/ui/Button'
 
 const FOLDER_LABEL: Record<EmailFolder, string> = {
@@ -41,7 +41,17 @@ function formatDate(ts: number): string {
   return d.toLocaleDateString([], { year: 'numeric', month: 'short' })
 }
 
-function EmailRow({ email, read, selected }: { email: Email; read: boolean; selected: boolean }) {
+function EmailRow({
+  email,
+  read,
+  selected,
+  delivered,
+}: {
+  email: Email
+  read: boolean
+  selected: boolean
+  delivered: boolean
+}) {
   const setSelected = useMailStore((s) => s.setSelected)
   const { markRead } = useMailActions()
 
@@ -94,8 +104,17 @@ function EmailRow({ email, read, selected }: { email: Email; read: boolean; sele
         <div className="mt-px truncate text-[11.5px] text-subtle">{email.body.trim()}</div>
       )}
 
-      <div className="mt-1.5">
+      <div className="mt-1.5 flex items-center justify-between gap-2">
         <SenderProofLine proof={email.senderProof} />
+        {delivered && (
+          <span
+            className="flex-none inline-flex items-center gap-1 text-[10px] font-medium text-primary"
+            title="The bridge confirmed this message was delivered to the recipient's mail server"
+          >
+            <CheckIcon className="h-3 w-3" />
+            Delivered
+          </span>
+        )}
       </div>
     </button>
   )
@@ -124,7 +143,8 @@ function ListState({
 }
 
 export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: () => void }) {
-  const { emails, mailState, folder, selectedId, query, setQuery, inboxFilter } = useMailStore()
+  const { emails, mailState, folder, selectedId, query, setQuery, inboxFilter, deliveredMessageIds } =
+    useMailStore()
   const myPubkey = useAccountStore((s) => s.account?.pubkey)
   // Spin the icon briefly on tap so the refresh reads as "doing something" even
   // when the cache answers instantly and nothing visibly changes.
@@ -215,6 +235,10 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
               email={email}
               read={readOf(email)}
               selected={selectedId === email.id}
+              delivered={
+                folder === 'sent' &&
+                deliveredMessageIds.has(normalizeMessageId(email.messageId))
+              }
             />
           ))}
         </div>

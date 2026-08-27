@@ -57,6 +57,17 @@ export const config = {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean),
+
+  // Receive-path watchdog (nostr-listener.ts). Every `healthIntervalMs` the
+  // bridge gift-wraps a health ping to itself and waits `healthTimeoutMs` for it
+  // to round-trip through the live subscription; on failure it exits so Docker
+  // restarts it with fresh relay sockets. `healthStartupDelayMs` lets the
+  // subscription settle before the first test. `/healthz` (healthPort) reflects
+  // the last result for orchestrators.
+  healthIntervalMs: Number(process.env.HEALTH_INTERVAL_MS ?? 60 * 60 * 1000),
+  healthTimeoutMs: Number(process.env.HEALTH_TIMEOUT_MS ?? 30_000),
+  healthStartupDelayMs: Number(process.env.HEALTH_STARTUP_DELAY_MS ?? 30_000),
+  healthPort: Number(process.env.HEALTH_PORT ?? 2510),
 };
 
 // Fail fast rather than silently running as an open relay: with no local
