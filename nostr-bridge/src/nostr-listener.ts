@@ -229,11 +229,22 @@ async function runSelfTest(pool: SimplePool, relays: string[]): Promise<boolean>
 }
 
 /**
- * Watchdog. Runs a self-test after a start-up grace period, then on a fixed
- * interval. On failure it exits non-zero rather than trying to limp on: Docker's
- * `restart: unless-stopped` brings the process back with fresh relay sockets,
- * which is the only reliable recovery when SimplePool's own reconnect hasn't
- * restored delivery. Success stamps `lastHealthyAt` for /healthz.
+ * Watchdog. Runs a self-test on a fixed interval — and, critically, the FIRST
+ * probe is delayed by a full interval too, never fired immediately on start-up.
+ *
+ * The reason is the failure path: a failed probe exits non-zero rather than
+ * limping on, and Docker's `restart: unless-stopped` brings the process back
+ * with fresh relay sockets (the only reliable recovery when SimplePool's own
+ * reconnect hasn't restored delivery). If the first probe fired seconds after
+ * boot, that exit→restart→probe cycle would publish a health-ping gift-wrap
+ * roughly every minute — enough for relays to rate-limit or spam-flag our
+ * pubkey, which then makes the next probe fail and feeds the loop. Delaying the
+ * first probe by a full interval bounds published pings to at most one per
+ * interval even across restarts, so a crash loop can never spam the relays.
+ *
+ * Success stamps `lastHealthyAt` for /healthz; `lastHealthyAt` is seeded at
+ * start-up so /healthz reports healthy through the first interval before any
+ * probe has run.
  */
 function startWatchdog(pool: SimplePool, relays: string[]): void {
   const tick = async () => {
@@ -258,7 +269,7 @@ function startWatchdog(pool: SimplePool, relays: string[]): void {
   setTimeout(() => {
     void tick();
     setInterval(() => void tick(), config.healthIntervalMs);
-  }, config.healthStartupDelayMs);
+  }, config.healthIntervalMs);
 }
 
 export async function startNostrListener(
