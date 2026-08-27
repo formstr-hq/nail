@@ -5,12 +5,17 @@ import { publishBridgeIdentity } from "./self-publish.js";
 import { createLmtpServer } from "./lmtp-server.js";
 import { UserResolver } from "./user-resolver.js";
 import { createPostfixTransport } from "./smtp-injector.js";
-import { startNostrListener } from "./nostr-listener.js";
+import { startNostrListener, handleWrap } from "./nostr-listener.js";
 import { startHealthServer } from "./health-server.js";
 import { createSendApp } from "./send-service.js";
 import { RelayWebSocket } from "./relay-socket.js";
 
 useWebSocketImplementation(RelayWebSocket);
+
+// One pool shared by the relay subscription and the /v1/relay inject endpoint,
+// so a directly-injected wrap runs the identical handleWrap path — same relays,
+// same replay guard — as one that arrived over the subscription.
+const pool = new SimplePool({ enableReconnect: true });
 
 const userResolver = new UserResolver(
   config.bootstrapRelays,
@@ -35,6 +40,9 @@ if (config.sendApiKey) {
     userResolver,
     localDomains: config.localDomains,
     nip05BaseUrl: config.nip05BaseUrl,
+    // Feed injected wraps through the same receive path as the subscription.
+    injectWrap: (event) =>
+      handleWrap(pool, config.bridgeRelays, postfixTransport, event),
   });
   sendApp.listen(config.sendApiPort, () => {
     console.log(`nostr-bridge: send API listening on ${config.sendApiPort}`);
@@ -43,7 +51,7 @@ if (config.sendApiKey) {
   console.log("nostr-bridge: send API disabled (SEND_API_KEY unset)");
 }
 
-startNostrListener(postfixTransport).catch((err) => {
+startNostrListener(pool, postfixTransport).catch((err) => {
   console.error("nostr-bridge: nostr listener failed to start:", err);
   process.exit(1);
 });
