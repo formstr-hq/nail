@@ -11,8 +11,12 @@ import type { ResolveContext } from '@/lib/mail/resolve'
 import type { Draft } from '@/lib/mail/draft'
 import { useContacts } from '@/hooks/useContacts'
 import { searchContacts } from '@/lib/mail/contacts'
+import { addressesMissingKeys, ownKeypairFor } from '@/lib/pgp/keyring'
+import { encryptBody } from '@/lib/pgp/compose'
+import { getSessionPassphrase, setSessionPassphrase } from '@/lib/pgp/session'
+import { usePgpDiscovery } from '@/hooks/usePgpDiscovery'
 import { Button, IconButton } from '@/components/ui/Button'
-import { XIcon, MinimizeIcon, ExpandIcon, AlertIcon } from '@/components/ui/icons'
+import { XIcon, MinimizeIcon, ExpandIcon, AlertIcon, LockIcon, LockOpenIcon } from '@/components/ui/icons'
 
 interface ComposeModalProps {
   onClose: () => void
@@ -28,6 +32,8 @@ interface ComposeModalProps {
   // already-open composer instead of silently replacing its draft.
   minimized: boolean
   setMinimized: (minimized: boolean) => void
+  /** Opens Settings on the Encryption tab — the CTA when the user has no key. */
+  onOpenEncryptionSettings: () => void
 }
 
 /** Split a comma-separated recipient string into its committed part + the token
@@ -55,6 +61,7 @@ export function ComposeModal({
   ownedAliases,
   minimized,
   setMinimized,
+  onOpenEncryptionSettings,
 }: ComposeModalProps) {
   const { account, active } = useAccountStore()
   const { settings } = useSettingsStore()
@@ -148,6 +155,68 @@ export function ComposeModal({
   const fromIsNpub = !!fromParts && isNpub(fromParts.localpart)
   const npubBlocked = fromIsNpub && hasLegacyRecipient
   const hasAlias = ownedAliases.length > 0
+
+  // --- PGP encryption gate ---
+  // Keys are per-alias, so encryption needs a key for the FROM alias
+  // specifically (that's what signs and self-encrypts), plus a public key for
+  // every recipient — a body encrypted to a missing recipient is one they can't
+  // read. `missingKeys` names the gaps so the UI can explain the disabled toggle.
+  const hasFromKey = Boolean(ownKeypairFor(settings, fromAddress))
+  const missingKeys = useMemo(
+    () =>
+      recipients.length
+        ? addressesMissingKeys(
+            { pgpKeyring: settings.pgpKeyring, pgpKeys: settings.pgpKeys },
+            recipients,
+          )
+        : [],
+    [recipients, settings.pgpKeyring, settings.pgpKeys],
+  )
+  const canEncrypt = hasFromKey && recipients.length > 0 && missingKeys.length === 0
+
+  // Auto-discover missing recipient keys from the keyserver. A hit lands in the
+  // keyring and flips canEncrypt on by itself — this is what makes "have a key ⇒
+  // encrypt" automatic rather than manual-import-only.
+  const { discovering } = usePgpDiscovery(recipients)
+
+  // Encrypt-by-default whenever it's possible. Holding a public key for every
+  // recipient IS the signal that they use PGP — if the user went to the trouble
+  // of having someone's key, that's exactly who they want to encrypt to,
+  // regardless of which provider hosts the address. So the default is simply
+  // "on when we can", and the only thing that produces cleartext is a missing
+  // key (→ canEncrypt false). `userOverride` records a manual flip so this
+  // reactive default never fights a deliberate choice: once the user sets the
+  // toggle, their pick wins until encryption stops being possible.
+  const [userOverride, setUserOverride] = useState<boolean | null>(null)
+  const encrypt = canEncrypt && (userOverride ?? true)
+  // Drop a manual override once it's moot (encryption became impossible), so the
+  // default takes back over for the next recipient set.
+  useEffect(() => {
+    if (!canEncrypt && userOverride !== null) setUserOverride(null)
+  }, [canEncrypt, userOverride])
+  // Why the message will go out unencrypted, if it will — used to explain the
+  // red lock when the user clicks it. `action` promotes the fix to a CTA when
+  // there's a concrete next step (set up a key). `null` means it IS encrypted.
+  const noEncryptReason: { text: string; cta?: string; action?: () => void } | null = encrypt
+    ? null
+    : !hasFromKey
+      ? {
+          text: `You don't have a PGP key for ${fromAddress}.`,
+          cta: 'Set up encryption',
+          action: onOpenEncryptionSettings,
+        }
+      : recipients.length === 0
+        ? { text: 'Add a recipient to encrypt this message.' }
+        : missingKeys.length
+          ? {
+              text: `No encryption key found for ${missingKeys.join(', ')} — they can't receive encrypted mail.`,
+            }
+          : {
+              // canEncrypt is true but the user turned it off manually.
+              text: 'Encryption is off for this message. Click the lock to turn it on.',
+            }
+  // Anchored popover explaining the red lock; toggled by clicking it.
+  const [showLockInfo, setShowLockInfo] = useState(false)
 
   // --- recipient autocomplete over past correspondents ---
   const [recipientFocused, setRecipientFocused] = useState(false)
@@ -251,19 +320,47 @@ export function ComposeModal({
   }, [minimized])
 
   async function handleSend() {
-    if (!account || !active || !to.trim() || !subject.trim()) return
+    // A subject is not required — RFC 2822 allows an empty one, and the reader
+    // shows "(no subject)". Only a recipient is mandatory.
+    if (!account || !active || !to.trim()) return
+    const toList = to.split(',').map((s) => s.trim()).filter(Boolean)
     setSending(true)
     setError('')
     try {
+      // Encrypt the body in place when the toggle is on: the inline-PGP block
+      // replaces the plaintext, so every wrap (each recipient plus the Sent
+      // self-copy) carries the armored body and send.ts needs no PGP awareness.
+      let outgoingBody = body
+      if (encrypt) {
+        // The From alias's own key signs and self-encrypts; unlock it if locked.
+        const fromKey = ownKeypairFor(settings, fromAddress)
+        let passphrase =
+          fromKey?.passphraseProtected ? getSessionPassphrase(fromKey.fingerprint) ?? undefined : undefined
+        if (fromKey?.passphraseProtected && !passphrase) {
+          const entered = window.prompt('Enter your PGP key passphrase to sign this message')
+          if (!entered) {
+            setError('A passphrase is required to sign and send an encrypted message.')
+            setSending(false)
+            return
+          }
+          setSessionPassphrase(fromKey.fingerprint, entered)
+          passphrase = entered
+        }
+        outgoingBody = await encryptBody({
+          body,
+          fromAddress,
+          recipients: toList,
+          settings,
+          passphrase,
+        })
+      }
+
       await sendMail({
         from: { address: fromAddress },
         senderPubkey: account.pubkey,
-        to: to
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
+        to: toList,
         subject,
-        body,
+        body: outgoingBody,
         inReplyTo: draft?.inReplyTo,
         references: draft?.references,
         ctx,
@@ -294,7 +391,7 @@ export function ComposeModal({
     )
   }
 
-  const canSend = Boolean(to.trim() && subject.trim()) && !sending && !npubBlocked
+  const canSend = Boolean(to.trim()) && !sending && !npubBlocked
 
   return (
     <div
@@ -303,7 +400,9 @@ export function ComposeModal({
       // the app stays usable while composing — the outside-click-to-minimize
       // effect above handles tucking the panel away. On phones the backdrop is
       // solid and is the way out of the sheet.
-      className="pointer-events-auto fixed inset-0 z-50 flex flex-col justify-end bg-foreground/20 md:pointer-events-none md:items-end md:bg-transparent md:p-6"
+      // Phones: a full-screen sheet (the windowed bottom-sheet felt cramped).
+      // md+: a docked panel from the bottom-right that leaves the app usable.
+      className="pointer-events-auto fixed inset-0 z-50 flex flex-col bg-foreground/20 md:pointer-events-none md:items-end md:justify-end md:bg-transparent md:p-6"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) requestClose()
       }}
@@ -313,7 +412,10 @@ export function ComposeModal({
         role="dialog"
         aria-modal="true"
         aria-label="New message"
-        className="pointer-events-auto safe-bottom flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:h-[32rem] md:max-w-xl md:rounded-xl"
+        // Full height on phones (safe-area padded top and bottom so the header
+        // clears the notch and the footer clears the home bar; the insets are 0
+        // on desktop, so these are inert there); a fixed docked card from md up.
+        className="pointer-events-auto safe-top safe-bottom flex h-full w-full flex-col overflow-hidden border border-border bg-card shadow-2xl md:h-[32rem] md:max-w-xl md:rounded-xl"
       >
         <div className="flex items-center gap-1 border-b border-border px-3 py-2">
           <span className="eyebrow flex-1">{draft?.inReplyTo ? 'Reply' : 'New message'}</span>
@@ -425,6 +527,24 @@ export function ComposeModal({
           </div>
         )}
 
+        {discovering && !encrypt && (
+          <div className="flex items-start gap-2 border-t border-border bg-background/60 px-3.5 py-2">
+            <LockIcon className="mt-px h-3.5 w-3.5 flex-none text-subtle" />
+            <p className="text-[11.5px] leading-relaxed text-subtle">
+              Looking for encryption keys for your recipients…
+            </p>
+          </div>
+        )}
+
+        {encrypt && (
+          <div className="flex items-start gap-2 border-t border-border bg-background/60 px-3.5 py-2">
+            <LockIcon className="mt-px h-3.5 w-3.5 flex-none text-muted-foreground" />
+            <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+              Encrypted with PGP. The subject line is <em>not</em> encrypted.
+            </p>
+          </div>
+        )}
+
         <div className="flex items-center gap-3 border-t border-border px-3.5 py-2.5">
           <div className="min-w-0 flex-1">
             <div className="eyebrow">From</div>
@@ -464,6 +584,64 @@ export function ComposeModal({
               >
                 Get an alias →
               </a>
+            )}
+          </div>
+          <div className="relative flex-none">
+            <button
+              type="button"
+              // A lock STATUS indicator: green closed lock when this message will
+              // be encrypted, red open lock when it won't. Green → click toggles
+              // encryption off; red → click reveals WHY it's off (a popover with
+              // the reason, and a CTA to set up a key when that's the fix).
+              onClick={() => {
+                if (encrypt) setUserOverride(false)
+                else if (canEncrypt) setUserOverride(true)
+                else setShowLockInfo((v) => !v)
+              }}
+              aria-label={encrypt ? 'Encrypted — click to turn off' : 'Not encrypted — why?'}
+              title={
+                encrypt
+                  ? 'Encrypted with PGP — click to turn off'
+                  : canEncrypt
+                    ? 'Not encrypted — click to encrypt'
+                    : 'Not encrypted — click to see why'
+              }
+              className={[
+                'flex h-8 w-8 items-center justify-center rounded-md transition-colors',
+                encrypt
+                  ? 'text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-500'
+                  : 'text-destructive hover:bg-destructive/10',
+              ].join(' ')}
+            >
+              {encrypt ? <LockIcon className="h-4 w-4" /> : <LockOpenIcon className="h-4 w-4" />}
+            </button>
+
+            {showLockInfo && noEncryptReason && (
+              <>
+                {/* Click-away layer so the popover closes on any outside click. */}
+                <div className="fixed inset-0 z-40" onClick={() => setShowLockInfo(false)} />
+                <div className="absolute bottom-full right-0 z-50 mb-2 w-60 rounded-md border border-border bg-card p-3 shadow-lg">
+                  <div className="flex items-start gap-2">
+                    <LockOpenIcon className="mt-px h-3.5 w-3.5 flex-none text-destructive" />
+                    <p className="text-[11.5px] leading-relaxed text-foreground">
+                      {noEncryptReason.text}
+                    </p>
+                  </div>
+                  {noEncryptReason.action && (
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      className="mt-2 w-full"
+                      onClick={() => {
+                        setShowLockInfo(false)
+                        noEncryptReason.action!()
+                      }}
+                    >
+                      {noEncryptReason.cta}
+                    </Button>
+                  )}
+                </div>
+              </>
             )}
           </div>
           <Button variant="primary" onClick={handleSend} disabled={!canSend}>

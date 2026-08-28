@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMailStore } from '@/store/mail'
 import { useMailActions } from '@/hooks/useMailActions'
 import { useThemeStore, resolveTheme } from '@/store/theme'
+import { usePgpMessage } from '@/hooks/usePgpMessage'
+import { setSessionPassphrase } from '@/lib/pgp/session'
+import type { SignatureState } from '@/lib/pgp/openpgp'
 import type { Email } from '@/types/mail'
 import { replyDraft, replyAllDraft, forwardDraft, type Draft } from '@/lib/mail/draft'
 import { SenderProofTrace } from '@/components/ui/SenderProof'
@@ -17,6 +20,7 @@ import {
   BackIcon,
   ArchiveIcon,
   TrashIcon,
+  LockIcon,
 } from '@/components/ui/icons'
 
 /**
@@ -55,16 +59,59 @@ function hasRemoteContent(html: string): boolean {
   return /<img[^>]+src=["']?https?:/i.test(html)
 }
 
+/**
+ * The one-line signature verdict shown above a decrypted PGP message. Honest
+ * and specific — "signed by a key you don't have" is not "verified", and a
+ * failed signature is a loud warning, never a quiet pass. Mirrors SenderProof.
+ */
+function PgpSignatureBadge({ signature }: { signature: SignatureState }) {
+  const map = {
+    valid: { text: 'Signature verified', cls: 'border-border bg-background/60 text-muted-foreground' },
+    'unknown-key': {
+      text: 'Signed, but by a key you don’t have — import it to verify',
+      cls: 'border-border bg-background/60 text-muted-foreground',
+    },
+    invalid: {
+      text: 'BAD SIGNATURE — this message failed verification',
+      cls: 'border-destructive bg-destructive/10 text-destructive',
+    },
+    none: { text: 'Not signed', cls: 'border-border bg-background/60 text-subtle' },
+  }[signature.status]
+  return (
+    <div className={`flex items-center gap-2 rounded-md border px-3 py-1.5 text-[11px] ${map.cls}`}>
+      <LockIcon className="h-3 w-3 flex-none" />
+      <span>Decrypted · {map.text}</span>
+    </div>
+  )
+}
+
+/** Plaintext render used for non-HTML bodies and decrypted PGP text. */
+function PlainBody({ text }: { text: string }) {
+  return (
+    <pre className="whitespace-pre-wrap break-words font-sans text-[13.5px] leading-relaxed text-foreground">
+      {text}
+    </pre>
+  )
+}
+
 function MessageBody({ email }: { email: Email }) {
   const [allowRemote, setAllowRemote] = useState(false)
+  const [passphraseNonce, setPassphraseNonce] = useState(0)
   const preference = useThemeStore((s) => s.preference)
   const dark = resolveTheme(preference) === 'dark'
   const observerRef = useRef<ResizeObserver | null>(null)
 
+  const pgp = usePgpMessage(email, passphraseNonce)
+
+  // All hooks must run before any conditional return, or the hook count changes
+  // across renders as `pgp.kind` resolves — React's "rendered fewer hooks than
+  // expected" crash. So every hook lives here, above the PGP/HTML branches.
   const blocked = useMemo(
     () => Boolean(email.bodyHtml) && hasRemoteContent(email.bodyHtml!) && !allowRemote,
     [email.bodyHtml, allowRemote],
   )
+
+  useEffect(() => () => observerRef.current?.disconnect(), [])
 
   // Remounts the frame when the policy or theme changes, so relaxing the CSP
   // reloads the images and a theme switch re-renders in the new palette rather
@@ -88,14 +135,63 @@ function MessageBody({ email }: { email: Email }) {
     observerRef.current.observe(doc.documentElement)
   }
 
-  useEffect(() => () => observerRef.current?.disconnect(), [])
+  // PGP bodies are handled before the normal HTML/plaintext render: a decrypted
+  // message is plaintext, and the locked/no-key/error states each get an honest
+  // notice rather than dumping the armored blob as if it were the message.
+  if (pgp.kind === 'decrypted') {
+    return (
+      <div className="flex flex-col gap-3">
+        <PgpSignatureBadge signature={pgp.signature} />
+        <PlainBody text={pgp.text} />
+      </div>
+    )
+  }
+  if (pgp.kind === 'locked') {
+    return (
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-border bg-background/60 px-3 py-2">
+        <p className="flex-1 text-[11.5px] text-muted-foreground">
+          This message is encrypted. Unlock your PGP key to read it.
+        </p>
+        <Button
+          size="sm"
+          onClick={() => {
+            const pass = window.prompt('Enter your PGP key passphrase')
+            if (pass) {
+              // Cache against the specific alias key this message needs, then
+              // re-run the decrypt.
+              setSessionPassphrase(pgp.fingerprint, pass)
+              setPassphraseNonce((n) => n + 1)
+            }
+          }}
+        >
+          Unlock
+        </Button>
+      </div>
+    )
+  }
+  if (pgp.kind === 'no-key') {
+    return (
+      <div className="flex flex-col gap-2">
+        <div className="rounded-md border border-border bg-background/60 px-3 py-2 text-[11.5px] text-muted-foreground">
+          This message is PGP-encrypted, but not to a key you hold — it can’t be decrypted here.
+        </div>
+        <PlainBody text={email.body} />
+      </div>
+    )
+  }
+  if (pgp.kind === 'error') {
+    return (
+      <div className="flex flex-col gap-2">
+        <div className="rounded-md border border-destructive bg-destructive/10 px-3 py-2 text-[11.5px] text-destructive">
+          Could not decrypt this PGP message: {pgp.reason}
+        </div>
+        <PlainBody text={email.body} />
+      </div>
+    )
+  }
 
   if (!email.bodyHtml) {
-    return (
-      <pre className="whitespace-pre-wrap break-words font-sans text-[13.5px] leading-relaxed text-foreground">
-        {email.body}
-      </pre>
-    )
+    return <PlainBody text={email.body} />
   }
 
   return (

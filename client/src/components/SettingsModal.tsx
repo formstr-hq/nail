@@ -6,6 +6,7 @@ import { useOwnedAddresses } from "@/hooks/useOwnedAddresses";
 import { fetchDmRelayList, publishDmRelays } from "@/lib/nostr/relays";
 import { BRIDGE_DOMAIN } from "@/lib/nostr/constants";
 import { RelayManager } from "@/components/RelayManager";
+import { PgpSettings } from "@/components/PgpSettings";
 import { buyAddressUrl, config } from "@/lib/api/config";
 import { Button, IconButton } from "@/components/ui/Button";
 import {
@@ -16,6 +17,7 @@ import {
   PenIcon,
   SunIcon,
   KeyIcon,
+  LockIcon,
   PlusIcon,
   BackIcon,
   ChevronRightIcon,
@@ -36,6 +38,7 @@ export type SectionId =
   | "addresses"
   | "relays"
   | "composing"
+  | "encryption"
   | "security"
   | "appearance"
   | "help";
@@ -44,6 +47,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof AtSignIcon }[] = [
   { id: "addresses", label: "Addresses", icon: AtSignIcon },
   { id: "relays", label: "Relays", icon: InboxIcon },
   { id: "composing", label: "Composing", icon: PenIcon },
+  { id: "encryption", label: "Encryption", icon: LockIcon },
   { id: "security", label: "Security", icon: KeyIcon },
   { id: "appearance", label: "Appearance", icon: SunIcon },
   { id: "help", label: "Help", icon: HelpIcon },
@@ -537,6 +541,8 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
                   />
                 </Field>
               )}
+
+              {section === "encryption" && <PgpSettings />}
 
               {section === "security" && <KeyBackup />}
 
