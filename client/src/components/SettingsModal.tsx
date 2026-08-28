@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAccountStore } from "@/store/account";
 import { useSettingsStore } from "@/store/settings";
 import { useThemeStore, type ThemePreference } from "@/store/theme";
+import { useDevStore } from "@/store/dev";
 import { useOwnedAddresses } from "@/hooks/useOwnedAddresses";
 import { fetchDmRelayList, publishDmRelays } from "@/lib/nostr/relays";
 import { BRIDGE_DOMAIN } from "@/lib/nostr/constants";
@@ -170,6 +171,7 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
   const { account, active } = useAccountStore();
   const { settings, save } = useSettingsStore();
   const { preference, setPreference } = useThemeStore();
+  const { debugPanel, setDebugPanel } = useDevStore();
   const {
     addresses,
     loading: addressesLoading,
@@ -562,6 +564,40 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
                         ].join(" ")}
                       >
                         {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+              )}
+
+              {section === "appearance" && (
+                <Field
+                  label="Developer mode"
+                  hint="Adds a debug panel under each message showing its raw decoded event — kind, sender key, tags and content. This device only."
+                >
+                  <div
+                    role="radiogroup"
+                    aria-label="Developer mode"
+                    className="flex gap-1 rounded-md border border-input bg-background p-1"
+                  >
+                    {[
+                      { on: true, label: "On" },
+                      { on: false, label: "Off" },
+                    ].map((o) => (
+                      <button
+                        key={o.label}
+                        type="button"
+                        role="radio"
+                        aria-checked={debugPanel === o.on}
+                        onClick={() => setDebugPanel(o.on)}
+                        className={[
+                          "flex-1 rounded-sm px-2 py-1.5 text-[12px] font-medium transition-colors duration-[120ms]",
+                          debugPanel === o.on
+                            ? "bg-accent text-foreground"
+                            : "text-muted-foreground hover:text-foreground",
+                        ].join(" ")}
+                      >
+                        {o.label}
                       </button>
                     ))}
                   </div>

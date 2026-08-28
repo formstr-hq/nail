@@ -4,7 +4,8 @@ import { AccountSwitcher } from '@/components/AccountSwitcher'
 import { matchesAlias } from '@/lib/mail/aliasFilter'
 import type { EmailFolder } from '@/types/mail'
 import type { InboxStatus } from '@/hooks/useInbox'
-import { BrandGlyph, PenIcon, SettingsIcon, InboxIcon, AtSignIcon, CalendarIcon } from '@/components/ui/icons'
+import { BrandGlyph, PenIcon, SettingsIcon, InboxIcon, AtSignIcon } from '@/components/ui/icons'
+import calendarAppIcon from '@/assets/calendar-app-icon.png'
 import { Button, IconButton } from '@/components/ui/Button'
 import { ThemeToggle } from '@/components/ui/ThemeToggle'
 
@@ -182,7 +183,13 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
               'hover:bg-accent/60 hover:text-foreground',
             ].join(' ')}
           >
-            <CalendarIcon className="h-4 w-4 flex-none text-subtle" />
+            {/* The nostr-calendar app's own tile icon, so the entry reads as a
+                link to that app rather than a generic calendar action. */}
+            <img
+              src={calendarAppIcon}
+              alt=""
+              className="h-4 w-4 flex-none rounded-[3px]"
+            />
             <span>Calendar</span>
           </a>
         </nav>

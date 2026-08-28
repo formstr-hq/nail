@@ -134,7 +134,21 @@ export async function decodeGiftWrap(
     // §4: content is a byte string. postal-mime must be handed real bytes —
     // given a string it re-encodes to UTF-8 before applying the declared
     // charset, which mojibakes every non-UTF-8 message.
-    const parsed = await parseRfc2822(messageStringToBytes(rumor.content))
+    const rawBytes = messageStringToBytes(rumor.content)
+    const parsed = await parseRfc2822(rawBytes)
+
+    // A gift wrap the sender never framed as RFC 2822 — a bare NIP-17-style note
+    // carried on the mail kind, say — parses to almost nothing: postal-mime
+    // reads its first line as a header and drops the rest, so `text`/`html` come
+    // back empty and the message opens blank. When none of the RFC 2822 shape is
+    // present (no subject, no addresses, no html) it was not really a MIME
+    // message, so show the whole decoded content as the body rather than losing
+    // it. Real mail — anything the composer or the bridge produces — always
+    // carries a From/To/Subject, so it never takes this path.
+    const looksLikeMail = Boolean(
+      parsed.subject || parsed.from?.address || parsed.to?.length || parsed.html,
+    )
+    const rawBody = new TextDecoder().decode(rawBytes)
 
     const senderProof = await establishSenderProof({
       fromAddress: parsed.from?.address,
@@ -172,8 +186,8 @@ export async function decodeGiftWrap(
         to: (parsed.to ?? []).map(toDisplay),
         cc: ccAddresses.length ? ccAddresses : undefined,
         subject: parsed.subject ?? '(no subject)',
-        body: parsed.text ?? '',
-        bodyHtml: parsed.html ?? undefined,
+        body: looksLikeMail ? (parsed.text ?? '') : rawBody,
+        bodyHtml: looksLikeMail ? (parsed.html ?? undefined) : undefined,
         // Attachments are out of scope for this pass. Surface that they exist
         // rather than dropping them silently, so a user is never unaware that
         // a message carried one.
@@ -191,6 +205,19 @@ export async function decodeGiftWrap(
         read: ownPubkey !== null && seal.pubkey === ownPubkey,
         labelEventIds: [],
         labels: [],
+        // Ground truth for the reader's debug disclosure — what actually
+        // arrived, before any RFC 2822 interpretation.
+        debug: {
+          sealPubkey: seal.pubkey,
+          rumor: {
+            id: rumor.id,
+            kind: rumor.kind,
+            pubkey: rumor.pubkey,
+            created_at: rumor.created_at,
+            tags: rumor.tags,
+            content: rumor.content,
+          },
+        },
       },
     }
   } catch (err) {

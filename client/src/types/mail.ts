@@ -36,6 +36,24 @@ export interface Attachment {
  */
 export type SenderProof = 'bridge-seal' | 'own-seal' | 'nip05' | 'none'
 
+/**
+ * The decoded inner rumor, kept for the reader's debug disclosure. Lets you see
+ * exactly what arrived on the wire — kind, sender key, tags, raw content —
+ * which is the ground truth when a message renders in a way that looks wrong
+ * (e.g. an empty body: is it really empty, or did parsing drop it?).
+ */
+export interface RumorDebug {
+  sealPubkey: string
+  rumor: {
+    id: string
+    kind: number
+    pubkey: string
+    created_at: number
+    tags: string[][]
+    content: string
+  }
+}
+
 export interface Email {
   id: string               // Kind 1059 gift-wrap event ID
   messageId?: string       // RFC 2822 Message-ID header
@@ -54,6 +72,7 @@ export interface Email {
   read: boolean
   labelEventIds: string[]  // Kind 1985 event IDs managing this email's labels
   labels: string[]         // e.g. ['trash', 'flag:starred', 'state:read']
+  debug?: RumorDebug       // raw decoded rumor, for the reader's debug view
 }
 
 export type EmailFolder = 'inbox' | 'sent' | 'trash' | 'archive' | 'spam'
