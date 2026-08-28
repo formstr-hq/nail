@@ -52,6 +52,28 @@ async function senderOwnsFromAddress(from: string, senderPubkey: string): Promis
   return (await probeNip05(from)) === senderPubkey
 }
 
+// The bridge relays outbound legacy mail only for a registered NIP-05 alias
+// sender, never a bare npub. The message and its matcher live together so the
+// composer can recognize *this* failure among all send errors and offer the
+// fix — switch to an owned alias, or buy one — instead of just printing the
+// sentence. Keep the shared phrase in both so copy edits stay in step.
+const UNREGISTERED_SENDER_PHRASE = 'registered alias senders'
+
+export function unregisteredSenderError(fromAddress: string, domains: string[]): string {
+  return (
+    `External recipients are delivered through the bridge, which only accepts ` +
+    `${UNREGISTERED_SENDER_PHRASE} on ${domains.join('/')}. ` +
+    `"${fromAddress}" is not one, so the bridge would bounce this message. ` +
+    `Use a registered alias as the From, or remove the external recipients.`
+  )
+}
+
+/** True when a send error is the unregistered-sender bounce above — the one
+ *  case the composer can offer a one-click fix for. */
+export function isUnregisteredSenderError(message: string): boolean {
+  return message.includes(UNREGISTERED_SENDER_PHRASE)
+}
+
 export interface SendMailParams {
   from: MailAddress
   senderPubkey: string
@@ -161,12 +183,7 @@ export async function buildWraps(
       return {
         wraps: [],
         targets: [],
-        errors: [
-          `External recipients are delivered through the bridge, which only accepts ` +
-            `registered alias senders on ${ctx.localDomains.join('/')}. ` +
-            `"${from.address}" is not one, so the bridge would bounce this message. ` +
-            `Use a registered alias as the From, or remove the external recipients.`,
-        ],
+        errors: [unregisteredSenderError(from.address, ctx.localDomains)],
       }
     }
     await add(ctx.bridgePubkey, legacy)

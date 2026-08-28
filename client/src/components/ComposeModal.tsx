@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { useMailStore } from '@/store/mail'
-import { sendMail } from '@/lib/mail/send'
+import { sendMail, isUnregisteredSenderError } from '@/lib/mail/send'
 import { protocolSigner } from '@/lib/nostr/protocol-signer'
 import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
 import { isNpub, splitAddress } from '@protocol'
@@ -277,6 +277,34 @@ export function ComposeModal({
     }
   }
 
+  // One-click fix for the bridge-sender bounce: the From is derived from the
+  // active inbox, so switching to an owned alias is expressed the same way the
+  // From <select> does it. Clearing the error lets the banner fall away once
+  // the sender is legal again.
+  function switchToAlias() {
+    if (ownedAliases.length === 0) return
+    setInboxFilter(ownedAliases[0], true)
+    setError('')
+  }
+
+  // The actionable half of every alias-limitation notice: switch to an alias
+  // you already own, or go buy one. Shared by the pre-send npub guard and the
+  // send-time bounce banner so both are actionable, not just explanatory.
+  const aliasFix = hasAlias ? (
+    <Button size="sm" onClick={switchToAlias} className="min-w-0 max-w-full">
+      <span className="truncate">Send from {ownedAliases[0]}</span>
+    </Button>
+  ) : (
+    <a
+      href="/"
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex h-7 items-center whitespace-nowrap rounded-md border border-input bg-card px-2.5 text-xs font-medium text-foreground transition-colors duration-[120ms] hover:bg-accent"
+    >
+      Get an alias →
+    </a>
+  )
+
   if (minimized) {
     return (
       <div className="fixed bottom-0 right-4 z-50 md:right-6">
@@ -407,21 +435,35 @@ export function ComposeModal({
           className="min-h-[8rem] flex-1 resize-none bg-transparent px-3.5 py-3 text-[13.5px] leading-relaxed text-foreground placeholder:text-subtle focus:outline-none"
         />
 
+        {/* Body copy stays in `text-foreground`, not `text-destructive`: a
+            muted red on the dark banner is too low-contrast to read (the very
+            bug that prompted this). Red is carried by the icon alone, which is
+            enough to read as an error. When the failure is the bridge-sender
+            bounce, the same switch/buy CTA the pre-send guard uses is attached
+            so the message is actionable, not just a wall of text. */}
         {error && (
-          <div className="flex items-start gap-2 border-t border-border bg-destructive/10 px-3.5 py-2">
-            <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-destructive" />
-            <p className="text-[11.5px] leading-relaxed text-destructive">{error}</p>
+          <div className="border-t border-border bg-destructive/10 px-3.5 py-2.5">
+            <div className="flex items-start gap-2">
+              <AlertIcon className="mt-0.5 h-3.5 w-3.5 flex-none text-destructive" />
+              <p className="text-[11.5px] leading-relaxed text-foreground">{error}</p>
+            </div>
+            {isUnregisteredSenderError(error) && (
+              <div className="mt-2 pl-[1.375rem]">{aliasFix}</div>
+            )}
           </div>
         )}
 
         {npubBlocked && (
-          <div className="flex items-start gap-2 border-t border-border bg-accent px-3.5 py-2">
-            <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-muted-foreground" />
-            <p className="text-[11.5px] leading-relaxed text-foreground">
-              {hasAlias
-                ? 'External email addresses are delivered through the bridge, which only accepts registered alias senders — your npub can’t reach them. (Your npub still works fine for any recipient reached directly over Nostr: npubs and NIP-05 names.) Pick one of your aliases in From, or remove the external recipient.'
-                : 'External email addresses are delivered through the bridge, which only accepts registered alias senders — your npub can’t reach them. (Your npub still works fine for any recipient reached directly over Nostr: npubs and NIP-05 names.) Buy an alias to send to external email, or remove the external recipient.'}
-            </p>
+          <div className="border-t border-border bg-accent px-3.5 py-2.5">
+            <div className="flex items-start gap-2">
+              <AlertIcon className="mt-0.5 h-3.5 w-3.5 flex-none text-muted-foreground" />
+              <p className="text-[11.5px] leading-relaxed text-foreground">
+                External email addresses are delivered through the bridge, which only accepts
+                registered alias senders — your npub can’t reach them. (Your npub still works fine
+                for any recipient reached directly over Nostr: npubs and NIP-05 names.)
+              </p>
+            </div>
+            <div className="mt-2 pl-[1.375rem]">{aliasFix}</div>
           </div>
         )}
 
