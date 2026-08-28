@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMailStore } from '@/store/mail'
 import { useMailActions } from '@/hooks/useMailActions'
 import { useThemeStore, resolveTheme } from '@/store/theme'
+import { useDevStore } from '@/store/dev'
 import type { Email } from '@/types/mail'
 import { replyDraft, replyAllDraft, forwardDraft, type Draft } from '@/lib/mail/draft'
 import { SenderProofTrace } from '@/components/ui/SenderProof'
@@ -9,6 +10,7 @@ import { Avatar } from '@/components/ui/Avatar'
 import { useProfile } from '@/hooks/useProfile'
 import { Button } from '@/components/ui/Button'
 import { AttachmentRow } from '@/components/AttachmentRow'
+import { buildEmailFrame, hasRemoteContent } from '@/lib/mail/emailFrame'
 import {
   ReplyIcon,
   ReplyAllIcon,
@@ -18,42 +20,6 @@ import {
   ArchiveIcon,
   TrashIcon,
 } from '@/components/ui/icons'
-
-/**
- * Remote content in HTML mail is how senders find out a message was opened.
- * The default policy allows only images already embedded in the message, so
- * opening mail never reports back; `img-src` widens to the network only when
- * the reader asks for it.
- *
- * This is a `<meta>` policy inside the frame rather than a sandbox flag
- * because sandboxing cannot express "no network, but do render the markup".
- */
-function framed(html: string, allowRemote: boolean, dark: boolean): string {
-  const imgSrc = allowRemote ? "img-src data: https: http:" : "img-src data:"
-  const policy = `default-src 'none'; ${imgSrc}; style-src 'unsafe-inline'; font-src data:`
-  // Follow the app's theme. Background stays transparent so it inherits the
-  // reading pane and messages that set their own colours are left alone; only
-  // the defaults (text, links, native controls) track light/dark.
-  const fg = dark ? '#e6e6e6' : '#0b0b0c'
-  // Links stay ink and lean on the underline for affordance — colour is
-  // functional here too, and a coloured link in arbitrary mail would compete
-  // with the app's own meaning for colour. Underline carries the "link".
-  const link = fg
-  // `<base target="_blank">` sends every link to a new tab instead of replacing
-  // the frame's own document; the sandbox flags below are what let that popup
-  // actually open and land as a normal (un-sandboxed) page.
-  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${policy}"><meta name="referrer" content="no-referrer"><base target="_blank"><style>
-    html{color-scheme:${dark ? 'dark' : 'light'}}
-    body{margin:0;padding:0;font:13.5px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:${fg};background:transparent;word-break:break-word}
-    img{max-width:100%;height:auto}
-    a{color:${link}}
-  </style></head><body>${html}</body></html>`
-}
-
-/** True when the markup asks for anything the CSP would currently block. */
-function hasRemoteContent(html: string): boolean {
-  return /<img[^>]+src=["']?https?:/i.test(html)
-}
 
 function MessageBody({ email }: { email: Email }) {
   const [allowRemote, setAllowRemote] = useState(false)
@@ -91,6 +57,17 @@ function MessageBody({ email }: { email: Email }) {
   useEffect(() => () => observerRef.current?.disconnect(), [])
 
   if (!email.bodyHtml) {
+    // A truly empty body would render as a blank pane that reads as "broken".
+    // Say so plainly instead — the decode already recovers content from
+    // non-MIME messages (see receive.ts), so reaching here means it really is
+    // empty.
+    if (!email.body.trim()) {
+      return (
+        <p className="text-[13px] italic leading-relaxed text-muted-foreground">
+          This message has no content.
+        </p>
+      )
+    }
     return (
       <pre className="whitespace-pre-wrap break-words font-sans text-[13.5px] leading-relaxed text-foreground">
         {email.body}
@@ -113,7 +90,7 @@ function MessageBody({ email }: { email: Email }) {
       )}
       <iframe
         key={frameKey}
-        srcDoc={framed(email.bodyHtml, allowRemote, dark)}
+        srcDoc={buildEmailFrame(email.bodyHtml, allowRemote, dark)}
         // Scripts stay off (no `allow-scripts`) and the CSP blocks them too, so
         // same-origin can't be turned against us — it only lets us measure the
         // document for auto-height. Popups let `target="_blank"` links open, and
@@ -126,6 +103,58 @@ function MessageBody({ email }: { email: Email }) {
         title={`Message: ${email.subject}`}
       />
     </div>
+  )
+}
+
+/**
+ * A collapsed disclosure showing the raw decoded rumor — the ground truth for
+ * "why does this message look like this?". Kind, sealing key, tags and the
+ * exact content as it arrived, before any RFC 2822 interpretation. Collapsed by
+ * default so it never intrudes on normal reading.
+ */
+function DebugPanel({ email }: { email: Email }) {
+  const debugPanel = useDevStore((s) => s.debugPanel)
+  const [copied, setCopied] = useState(false)
+  if (!debugPanel) return null
+  const debug = email.debug!
+  const json = JSON.stringify(
+    { ...debug, senderProof: email.senderProof, giftWrapId: email.id },
+    null,
+    2,
+  )
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(json)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    } catch {
+      // Clipboard blocked (insecure origin / permission) — the JSON is still
+      // on screen to select by hand, so there is nothing to recover here.
+    }
+  }
+
+  return (
+    <details className="mt-8 rounded-md border border-border bg-background/40">
+      <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] text-subtle">
+        Debug · rumor event
+        <span className="font-sans lowercase tracking-normal text-muted-foreground">
+          kind {debug.rumor.kind} · proof {email.senderProof}
+        </span>
+      </summary>
+      <div className="border-t border-border px-3 py-2">
+        <button
+          type="button"
+          onClick={copy}
+          className="mb-2 rounded border border-input bg-card px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          {copied ? 'Copied' : 'Copy JSON'}
+        </button>
+        <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words font-mono text-[10.5px] leading-relaxed text-muted-foreground">
+          {json}
+        </pre>
+      </div>
+    </details>
   )
 }
 
@@ -238,6 +267,8 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
             ))}
           </div>
         )}
+
+        {email.debug && <DebugPanel email={email} />}
       </div>
 
       <footer className="flex items-center gap-2 border-t border-border px-5 py-3 md:px-6">
