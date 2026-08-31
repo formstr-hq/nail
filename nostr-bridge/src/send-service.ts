@@ -1,11 +1,12 @@
 import express from "express";
 import { timingSafeEqual } from "node:crypto";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
-import { nip19 } from "nostr-tools";
+import { nip19, type Event } from "nostr-tools";
 import { publishMail } from "./nostr-publisher.js";
 import { bytesToMessageString } from "./protocol/bytes.js";
 import { lookupNip05 } from "./nip05.js";
 import { isNpub, isHexPubkey, splitAddress } from "./protocol/address.js";
+import { KIND_GIFTWRAP } from "./protocol/constants.js";
 import type { ProtocolSigner } from "./protocol/types.js";
 import type { UserResolver } from "./user-resolver.js";
 
@@ -26,6 +27,15 @@ export interface SendDeps {
   userResolver: Pick<UserResolver, "getDmRelays">;
   localDomains: string[];
   nip05BaseUrl?: string;
+  /**
+   * Direct-inject a gift wrap into the same receive path the relay
+   * subscription feeds — i.e. the listener's `handleWrap`. Supplied by
+   * index.ts, which owns the shared pool/transport. Optional: when absent the
+   * `/v1/relay` endpoint reports "not configured" rather than existing as a
+   * dead route. See the endpoint below for why a caller wants this over
+   * publishing to relays themselves.
+   */
+  injectWrap?: (event: Event) => Promise<void>;
 }
 
 export interface SendRequest {
@@ -167,6 +177,49 @@ export async function sendSystemMail(
   return { ok: true, pubkey: recipient.pubkey, relays: relays.length };
 }
 
+/**
+ * Shape-check a client-supplied gift wrap before it enters the receive path.
+ * This is *not* the security gate — `unwrapAndVerify` inside `handleWrap` is,
+ * since only the bridge's key can decrypt a wrap genuinely addressed to it and
+ * only the sealed sender can authorize the From. This check exists so a
+ * misaddressed or malformed wrap gets a clear 400 instead of silently
+ * no-op-ing as "not-for-us" behind a 202.
+ */
+function validateInjectableWrap(
+  body: unknown,
+  bridgePubkey: string,
+): { ok: true; event: Event } | { ok: false; reason: string } {
+  // Accept either `{ wrap: <event> }` or a bare event, so callers can post the
+  // gift wrap however their client library hands it to them.
+  const raw =
+    body && typeof body === "object" && "wrap" in body
+      ? (body as { wrap: unknown }).wrap
+      : body;
+
+  if (!raw || typeof raw !== "object") return { ok: false, reason: "missing wrap event" };
+  const event = raw as Partial<Event> & { tags?: unknown };
+
+  if (event.kind !== KIND_GIFTWRAP) {
+    return { ok: false, reason: `wrap must be kind ${KIND_GIFTWRAP}` };
+  }
+  if (
+    typeof event.id !== "string" ||
+    typeof event.pubkey !== "string" ||
+    typeof event.sig !== "string" ||
+    typeof event.content !== "string" ||
+    !Array.isArray(event.tags)
+  ) {
+    return { ok: false, reason: "malformed wrap event" };
+  }
+
+  const pTagged = (event.tags as unknown[]).some(
+    (t) => Array.isArray(t) && t[0] === "p" && t[1] === bridgePubkey,
+  );
+  if (!pTagged) return { ok: false, reason: "wrap is not addressed to this bridge" };
+
+  return { ok: true, event: event as Event };
+}
+
 /** Constant-time bearer-token check; a length mismatch short-circuits safely. */
 function authorized(req: express.Request, apiKey: string): boolean {
   const match = /^Bearer\s+(.+)$/i.exec(req.header("authorization") ?? "");
@@ -197,6 +250,37 @@ export function createSendApp(deps: SendDeps & { apiKey: string }): express.Expr
       return res.status(202).json({ published: true, relays: result.relays });
     } catch (err) {
       console.error("nostr-bridge: send failed:", (err as Error).message);
+      return res.status(500).json({ error: "internal error" });
+    }
+  });
+
+  // Direct-inject a client-originated gift wrap. Unlike /v1/send (the bridge
+  // seals its OWN content), the caller supplies a wrap they sealed themselves,
+  // so it goes out *as their mail* — the From authorization is the seal inside
+  // the wrap, which we cannot forge. This is the reliable alternative to a
+  // client publishing the wrap to relays and hoping our subscription catches
+  // it: it feeds the identical `handleWrap` path with no relay round-trip.
+  app.post("/v1/relay", async (req, res) => {
+    if (!authorized(req, deps.apiKey)) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+    if (!deps.injectWrap) {
+      return res.status(501).json({ error: "relay not configured" });
+    }
+
+    const bridgePubkey = await deps.signer.getPublicKey();
+    const parsed = validateInjectableWrap(req.body, bridgePubkey);
+    if (!parsed.ok) return res.status(400).json({ error: parsed.reason });
+
+    try {
+      // Accepted for processing, mirroring the relay path: authorization,
+      // outbound delivery and any bounce happen asynchronously inside
+      // handleWrap. A 202 means "we took it", not "it was delivered".
+      await deps.injectWrap(parsed.event);
+      console.log(`nostr-bridge: relayed injected wrap ${parsed.event.id.slice(0, 8)}`);
+      return res.status(202).json({ accepted: true });
+    } catch (err) {
+      console.error("nostr-bridge: wrap injection failed:", (err as Error).message);
       return res.status(500).json({ error: "internal error" });
     }
   });

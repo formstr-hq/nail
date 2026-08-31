@@ -187,3 +187,90 @@ describe("createSendApp auth", () => {
     });
   });
 });
+
+describe("createSendApp /v1/relay", () => {
+  async function withServer(
+    injectWrap: SendDeps["injectWrap"],
+    fn: (baseUrl: string) => Promise<void>,
+  ) {
+    const app = createSendApp({ ...deps({ injectWrap }), apiKey: "secret-key" });
+    const server = app.listen(0);
+    await new Promise((r) => server.once("listening", r));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+    try {
+      await fn(`http://127.0.0.1:${port}`);
+    } finally {
+      server.close();
+    }
+  }
+
+  const relay = (baseUrl: string, body: unknown, auth = "Bearer secret-key") =>
+    fetch(`${baseUrl}/v1/relay`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: auth },
+      body: JSON.stringify(body),
+    });
+
+  // A shape-valid gift wrap p-tagged to the bridge's own key. Content is opaque
+  // to the endpoint — the real decryption happens inside handleWrap (mocked).
+  async function validWrap() {
+    const bridgePubkey = await signer.getPublicKey();
+    return {
+      kind: 1059,
+      id: "f".repeat(64),
+      pubkey: "e".repeat(64),
+      sig: "d".repeat(128),
+      content: "opaque-nip44-ciphertext",
+      created_at: 1000,
+      tags: [["p", bridgePubkey]],
+    };
+  }
+
+  it("401s without a valid bearer token", async () => {
+    const inject = vi.fn().mockResolvedValue(undefined);
+    await withServer(inject, async (baseUrl) => {
+      expect((await relay(baseUrl, await validWrap(), "Bearer wrong")).status).toBe(401);
+      expect(inject).not.toHaveBeenCalled();
+    });
+  });
+
+  it("501s when no inject handler is configured", async () => {
+    await withServer(undefined, async (baseUrl) => {
+      const res = await relay(baseUrl, await validWrap());
+      expect(res.status).toBe(501);
+    });
+  });
+
+  it("400s a wrong-kind, malformed, or misaddressed wrap", async () => {
+    const inject = vi.fn().mockResolvedValue(undefined);
+    await withServer(inject, async (baseUrl) => {
+      const wrap = await validWrap();
+      expect((await relay(baseUrl, { ...wrap, kind: 1 })).status).toBe(400);
+      expect((await relay(baseUrl, { ...wrap, tags: undefined })).status).toBe(400);
+      expect((await relay(baseUrl, { ...wrap, tags: [["p", "0".repeat(64)]] })).status).toBe(400);
+      expect(inject).not.toHaveBeenCalled();
+    });
+  });
+
+  it("202s and hands the wrap to the inject handler", async () => {
+    const inject = vi.fn().mockResolvedValue(undefined);
+    await withServer(inject, async (baseUrl) => {
+      const wrap = await validWrap();
+      const res = await relay(baseUrl, { wrap });
+      expect(res.status).toBe(202);
+      expect(await res.json()).toEqual({ accepted: true });
+      expect(inject).toHaveBeenCalledOnce();
+      expect(inject.mock.calls[0][0]).toMatchObject({ kind: 1059, id: wrap.id });
+    });
+  });
+
+  it("accepts a bare event as well as { wrap }", async () => {
+    const inject = vi.fn().mockResolvedValue(undefined);
+    await withServer(inject, async (baseUrl) => {
+      const res = await relay(baseUrl, await validWrap());
+      expect(res.status).toBe(202);
+      expect(inject).toHaveBeenCalledOnce();
+    });
+  });
+});
