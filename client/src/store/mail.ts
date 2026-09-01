@@ -20,6 +20,58 @@ const STATE_KEY = 'mailstr.mailstate.v1'
 // The pre-sync build kept only a set of opened gift-wrap ids here. Fold it into
 // the new map on first load so nobody's read state resets on upgrade.
 const LEGACY_READ_KEY = 'mailstr.read'
+// Device-local deletion state. `wrapKeys` holds the wrap authors' ephemeral
+// signing keys (the WRAP_KEY_TAG rumor tag, captured at unwrap) — the only
+// credential that lets a NIP-09 kind-5 actually purge a wrap from relays, and
+// a deletion-only capability: it cannot decrypt anything. `deletedIds` is the
+// local tombstone set; a relay (or our own local cache, whose deletion ledger
+// is in-memory) may keep serving a wrap after we deleted it, and this is what
+// keeps "delete forever" from resurrecting on the next replay.
+const WRAP_KEYS_KEY = 'mailstr.wrapkeys.v1'
+const DELETED_KEY = 'mailstr.deleted.v1'
+
+function loadJsonObject<T>(key: string): Record<string, T> {
+  try {
+    const raw = localStorage.getItem(key)
+    const parsed: unknown = raw ? JSON.parse(raw) : {}
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const out: Record<string, T> = {}
+    for (const [id, value] of Object.entries(parsed as Record<string, T>)) {
+      if (typeof id === 'string' && value) out[id] = value
+    }
+    return out
+  } catch {
+    // Blocked/absent storage or malformed JSON — start empty. State just won't
+    // persist this session, a far smaller failure than a crash.
+    return {}
+  }
+}
+
+function loadIdSet(key: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(key)
+    const parsed: unknown = raw ? JSON.parse(raw) : []
+    return new Set(Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+function persistJson(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // Storage refused it — still applies in memory for this session.
+  }
+}
+
+function loadWrapKeys(): Record<string, string> {
+  return loadJsonObject<string>(WRAP_KEYS_KEY)
+}
+
+function loadDeletedIds(): Set<string> {
+  return loadIdSet(DELETED_KEY)
+}
 
 function loadMailState(): Record<string, MailFlags> {
   const state: Record<string, MailFlags> = {}
@@ -65,7 +117,11 @@ export function isFiled(flags: MailFlags | undefined): boolean {
 interface MailState {
   emails: Record<string, Email>   // keyed by event ID
   seenIds: Set<string>
-  mailState: Record<string, MailFlags> // read/archived/trashed by gift-wrap id
+  mailState: Record<string, MailFlags> // read/archived/trashed/deleted by gift-wrap id
+  /** Wrap-author ephemeral keys captured at unwrap; powers NIP-09 delete. */
+  wrapKeys: Record<string, string>
+  /** Gift-wrap ids permanently deleted on this device; never shown again. */
+  deletedIds: Set<string>
   selectedId: string | null
   folder: EmailFolder
   query: string
@@ -78,6 +134,14 @@ interface MailState {
   setFlag: (id: string, patch: Partial<Omit<MailFlags, 'updatedAt'>>) => MailFlags
   /** Apply state learned from the relay, newest-wins by `updatedAt`. */
   hydrateFlags: (entries: { ref: string; flags: MailFlags }[]) => void
+  /** Remember the wrap author's key so a later delete can be authored correctly. */
+  saveWrapKey: (id: string, wrapKey: string) => void
+  /**
+   * Locally finalize a permanent delete: tombstone the wrap, purge the mail,
+   * its wrap key, and set the deleted flag. Returns the merged flags for the
+   * caller to publish as the mail's meta event.
+   */
+  markDeleted: (id: string) => MailFlags
   setFolder: (folder: EmailFolder) => void
   setSelected: (id: string | null) => void
   setQuery: (query: string) => void
@@ -89,6 +153,8 @@ export const useMailStore = create<MailState>()((set, get) => ({
   emails: {},
   seenIds: new Set(),
   mailState: loadMailState(),
+  wrapKeys: loadWrapKeys(),
+  deletedIds: loadDeletedIds(),
   selectedId: null,
   folder: 'inbox',
   query: '',
@@ -96,6 +162,11 @@ export const useMailStore = create<MailState>()((set, get) => ({
 
   addEmail: (email) => {
     if (get().seenIds.has(email.id)) return
+    // A deleted mail must never re-enter the view, however it arrives — a
+    // relay replaying a wrap whose kind-5 it ignored, or our own cache after
+    // reload (the local relay's deletion ledger is in-memory). Both the device
+    // tombstone and the synced deleted flag are checked.
+    if (get().deletedIds.has(email.id) || get().mailState[email.id]?.deleted) return
     // Re-apply known state: a freshly fetched wrap arrives read:false, but we
     // may have opened (or filed) it before, here or on another device.
     const read = email.read || !!get().mailState[email.id]?.read
@@ -125,6 +196,9 @@ export const useMailStore = create<MailState>()((set, get) => ({
     set((s) => {
       const mailState = { ...s.mailState }
       const emails = { ...s.emails }
+      let deletedIds = s.deletedIds
+      let wrapKeys = s.wrapKeys
+      let selectedId = s.selectedId
       let changed = false
       for (const { ref, flags } of entries) {
         const prev = mailState[ref]
@@ -134,13 +208,74 @@ export const useMailStore = create<MailState>()((set, get) => ({
         if (prev && prev.updatedAt > flags.updatedAt) continue
         mailState[ref] = flags
         changed = true
+        if (flags.deleted) {
+          // Another device deleted this mail: purge it here too. Tombstoning
+          // matters as much as removing the entry — a relay that ignored the
+          // kind-5 will happily serve the wrap again on the next fetch.
+          if (!deletedIds.has(ref)) {
+            deletedIds = new Set(deletedIds)
+            deletedIds.add(ref)
+            persistJson(DELETED_KEY, [...deletedIds])
+          }
+          if (ref in wrapKeys) {
+            wrapKeys = { ...wrapKeys }
+            delete wrapKeys[ref]
+            persistJson(WRAP_KEYS_KEY, wrapKeys)
+          }
+          delete emails[ref]
+          if (selectedId === ref) selectedId = null
+          continue
+        }
         const email = emails[ref]
         if (email && email.read !== !!flags.read) emails[ref] = { ...email, read: !!flags.read }
       }
       if (!changed) return s
       persistMailState(mailState)
-      return { mailState, emails }
+      return { mailState, emails, deletedIds, wrapKeys, selectedId }
     }),
+
+  saveWrapKey: (id, wrapKey) => {
+    if (get().wrapKeys[id] === wrapKey) return
+    set((s) => {
+      const wrapKeys = { ...s.wrapKeys, [id]: wrapKey }
+      persistJson(WRAP_KEYS_KEY, wrapKeys)
+      return { wrapKeys }
+    })
+  },
+
+  markDeleted: (id) => {
+    const merged: MailFlags = {
+      ...get().mailState[id],
+      deleted: true,
+      updatedAt: Math.floor(Date.now() / 1000),
+    }
+    set((s) => {
+      const deletedIds = new Set(s.deletedIds)
+      deletedIds.add(id)
+      persistJson(DELETED_KEY, [...deletedIds])
+
+      const wrapKeys = { ...s.wrapKeys }
+      delete wrapKeys[id]
+      persistJson(WRAP_KEYS_KEY, wrapKeys)
+
+      const mailState = { ...s.mailState, [id]: merged }
+      persistMailState(mailState)
+
+      const emails = { ...s.emails }
+      delete emails[id]
+      // `seenIds` deliberately keeps the id: a relay replaying the wrap must
+      // not pay a signer round-trip only for addEmail's tombstone guard to
+      // drop the result — the onEvent pre-checks catch it first.
+      return {
+        deletedIds,
+        wrapKeys,
+        mailState,
+        emails,
+        selectedId: s.selectedId === id ? null : s.selectedId,
+      }
+    })
+    return merged
+  },
 
   // Switching folders clears the search too: a query typed against Inbox
   // almost never means the same thing in Trash, and carrying it over silently

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useAccountStore } from '@/store/account'
 import { useMailStore } from '@/store/mail'
-import { getLocalRelay, syncAccountRelays } from '@/lib/nostr/localRelay'
+import { getLocalRelay, syncAccountRelays, localRelayBootError } from '@/lib/nostr/localRelay'
 import { decodeGiftWrap } from '@/lib/mail/receive'
 import { protocolSigner } from '@/lib/nostr/protocol-signer'
 import { KIND_GIFTWRAP, DEFAULT_RELAYS, withHardcodedRelay } from '@/lib/nostr/constants'
@@ -34,6 +34,26 @@ export function useInbox(bridgePubkey: string | null) {
     let alive = true
     setStatus({ phase: 'connecting', decoding: 0 })
 
+    // A dead relay worker fails SILENTLY otherwise: observe() returns a handle
+    // either way, no events ever flow, and the user sees an eternally empty
+    // "connecting" inbox. Browsers that can't run the worker (Safari < 15 was
+    // the reported case — no classic-worker fallback in older iOS) must get a
+    // real error instead. Poll rather than hook: the worker object is created
+    // inside getLocalRelay and workerChannel takes over its message handler.
+    const watchdog = setInterval(() => {
+      if (!alive) return
+      const bootError = localRelayBootError()
+      if (!bootError) return
+      clearInterval(watchdog)
+      setStatus({
+        phase: 'error',
+        message:
+          'The mail engine could not start in this browser ' +
+          `(${bootError}). On an older iPhone or iPad, updating iOS may fix this.`,
+        decoding: 0,
+      })
+    }, 1000)
+
     const relay = getLocalRelay()
     const signer = protocolSigner(active)
 
@@ -62,6 +82,11 @@ export function useInbox(bridgePubkey: string | null) {
           .then((outcome) => {
             if (!alive) return
             if ('email' in outcome) {
+              // Stash the wrap author's key before the email itself: delete-
+              // forever needs it on hand, and a crash between the two must not
+              // strand the mail as undeletable.
+              if (outcome.wrapSecret)
+                useMailStore.getState().saveWrapKey(outcome.email.id, outcome.wrapSecret)
               addEmail(outcome.email)
               return
             }
@@ -109,6 +134,10 @@ export function useInbox(bridgePubkey: string | null) {
           // Skip anything already decoded — otherwise every reload pays the
           // signer round-trip again for mail we have already read.
           if (useMailStore.getState().seenIds.has(event.id)) return
+          // Skip deleted mail outright: a relay that ignored the kind-5 (the
+          // local cache included) will keep serving the wrap; the tombstone,
+          // not the decode-then-drop path, is what pays no signer round-trip.
+          if (useMailStore.getState().deletedIds.has(event.id)) return
           queue.push(event)
           pump()
         },
@@ -134,6 +163,7 @@ export function useInbox(bridgePubkey: string | null) {
 
     return () => {
       alive = false
+      clearInterval(watchdog)
       cleanup?.()
     }
   }, [account, active, addEmail, bridgePubkey, attempt])

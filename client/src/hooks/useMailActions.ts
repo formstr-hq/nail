@@ -3,6 +3,7 @@ import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { useMailStore } from '@/store/mail'
 import { publishMailMeta, randomMailIndexKey } from '@/lib/nostr/mailMeta'
+import { publishGiftwrapDeletion } from '@/lib/nostr/delete'
 import { loadSettingsDetailed } from '@/lib/nostr/settings'
 import type { MailFlags } from '@/types/mail'
 
@@ -31,6 +32,10 @@ export function useMailActions() {
     (id: string, patch: Partial<Omit<MailFlags, 'updatedAt'>>) => {
       const { account, active } = useAccountStore.getState()
       if (!account || !active) return
+
+      // A deleted mail is gone: a later archive/read/trash would only publish
+      // state events pointing at a tombstone. Delete is final.
+      if (useMailStore.getState().mailState[id]?.deleted) return
 
       // No-op if the mail is already in the requested state — avoids a needless
       // relay write on, e.g., re-opening an already-read message.
@@ -62,6 +67,45 @@ export function useMailActions() {
     // Restore drops both filing flags, so a mail returns to the Inbox whether it
     // was archived or trashed.
     restore: useCallback((id: string) => apply(id, { archived: false, trashed: false }), [apply]),
+
+    /**
+     * Permanent delete. The mail vanishes locally at once (tombstoned so no
+     * relay replay resurrects it); in the background we publish the meta
+     * `deleted` flag — the cross-device record — and BOTH NIP-09 kind-5
+     * variants (see lib/nostr/delete.ts): the wrap-author one, which NIP-09
+     * relays and our own local cache actually honor, and the recipient one,
+     * the only attempt possible for legacy mail without an embedded wrap key.
+     */
+    deleteForever: useCallback((id: string) => {
+      const { account, active } = useAccountStore.getState()
+      if (!account || !active) return
+      if (useMailStore.getState().mailState[id]?.deleted) return
+
+      // Read the wrap key before markDeleted purges it.
+      const wrapSecret = useMailStore.getState().wrapKeys[id]
+      const merged = useMailStore.getState().markDeleted(id)
+
+      void (async () => {
+        try {
+          const indexKey = await ensureMailIndexKey(account.pubkey, active)
+          await publishMailMeta(id, merged, account.pubkey, active, indexKey)
+        } catch (e) {
+          console.error('[delete] failed to publish deleted state', e)
+        }
+        try {
+          await publishGiftwrapDeletion({
+            giftwrapId: id,
+            wrapSecret,
+            pubkey: account.pubkey,
+            active,
+          })
+        } catch (e) {
+          // Local removal stands; a failed relay round just means relays keep
+          // ciphertext they cannot read, and the tombstone keeps it hidden.
+          console.error('[delete] failed to publish NIP-09 deletion', e)
+        }
+      })()
+    }, []),
   }
 }
 
