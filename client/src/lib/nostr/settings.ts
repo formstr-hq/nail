@@ -45,6 +45,32 @@ export interface MailSettings {
                            // Generated once, then synced here so every device
                            // derives the same opaque `d` tags. Never leaves the
                            // encrypted settings blob.
+
+  // ── OpenPGP (see lib/pgp/). Content-level encryption on top of the gift-wrap
+  // transport, for interop with the outside email world. ──
+  //
+  // Keys are PER ALIAS, not one per account. Binding every alias to a single key
+  // (as user IDs, and by publishing them together to a keyserver) would link
+  // those addresses publicly and permanently — the exact privacy leak aliases
+  // exist to prevent. So each address gets its own distinct keypair, and nothing
+  // cryptographically ties one alias to another.
+  pgpKeys?: Record<string, PgpKeypair> // Own keypairs, keyed by lowercased
+                           // address. Private keys ride inside this NIP-44-
+                           // encrypted settings blob (like mailIndexKey) — synced
+                           // across devices, never on a server in the clear.
+  pgpKeyring?: Record<string, string> // Correspondents' ARMORED PUBLIC keys,
+                           // keyed by lowercased email address. Public keys only —
+                           // safe to sync. Populated by manual import and by
+                           // keyserver discovery.
+}
+
+/** One of the user's own alias keypairs. */
+export interface PgpKeypair {
+  publicKey: string        // armored public key — safe to publish
+  privateKey: string       // armored private key — secret; passphrase-encrypted
+                           // here iff passphraseProtected
+  fingerprint: string      // this key's fingerprint, for session-passphrase keying
+  passphraseProtected?: boolean // true when privateKey is passphrase-locked
 }
 
 export async function saveSettings(

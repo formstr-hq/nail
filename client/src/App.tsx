@@ -236,6 +236,7 @@ function MailApp() {
           ownedAliases={addresses}
           minimized={composeMinimized}
           setMinimized={setComposeMinimized}
+          onOpenEncryptionSettings={() => setSettingsSection('encryption')}
         />
       )}
       {settingsSection && (
