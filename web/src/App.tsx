@@ -16,6 +16,7 @@ import {
   redirectReturningOwner,
 } from "./lib/session";
 import SignupSection from "./components/SignupSection";
+import MailApp from "./app/App";
 
 // Effects never run during server prerender, so `useLayoutEffect` there only
 // logs a warning. Fall back to `useEffect` on the server; on the client use
@@ -241,8 +242,25 @@ function App({ url }: { url?: string }) {
   const path = rawPath.length > 1 && rawPath.endsWith("/")
     ? rawPath.slice(0, -1)
     : rawPath;
-  if (path === "/privacy-policy") return <PrivacyPolicy />;
-  return <Home />;
+  // The mail client mounts on /mails (its deployed path). During prerender
+  // this branch never renders — /mails gets an empty SPA shell, not mail
+  // markup, so crawlers never see the mailbox (see prerender.js).
+  if (path === "/mails" || path.startsWith("/mails/")) return <MailApp />;
+  // Landing routes render inside a `.landing` scope: it pins the palette the
+  // landing styles with (primary/emphasis) to fixed light-only values, so the
+  // mail app's global `.dark` class (a dark-theme owner's <html>) can't
+  // repaint the hero. See the .landing block in index.css.
+  if (path === "/privacy-policy")
+    return (
+      <div className="landing">
+        <PrivacyPolicy />
+      </div>
+    );
+  return (
+    <div className="landing">
+      <Home />
+    </div>
+  );
 }
 
 export default App;

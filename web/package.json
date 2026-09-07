@@ -7,21 +7,28 @@
     "dev": "vite",
     "build": "tsc -b && vite build && vite build --ssr src/entry-server.tsx --outDir dist/server && node prerender.js",
     "lint": "eslint .",
+    "test": "vitest run",
     "e2e": "playwright test",
     "preview": "vite preview"
   },
   "dependencies": {
     "@capacitor/core": "^7.6.8",
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@formstr/local-relay": "^0.6.1",
     "@formstr/signer": "^0.2.2",
     "@tailwindcss/typography": "^0.5.19",
     "lucide-react": "^0.563.0",
     "nostr-signer-capacitor-plugin": "^0.0.5",
     "nostr-tools": "^2.7.0",
+    "openpgp": "^6.3.1",
+    "postal-mime": "^2.7.6",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
@@ -38,6 +45,7 @@
     "tailwindcss": "^4.1.18",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "vitest": "^3.2.7"
   }
 }
