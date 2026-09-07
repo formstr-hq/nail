@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot, hydrateRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router";
 // Self-hosted: index.css asks for these by name, and a webfont that never
 // loads fails silently — the whole UI just renders in system-ui instead.
 import "@fontsource-variable/inter";
@@ -22,7 +23,9 @@ const root = document.getElementById("root")!;
 const app = (
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
     </ErrorBoundary>
   </StrictMode>
 );

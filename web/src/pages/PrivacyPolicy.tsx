@@ -1,6 +1,6 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Navbar, Footer } from "../App";
+import { Navbar, Footer } from "../components/landing";
 import content from "./privacy-policy.md?raw";
 
 export default function PrivacyPolicy() {

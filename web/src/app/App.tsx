@@ -1,16 +1,19 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
-import { useAccountStore } from '@/app/store/account'
-import { syncMailNotifications } from '@/app/lib/notifications'
-import { installAndroidBackHandler } from '@/app/lib/androidBack'
-import { useSettingsStore } from '@/app/store/settings'
-import { useMailStore } from '@/app/store/mail'
-import { useInbox } from '@/app/hooks/useInbox'
+import { useCallback, useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
+import { config } from "@/lib/config";
+import { useAccountStore } from "@/app/store/account";
+import { useComposeOverlay } from "@/app/store/composeOverlay";
+import { syncMailNotifications } from "@/app/lib/notifications";
+import { installAndroidBackHandler } from "@/app/lib/androidBack";
+import { useSettingsStore } from "@/app/store/settings";
+import { useMailStore } from "@/app/store/mail";
+import { useInbox } from "@/app/hooks/useInbox"
 import { useMailMeta } from '@/app/hooks/useMailMeta'
+import { useSelfAddresses } from '@/app/hooks/useSelfAddresses'
 import { ensureMailIndexKey } from '@/app/hooks/useMailActions'
 import { isFreshSignup } from '@/app/lib/freshSignup'
 import { useResolveContext } from '@/app/hooks/useResolveContext'
 import { useOwnedAddresses } from '@/app/hooks/useOwnedAddresses'
-import { BRIDGE_DOMAIN } from '@/app/lib/nostr/constants'
 import type { Draft } from '@/app/lib/mail/draft'
 import { LoginPage, SignerLogin } from '@/app/components/LoginPage'
 import { Sidebar } from '@/app/components/Sidebar'
@@ -23,17 +26,40 @@ import { OnboardingModal } from '@/app/components/OnboardingModal'
 import { BrandGlyph, PenIcon, InboxIcon } from '@/app/components/ui/icons'
 import { IconButton } from '@/app/components/ui/Button'
 
+/** Settings modal route param: a section id, or "menu" for the mobile menu. */
+type SettingsParam = SectionId | "menu";
+
+/**
+ * The app's own prefix, matching the route it mounts at in src/App.tsx. The
+ * Android bundle serves the whole app under its Vite base (CLIENT_BASE_PATH),
+ * the web deploy at config.mailsUrl — the same derivation as App.tsx.
+ */
+const MAIL_APP_PREFIX =
+  import.meta.env.BASE_URL.replace(/\/+$/, "") ||
+  config.mailsUrl.replace(/\/+$/, "") ||
+  "/mails";
+
+function isSettingsParam(v: string | undefined): v is SettingsParam {
+  return (
+    v === "menu" ||
+    v === "addresses" ||
+    v === "relays" ||
+    v === "composing" ||
+    v === "encryption" ||
+    v === "security" ||
+    v === "appearance" ||
+    v === "help"
+  );
+}
+
 function MailApp() {
-  // `null` means no compose window; a Draft (possibly empty) means one is open.
-  const [compose, setCompose] = useState<Draft | null>(null)
-  const [composeMinimized, setComposeMinimized] = useState(false)
-  // null = closed. A section id opens Settings drilled straight into that pane
-  // (used by the Relays shortcut). 'menu' opens it without a forced section, so
-  // on mobile it lands on the iOS-style section menu rather than a detail pane.
-  const [settingsSection, setSettingsSection] = useState<SectionId | 'menu' | null>(null)
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Transient mobile nav drawer — not navigation, so it stays out of the URL
+  // (a deep link must never open with a drawer showing). The Android back
+  // handler pops it by reading this via the callback below.
   const [navOpen, setNavOpen] = useState(false)
-  // The signer login shown over the app to add a second account.
-  const [addingAccount, setAddingAccount] = useState(false)
 
   const { account, active } = useAccountStore()
   const { load, settings, loaded: settingsLoaded, eventExists: settingsEventExists } =
@@ -44,6 +70,55 @@ function MailApp() {
   // Keep read/archived/trashed state synced across devices via kind-34578 events.
   const { refresh: refreshMeta } = useMailMeta()
   const { addresses } = useOwnedAddresses()
+  // Every address this account owns — the default npub mailbox, a configured
+  // sender address, and any NIP-05 aliases — deduped, case-insensitively,
+  // keeping first-seen order (npub mailbox first). Doubles as "everything that
+  // is me" for Reply-all and as the per-alias inbox list in the sidebar.
+  const selfAddresses = useSelfAddresses()
+
+  const composeDraft = useComposeOverlay((s) => s.draft)
+  const composeMinimized = useComposeOverlay((s) => s.minimized)
+  const startBlankCompose = useComposeOverlay((s) => s.startBlank)
+  const openCompose = useCallback(
+    (draft: Draft) => useComposeOverlay.getState().open(draft),
+    [],
+  )
+  const closeCompose = useCallback(
+    () => useComposeOverlay.getState().close(),
+    [],
+  )
+
+  // Overlay state that behaves like navigation lives in the URL: the settings
+  // modal (so a pane is deep-linkable and Android back pops it natively) and
+  // the add-account signer login.
+  const settingsMatch = /^\/settings(?:\/([^/]+))?$/.exec(
+    location.pathname.slice(MAIL_APP_PREFIX.length),
+  )
+  const settingsSection: SettingsParam | null = settingsMatch
+    ? isSettingsParam(settingsMatch[1])
+      ? (settingsMatch[1] as SettingsParam)
+      : "menu"
+    : null
+  const addingAccount = location.pathname === `${MAIL_APP_PREFIX}/add-account`
+  // In-app navigations must stay under the app prefix — a bare "/settings"
+  // would escape the /mails route and land on the landing catch-all.
+  const openSettings = useCallback(
+    (section: SettingsParam) =>
+      navigate(
+        section === "menu"
+          ? `${MAIL_APP_PREFIX}/settings`
+          : `${MAIL_APP_PREFIX}/settings/${section}`,
+      ),
+    [navigate],
+  )
+  const closeSettings = useCallback(() => navigate(-1), [navigate])
+  const setAddingAccount = useCallback(
+    (open: boolean) =>
+      navigate(open ? `${MAIL_APP_PREFIX}/add-account` : MAIL_APP_PREFIX, {
+        replace: true,
+      }),
+    [navigate],
+  )
 
   // The app's manual "reload": re-open both standing subscriptions, which each
   // kick off a fresh upstream sync. There's no browser refresh in the native
@@ -66,45 +141,37 @@ function MailApp() {
   // Intercept the Android system back button so it walks the in-app stack
   // (open overlays → reading email → root) instead of popping WebView history
   // — at the root of the client, the first history entry is the landing page,
-  // so the default behaviour bounces the user out of the app. The listener
-  // reads each overlay's state via the snapshot it closes over, so it sees
-  // fresh values on every press without re-binding on every change.
+  // so the default behaviour bounces the user out of the app. Settings and
+  // add-account are real routes now, so history pops handle them natively;
+  // the handler only covers the overlays that aren't navigation: the compose
+  // window (overlay store) and the open email (store-selected, not a route).
   const handleBack = useCallback((): boolean => {
     // 1. Compose modal is open → close it (or restore it if minimized).
-    if (compose) {
-      if (composeMinimized) {
-        setComposeMinimized(false)
+    const compose = useComposeOverlay.getState()
+    if (compose.draft) {
+      if (compose.minimized) {
+        compose.setMinimized(false)
       } else {
-        closeCompose()
+        compose.close()
       }
       return true
     }
-    // 2. Settings modal is open → close it.
-    if (settingsSection) {
-      setSettingsSection(null)
-      return true
-    }
-    // 3. Add-account signer modal is open → cancel it.
-    if (addingAccount) {
-      setAddingAccount(false)
-      return true
-    }
-    // 4. Mobile nav drawer is open → close it.
+    // 2. Mobile nav drawer is open → close it.
     if (navOpen) {
       setNavOpen(false)
       return true
     }
-    // 5. Reading an email → return to the inbox.
-    if (selectedId) {
+    // 3. Reading an email → return to the inbox.
+    if (useMailStore.getState().selectedId) {
       setSelected(null)
       return true
     }
-    // 6. Root of the client: do nothing. Returning false leaves the gesture
+    // 4. Root of the client: do nothing. Returning false leaves the gesture
     //    unhandled. At the root there's no history to pop, so the OS's next
     //    press exits the app — that's the desired behavior, not a bounce to
     //    landing.
     return false
-  }, [compose, composeMinimized, settingsSection, addingAccount, navOpen, selectedId])
+  }, [setSelected, navOpen])
 
   useEffect(() => {
     const dispose = installAndroidBackHandler(handleBack)
@@ -113,43 +180,12 @@ function MailApp() {
     }
   }, [handleBack])
 
-  // Every address this account owns: the default npub mailbox, a configured
-  // sender address, and any NIP-05 aliases — deduped, case-insensitively,
-  // keeping first-seen order (npub mailbox first). Doubles as "everything that
-  // is me" for Reply-all and as the per-alias inbox list in the sidebar.
-  const selfAddresses = useMemo(() => {
-    const candidates = [
-      account ? `${account.npub}@${BRIDGE_DOMAIN}` : '',
-      settings.senderAddress ?? '',
-      ...addresses,
-    ].filter(Boolean)
-    const seen = new Set<string>()
-    return candidates.filter((a) => {
-      const key = a.toLowerCase()
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
-  }, [account, settings.senderAddress, addresses])
-
-  function openCompose(draft: Draft) {
-    setCompose(draft)
-    setComposeMinimized(false)
-    setNavOpen(false)
-  }
-
-  function closeCompose() {
-    setCompose(null)
-    setComposeMinimized(false)
-  }
-
   // "Write" restores an already-open composer (possibly minimized) rather than
   // discarding its draft for a blank one; only start fresh when none is open.
-  const blank: Draft = { to: '', subject: '', body: '' }
-  function startCompose() {
-    if (compose) setComposeMinimized(false)
-    else openCompose(blank)
-  }
+  const startCompose = useCallback(() => {
+    startBlankCompose()
+    setNavOpen(false)
+  }, [startBlankCompose])
 
   return (
     <div className="mail-app safe-y flex h-[100dvh] flex-col bg-background text-foreground">
@@ -170,8 +206,8 @@ function MailApp() {
         <div className="hidden w-56 flex-none md:block">
           <Sidebar
             onCompose={startCompose}
-            onSettings={() => setSettingsSection('menu')}
-            onOpenRelays={() => setSettingsSection('relays')}
+            onSettings={() => openSettings("menu")}
+            onOpenRelays={() => openSettings("relays")}
             onAddAccount={() => setAddingAccount(true)}
             aliases={selfAddresses}
             status={status}
@@ -190,11 +226,11 @@ function MailApp() {
               <Sidebar
                 onCompose={startCompose}
                 onSettings={() => {
-                  setSettingsSection('menu')
+                  openSettings("menu")
                   setNavOpen(false)
                 }}
                 onOpenRelays={() => {
-                  setSettingsSection('relays')
+                  openSettings("relays")
                   setNavOpen(false)
                 }}
                 onAddAccount={() => {
@@ -228,22 +264,22 @@ function MailApp() {
         </div>
       </div>
 
-      {compose && (
+      {composeDraft && (
         <ComposeModal
           onClose={closeCompose}
           ctx={ctx}
-          draft={compose}
+          draft={composeDraft}
           selfAddresses={selfAddresses}
           ownedAliases={addresses}
           minimized={composeMinimized}
-          setMinimized={setComposeMinimized}
-          onOpenEncryptionSettings={() => setSettingsSection('encryption')}
+          setMinimized={(m) => useComposeOverlay.getState().setMinimized(m)}
+          onOpenEncryptionSettings={() => openSettings("encryption")}
         />
       )}
       {settingsSection && (
         <SettingsModal
-          initialSection={settingsSection === 'menu' ? undefined : settingsSection}
-          onClose={() => setSettingsSection(null)}
+          initialSection={settingsSection === "menu" ? undefined : settingsSection}
+          onClose={closeSettings}
         />
       )}
 
@@ -275,9 +311,9 @@ function MailApp() {
           <SignerLogin
             onLoggedIn={() => {
               useMailStore.getState().clear()
-              setAddingAccount(false)
+              navigate(MAIL_APP_PREFIX, { replace: true })
             }}
-            onCancel={() => setAddingAccount(false)}
+            onCancel={() => navigate(MAIL_APP_PREFIX, { replace: true })}
           />
         </div>
       )}
