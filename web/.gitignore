@@ -2,6 +2,9 @@
 node_modules
 dist
 
+# the root lockfile owns dependency resolution for the whole workspace
+pnpm-lock.yaml
+
 # Playwright e2e
 /test-results/
 /playwright-report/
