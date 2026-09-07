@@ -31,8 +31,6 @@ nail/
 4. **Prerender + nginx + deploy switch.** Extend prerender.js routes; nginx config: prerendered files → static, `/app` → SPA shell; delete old `client/`, `landing/`.
 5. **Refactor pass (post-merge, separate PRs).** Split god components (ComposeModal → hooks + 4 subcomponents; SettingsModal/PgpSettings → per-section files); extract inbox decode queue from `useInbox` into a testable service; introduce `zustand/persist` middleware replacing 4 hand-rolled localStorage idioms; add component tests for EmailList/ComposeModal happy paths.
 
-Kimi K3 note: this is well-suited — bounded, mechanical migrations with existing tests as the safety net. Keep the 5 phases as separate reviewable diffs; never a big-bang move.
-
 ## Risks
 
 - Capacitor/webview behavior differences after React 19 bump → run Android e2e (`client/e2e` + `installAndroidBackHandler` tests).
