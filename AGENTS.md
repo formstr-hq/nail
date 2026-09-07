@@ -55,6 +55,7 @@ These encode the audit findings (`docs/FRONTEND_AUDIT.md`) as hard rules. Violat
 10. **Router owns navigation state** (post-merge). No new overlay state as bare `useState` booleans in `App.tsx`; overlays get routes or a dedicated overlay store that the back handler reads.
 11. **No unbounded work against relays/signers.** Any new subscription or per-event computation must state its bound (dedup guard, queue limit) in the diff.
 12. **Security boundaries are non-negotiable.** Email HTML renders only in the sandboxed iframe (`lib/mail/emailFrame.ts`); remote images stay opt-in; secrets never enter logs or `console.*`.
+13. **Proven libraries before hand-rolled core logic.** For core modules and logic — crypto, parsing, protocol handling, encoding, date/time, storage, queues — use a known, well-reputed package with a permissive (non-copyleft) license instead of writing an implementation by hand. Hand-rolling is the exception: it requires the developer's explicit direction, or the agent stops and asks permission first, naming the library candidates it considered and why they don't fit. Copy-left (GPL/AGPL) dependencies need the same permission even when off-the-shelf.
 
 ## Known offenders (legacy anti-patterns on watch)
 
