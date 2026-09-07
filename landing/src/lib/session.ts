@@ -22,8 +22,12 @@ export function unlockWithTimeout(): Promise<
   ]);
 }
 
-export function redirectToMails() {
-  window.location.href = config.mailsUrl;
+export function redirectToMails(params?: Record<string, string>) {
+  const url = new URL(config.mailsUrl, window.location.origin);
+  for (const [key, value] of Object.entries(params ?? {})) {
+    url.searchParams.set(key, value);
+  }
+  window.location.href = url.toString();
 }
 
 /**

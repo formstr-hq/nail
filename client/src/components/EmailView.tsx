@@ -70,12 +70,18 @@ function MessageBody({ email }: { email: Email }) {
 
   const pgp = usePgpMessage(email, passphraseNonce)
 
+  // A decrypted PGP/MIME envelope carries its own html part (see
+  // usePgpMessage's unwrapMimeEnvelope); that's what actually renders, in
+  // place of the outer message's (necessarily absent — the body was ciphertext)
+  // bodyHtml.
+  const effectiveHtml = pgp.kind === 'decrypted' ? pgp.html : email.bodyHtml
+
   // All hooks must run before any conditional return, or the hook count changes
   // across renders as `pgp.kind` resolves — React's "rendered fewer hooks than
   // expected" crash. So every hook lives here, above the PGP/HTML branches.
   const blocked = useMemo(
-    () => Boolean(email.bodyHtml) && hasRemoteContent(email.bodyHtml!) && !allowRemote,
-    [email.bodyHtml, allowRemote],
+    () => Boolean(effectiveHtml) && hasRemoteContent(effectiveHtml!) && !allowRemote,
+    [effectiveHtml, allowRemote],
   )
 
   useEffect(() => () => observerRef.current?.disconnect(), [])
@@ -102,22 +108,84 @@ function MessageBody({ email }: { email: Email }) {
     observerRef.current.observe(doc.documentElement)
   }
 
+  // The remote-image notice + sized iframe, shared by a plain HTML body and a
+  // decrypted PGP/MIME one (RFC 3156's encapsulated part is a full MIME
+  // entity, so it can carry an html part too — see unwrapMimeEnvelope).
+  function renderHtmlFrame(html: string) {
+    return (
+      <>
+        {blocked && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-border bg-background/60 px-3 py-2">
+            <p className="flex-1 text-[11.5px] text-muted-foreground">
+              Images in this message are hosted elsewhere. Loading them tells the sender you
+              opened it.
+            </p>
+            <Button size="sm" onClick={() => setAllowRemote(true)}>
+              Load images
+            </Button>
+          </div>
+        )}
+        <iframe
+          key={frameKey}
+          srcDoc={buildEmailFrame(html, allowRemote, dark)}
+          // Scripts stay off (no `allow-scripts`) and the CSP blocks them too, so
+          // same-origin can't be turned against us — it only lets us measure the
+          // document for auto-height. Popups let `target="_blank"` links open, and
+          // escaping the sandbox lets them land as ordinary pages.
+          sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+          referrerPolicy="no-referrer"
+          onLoad={fitToContent}
+          scrolling="no"
+          className="w-full border-0 bg-transparent"
+          title={`Message: ${email.subject}`}
+        />
+      </>
+    )
+  }
+
   // PGP bodies are handled before the normal HTML/plaintext render: a decrypted
-  // message is plaintext, and the locked/no-key/error states each get an honest
-  // notice rather than dumping the armored blob as if it were the message.
+  // message shows its signature verdict and, if the underlying PGP/MIME
+  // envelope carried an html part, that (see unwrapMimeEnvelope) — otherwise
+  // plaintext. The locked/no-key/error states each get an honest notice rather
+  // than dumping the armored blob as if it were the message.
   if (pgp.kind === 'decrypted') {
     return (
       <div className="flex flex-col gap-3">
         <PgpSignatureBadge signature={pgp.signature} />
-        <PlainBody text={pgp.text} />
+        {pgp.html ? renderHtmlFrame(pgp.html) : <PlainBody text={pgp.text} />}
       </div>
     )
   }
   if (pgp.kind === 'locked') {
     return (
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-border bg-background/60 px-3 py-2">
-        <p className="flex-1 text-[11.5px] text-muted-foreground">
-          This message is encrypted. Unlock your PGP key to read it.
+      <div
+        className={
+          'flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border px-3 py-2 ' +
+          (pgp.wrongPassphrase
+            ? 'border-destructive bg-destructive/10'
+            : 'border-border bg-background/60')
+        }
+      >
+        <p className={'flex-1 text-[11.5px] ' + (pgp.wrongPassphrase ? 'text-destructive' : 'text-muted-foreground')}>
+          {pgp.wrongPassphrase ? (
+            // We already confirmed (via the message's own encrypted-to key ID)
+            // that this IS the right key — a rejected passphrase here is
+            // definitely wrong, not a routine "maybe this key, maybe another"
+            // miss, so it's told apart with its own wording and styling.
+            <>
+              Incorrect passphrase for your{pgp.address ? <> <strong>{pgp.address}</strong></> : ''} key. Try again.
+            </>
+          ) : (
+            // Naming the alias matters: with more than one passphrase-protected
+            // key, a bare "unlock your key" leaves no way to tell which
+            // passphrase is actually being asked for — and a retry that moves
+            // on to a DIFFERENT locked alias renders this exact same text,
+            // which reads as the previous attempt having done nothing.
+            <>
+              This message may be encrypted to your{pgp.address ? <> <strong>{pgp.address}</strong></> : ''} key.
+              Unlock it to try reading this message.
+            </>
+          )}
         </p>
         <Button
           size="sm"
@@ -126,12 +194,13 @@ function MessageBody({ email }: { email: Email }) {
             if (pass) {
               // Cache against the specific alias key this message needs, then
               // re-run the decrypt.
+              console.debug('[pgp] caching passphrase for', pgp.address, pgp.fingerprint)
               setSessionPassphrase(pgp.fingerprint, pass)
               setPassphraseNonce((n) => n + 1)
             }
           }}
         >
-          Unlock
+          {pgp.wrongPassphrase ? 'Try again' : 'Unlock'}
         </Button>
       </div>
     )
@@ -172,35 +241,7 @@ function MessageBody({ email }: { email: Email }) {
     return <PlainBody text={email.body} />
   }
 
-  return (
-    <div className="flex flex-col gap-3">
-      {blocked && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md border border-border bg-background/60 px-3 py-2">
-          <p className="flex-1 text-[11.5px] text-muted-foreground">
-            Images in this message are hosted elsewhere. Loading them tells the sender you
-            opened it.
-          </p>
-          <Button size="sm" onClick={() => setAllowRemote(true)}>
-            Load images
-          </Button>
-        </div>
-      )}
-      <iframe
-        key={frameKey}
-        srcDoc={buildEmailFrame(email.bodyHtml, allowRemote, dark)}
-        // Scripts stay off (no `allow-scripts`) and the CSP blocks them too, so
-        // same-origin can't be turned against us — it only lets us measure the
-        // document for auto-height. Popups let `target="_blank"` links open, and
-        // escaping the sandbox lets them land as ordinary pages.
-        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-        referrerPolicy="no-referrer"
-        onLoad={fitToContent}
-        scrolling="no"
-        className="w-full border-0 bg-transparent"
-        title={`Message: ${email.subject}`}
-      />
-    </div>
-  )
+  return <div className="flex flex-col gap-3">{renderHtmlFrame(email.bodyHtml)}</div>
 }
 
 /**

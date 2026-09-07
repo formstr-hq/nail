@@ -4,6 +4,9 @@ import {
   readKeyInfo,
   isPgpMessage,
   encryptMessage,
+  parsePgpMessage,
+  pkeskKeyIDs,
+  keyIDsOfArmored,
   decryptMessage,
   type GeneratedKey,
 } from './openpgp'
@@ -76,7 +79,7 @@ describe('encrypt / decrypt round trip', () => {
     expect(armored).not.toContain('eagle')
 
     const result = await decryptMessage({
-      armored,
+      message: await parsePgpMessage(armored),
       privateKey: bob.privateKey,
       verificationPublicKeys: [alice.publicKey],
     })
@@ -94,8 +97,12 @@ describe('encrypt / decrypt round trip', () => {
       recipientPublicKeys: [bob.publicKey, alice.publicKey],
       signingPrivateKey: alice.privateKey,
     })
-    expect((await decryptMessage({ armored, privateKey: bob.privateKey })).text).toBe('group secret')
-    expect((await decryptMessage({ armored, privateKey: alice.privateKey })).text).toBe('group secret')
+    expect(
+      (await decryptMessage({ message: await parsePgpMessage(armored), privateKey: bob.privateKey })).text,
+    ).toBe('group secret')
+    expect(
+      (await decryptMessage({ message: await parsePgpMessage(armored), privateKey: alice.privateKey })).text,
+    ).toBe('group secret')
   })
 
   it('reports a signed message from an unknown key as unknown-key, not valid', async () => {
@@ -105,7 +112,7 @@ describe('encrypt / decrypt round trip', () => {
       signingPrivateKey: alice.privateKey,
     })
     // Bob decrypts without Alice's key in hand.
-    const result = await decryptMessage({ armored, privateKey: bob.privateKey })
+    const result = await decryptMessage({ message: await parsePgpMessage(armored), privateKey: bob.privateKey })
     expect(result.signature.status).toBe('unknown-key')
   })
 
@@ -118,7 +125,7 @@ describe('encrypt / decrypt round trip', () => {
       signingPrivateKey: alice.privateKey,
     })
     const result = await decryptMessage({
-      armored,
+      message: await parsePgpMessage(armored),
       privateKey: bob.privateKey,
       verificationPublicKeys: [locked.publicKey], // wrong key on purpose
     })
@@ -131,7 +138,7 @@ describe('encrypt / decrypt round trip', () => {
       recipientPublicKeys: [bob.publicKey],
       // no signingPrivateKey
     })
-    const result = await decryptMessage({ armored, privateKey: bob.privateKey })
+    const result = await decryptMessage({ message: await parsePgpMessage(armored), privateKey: bob.privateKey })
     expect(result.signature).toEqual({ status: 'none' })
   })
 
@@ -141,7 +148,11 @@ describe('encrypt / decrypt round trip', () => {
       recipientPublicKeys: [bob.publicKey],
     })
     await expect(
-      decryptMessage({ armored, privateKey: locked.privateKey, passphrase: PASS }),
+      decryptMessage({
+        message: await parsePgpMessage(armored),
+        privateKey: locked.privateKey,
+        passphrase: PASS,
+      }),
     ).rejects.toThrow()
   })
 })
@@ -154,15 +165,19 @@ describe('passphrase-protected keys', () => {
     })
 
     await expect(
-      decryptMessage({ armored, privateKey: locked.privateKey }),
+      decryptMessage({ message: await parsePgpMessage(armored), privateKey: locked.privateKey }),
     ).rejects.toThrow(/passphrase/i)
 
     await expect(
-      decryptMessage({ armored, privateKey: locked.privateKey, passphrase: 'wrong' }),
+      decryptMessage({
+        message: await parsePgpMessage(armored),
+        privateKey: locked.privateKey,
+        passphrase: 'wrong',
+      }),
     ).rejects.toThrow()
 
     const ok = await decryptMessage({
-      armored,
+      message: await parsePgpMessage(armored),
       privateKey: locked.privateKey,
       passphrase: PASS,
     })
@@ -177,11 +192,54 @@ describe('passphrase-protected keys', () => {
       signingPassphrase: PASS,
     })
     const result = await decryptMessage({
-      armored,
+      message: await parsePgpMessage(armored),
       privateKey: bob.privateKey,
       verificationPublicKeys: [locked.publicKey],
     })
     expect(result.text).toBe('signed by carol')
     expect(result.signature.status).toBe('valid')
+  })
+})
+
+describe('pkeskKeyIDs / keyIDsOfArmored', () => {
+  it("identifies the message's target key ID(s) and matches them to the right held key", async () => {
+    const armored = await encryptMessage({
+      text: 'for bob only',
+      recipientPublicKeys: [bob.publicKey],
+    })
+    const message = await parsePgpMessage(armored)
+    const targets = pkeskKeyIDs(message)
+    expect(targets.length).toBeGreaterThan(0)
+
+    const bobKeyIDs = await keyIDsOfArmored(bob.privateKey)
+    const aliceKeyIDs = await keyIDsOfArmored(alice.privateKey)
+    expect(bobKeyIDs.some((id) => targets.includes(id))).toBe(true)
+    expect(aliceKeyIDs.some((id) => targets.includes(id))).toBe(false)
+  })
+
+  it('reports key IDs from a PUBLIC key the same as from its PRIVATE half', async () => {
+    const fromPrivate = await keyIDsOfArmored(bob.privateKey)
+    const fromPublic = await keyIDsOfArmored(bob.publicKey)
+    expect(fromPublic).toEqual(fromPrivate)
+  })
+
+  it('reads key IDs off a passphrase-protected private key without needing the passphrase', async () => {
+    // Key IDs live on the unencrypted key packet — this must not require
+    // unlocking, since it runs BEFORE the user is ever asked for a passphrase.
+    await expect(keyIDsOfArmored(locked.privateKey)).resolves.toEqual(
+      expect.arrayContaining([expect.any(String)]),
+    )
+  })
+
+  it('finds every recipient when encrypted to multiple keys', async () => {
+    const armored = await encryptMessage({
+      text: 'group secret',
+      recipientPublicKeys: [alice.publicKey, bob.publicKey],
+    })
+    const targets = pkeskKeyIDs(await parsePgpMessage(armored))
+    const aliceKeyIDs = await keyIDsOfArmored(alice.privateKey)
+    const bobKeyIDs = await keyIDsOfArmored(bob.privateKey)
+    expect(aliceKeyIDs.some((id) => targets.includes(id))).toBe(true)
+    expect(bobKeyIDs.some((id) => targets.includes(id))).toBe(true)
   })
 })

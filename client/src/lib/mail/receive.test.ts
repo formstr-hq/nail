@@ -52,6 +52,46 @@ async function wrapFrom(sealerSk: Uint8Array, from: string | null, extraTags: st
   return sealAndWrap(rumor, ME, keySigner(sealerSk))
 }
 
+/** An RFC 3156 PGP/MIME message: control + octet-stream data parts. */
+function rfc2822PgpMime(from: string) {
+  const boundary = 'pgpmime-boundary'
+  return [
+    `From: ${from}`,
+    `To: me@mailstr.app`,
+    `Subject: encrypted note`,
+    `Message-ID: <pgpmime@mailstr.app>`,
+    `Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary="${boundary}"`,
+    ``,
+    `This is an OpenPGP/MIME encrypted message.`,
+    `--${boundary}`,
+    `Content-Type: application/pgp-encrypted`,
+    ``,
+    `Version: 1`,
+    ``,
+    `--${boundary}`,
+    `Content-Type: application/octet-stream; name="encrypted.asc"`,
+    ``,
+    `-----BEGIN PGP MESSAGE-----`,
+    ``,
+    `deadbeef==`,
+    `-----END PGP MESSAGE-----`,
+    ``,
+    `--${boundary}--`,
+    ``,
+  ].join('\r\n')
+}
+
+/** Like `wrapFrom`, but carries a real RFC 3156 PGP/MIME body. */
+async function wrapPgpMimeFrom(sealerSk: Uint8Array, from: string) {
+  const sealer = getPublicKey(sealerSk)
+  const rumor = buildMailRumor({
+    senderPubkey: sealer,
+    recipientPubkey: ME,
+    rfc2822: rfc2822PgpMime(from),
+  })
+  return sealAndWrap(rumor, ME, keySigner(sealerSk))
+}
+
 function mockNip05(names: Record<string, string>) {
   vi.stubGlobal('fetch', vi.fn(() => new Response(JSON.stringify({ names }))))
 }
@@ -154,6 +194,24 @@ describe('decodeGiftWrap sender proof', () => {
 
     expect(out).toHaveProperty('email')
     if (!('email' in out)) return
+    expect(out.email.attachments).toEqual([])
+  })
+
+  // Regression: a standards-compliant PGP/MIME message (multipart/encrypted,
+  // RFC 3156) has no `text` for postal-mime to hand back — the ciphertext
+  // lives in an octet-stream data part instead. The client used to render
+  // this as a blank email with two mystery attachments and never attempt
+  // decryption, since `isPgpMessage` only ever looked at `email.body`.
+  it('lifts an RFC 3156 PGP/MIME data part into the body as armor', async () => {
+    mockNip05({})
+    const wrap = await wrapPgpMimeFrom(SENDER_SK, 'alice@example.org')
+    const out = await decodeGiftWrap(wrap, keySigner(ME_SK), BRIDGE, ME)
+
+    expect(out).toHaveProperty('email')
+    if (!('email' in out)) return
+    expect(out.email.body).toContain('-----BEGIN PGP MESSAGE-----')
+    expect(out.email.body).toContain('-----END PGP MESSAGE-----')
+    // The control + data parts are the message body, not attachments.
     expect(out.email.attachments).toEqual([])
   })
 

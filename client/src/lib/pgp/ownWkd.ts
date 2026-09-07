@@ -8,21 +8,32 @@ import { buildNip98Header, type Nip98Signer } from '../api/nip98'
  * outside PGP world can discover it off `mailstr.app/.well-known/openpgpkey/...`
  * and encrypt to us.
  *
+ * With the DUAL set both public halves (v4 + v6) are published together as ONE
+ * binary blob — WKD's standard multi-key form: a concatenation of transferable
+ * public keys, which conforming clients iterate over and pick whatever version
+ * they support. Mail services that can't read v6 take the v4 half; modern
+ * clients can take either.
+ *
  * This is the authoritative publish path for our OWN addresses — stronger than a
  * keyserver (no email round-trip; the backend already vouches for the identity
- * via NIP-05) — so it runs alongside the keys.openpgp.org publish, not instead.
+ * via NIP-05).
  *
- * The backend serves WKD as BINARY, so we send the binary transferable key,
+ * The backend serves WKD as BINARY, so we send the binary transferable keys,
  * base64-encoded for JSON. NIP-98 authed; the backend checks the signing key
  * actually owns the address.
  */
 export async function publishToOwnWkd(params: {
   address: string
-  /** Armored public key — we derive the binary form here. */
-  armoredPublicKey: string
+  /** Armored public key(s) — we derive the binary form here. One or more keys
+   *  are concatenated into the single binary blob WKD serves. */
+  armoredPublicKeys: string[] | string
   active: ActiveSigner
 }): Promise<void> {
-  const publicKeyB64 = await armoredToBinaryB64(params.armoredPublicKey)
+  const armoreds = Array.isArray(params.armoredPublicKeys)
+    ? params.armoredPublicKeys
+    : [params.armoredPublicKeys]
+  if (!armoreds.length) throw new Error('No public key to publish.')
+  const publicKeyB64 = await armoredsToBinaryB64(armoreds)
 
   const path = '/api/wkd'
   const body = JSON.stringify({ address: params.address, publicKeyB64 })
@@ -51,11 +62,20 @@ export async function publishToOwnWkd(params: {
   }
 }
 
-/** Base64 of the binary (transferable) public key — the form WKD serves. */
-async function armoredToBinaryB64(armored: string): Promise<string> {
+/** Base64 of the concatenated binary transferable public keys — the WKD form. */
+async function armoredsToBinaryB64(armoreds: string[]): Promise<string> {
   const openpgp = await import('openpgp')
-  const key = await openpgp.readKey({ armoredKey: armored })
-  const bytes = key.toPublic().write()
+  const parts: Uint8Array[] = []
+  for (const armored of armoreds) {
+    const key = await openpgp.readKey({ armoredKey: armored })
+    parts.push(key.toPublic().write())
+  }
+  const bytes = parts.reduce((acc, part) => {
+    const out = new Uint8Array(acc.length + part.length)
+    out.set(acc)
+    out.set(part, acc.length)
+    return out
+  }, new Uint8Array(0))
   let binary = ''
   for (const b of bytes) binary += String.fromCharCode(b)
   return btoa(binary)

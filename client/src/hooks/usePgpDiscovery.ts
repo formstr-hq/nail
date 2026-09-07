@@ -12,10 +12,15 @@ import { lookupByWkd } from '@/lib/pgp/wkd'
  * domain that runs the mailbox (Proton, Mailbox, Posteo…), so the domain vouches
  * for its own user. keys.openpgp.org is the fallback for domains that don't
  * publish WKD (or block CORS), where a verified keyserver record is still a real
- * signal. Both degrade to null silently.
+ * signal. Both degrade to null silently. A WKD hit may carry SEVERAL keys (the
+ * dual v4+v6 multi-key form) — all of them are filed, and encryption targets
+ * every one.
  */
-async function discoverKey(address: string): Promise<string | null> {
-  return (await lookupByWkd(address)) ?? (await lookupByEmail(address))
+async function discoverKey(address: string): Promise<string[] | null> {
+  const wkd = await lookupByWkd(address)
+  if (wkd && wkd.length) return wkd
+  const ks = await lookupByEmail(address)
+  return ks ? [ks] : null
 }
 
 /**
@@ -69,11 +74,11 @@ export function usePgpDiscovery(recipients: string[]): { discovering: boolean } 
       let found = false
       for (const address of missing) {
         attempted.current.add(address.toLowerCase())
-        const armored = await discoverKey(address)
+        const keys = await discoverKey(address)
         if (!alive) return
-        if (armored) {
+        if (keys && keys.length) {
           try {
-            keyring = await addToKeyring(keyring, armored, address)
+            keyring = await addToKeyring(keyring, keys, address)
             found = true
           } catch {
             // A key that won't parse into the ring is treated as a miss.

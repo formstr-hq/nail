@@ -34,6 +34,30 @@ export interface GeneratedKey {
   fingerprint: string
 }
 
+/**
+ * One half of the DUAL-KEY setup every alias carries. Each alias gets TWO
+ * independent keypairs generated in the same instant:
+ *  - `v4`   — a GnuPG-compatible pair (v4 packets, Ed25519/Curve25519) that
+ *             every mainstream PGP implementation can parse;
+ *  - `v6`   — a modern OpenPGP v6-format pair for v6-aware clients.
+ * Both public halves are published together (WKD serves them concatenated, the
+ * standard multi-key form), and outbound mail is encrypted to BOTH so either
+ * key can decrypt. Which is which is only a matter of what the recipient's
+ * client supports — the format is signalled in the key material itself.
+ */
+export interface KeyPairVersion {
+  publicKey: string
+  privateKey: string
+  fingerprint: string
+}
+
+export interface GeneratedKeySet {
+  /** The v4-packet (GnuPG-compatible) keypair — primary sign + encrypt sub. */
+  v4: GeneratedKey
+  /** The v6-format (modern) keypair. */
+  v6: GeneratedKey
+}
+
 /** What an armored public/private key says about itself, for display. */
 export interface KeyInfo {
   fingerprint: string
@@ -91,6 +115,62 @@ export async function generateKey(params: {
   return { publicKey, privateKey, fingerprint: key.getFingerprint() }
 }
 
+/**
+ * Generate the DUAL keypair set for one alias. Both halves carry v4 packet
+ * VERSIONS (so every consumer parses them) but different ALGORITHMS, exactly
+ * matching the production WKD blobs (verified against rama1@mailstr.app):
+ *
+ *  - `v4` half: Ed25519 legacy (algo 22) + Curve25519 ECDH (algo 18) — what
+ *    GnuPG emits natively; `gpg --import` takes it clean and it's the half
+ *    older mail services actually read;
+ *  - `v6` half: Ed25519 (algo 27) + X25519 (algo 25) — openpgp.js's modern
+ *    curve IDs, what current-generation clients prefer.
+ *
+ * Both are bound to the same identity, both locked (or not) with the same
+ * passphrase, and BOTH public halves are published concatenated so each
+ * consumer picks its supported version. Generation order is fixed.
+ */
+export async function generateKeySet(params: {
+  name?: string
+  email: string
+  passphrase?: string
+}): Promise<GeneratedKeySet> {
+  const passphrase = params.passphrase || undefined
+  const [v4, v6] = await Promise.all([
+    openpgp.generateKey({
+      type: 'ecc',
+      curve: 'ed25519Legacy',
+      userIDs: [{ name: params.name, email: params.email }],
+      passphrase,
+      format: 'armored',
+      config: { v6Keys: false },
+    }),
+    openpgp.generateKey({
+      type: 'curve25519',
+      userIDs: [{ name: params.name, email: params.email }],
+      passphrase,
+      format: 'armored',
+      config: { v6Keys: false },
+    }),
+  ])
+  const [v4Key, v6Key] = await Promise.all([
+    openpgp.readKey({ armoredKey: v4.publicKey }),
+    openpgp.readKey({ armoredKey: v6.publicKey }),
+  ])
+  return {
+    v4: {
+      publicKey: v4.publicKey,
+      privateKey: v4.privateKey,
+      fingerprint: v4Key.getFingerprint(),
+    },
+    v6: {
+      publicKey: v6.publicKey,
+      privateKey: v6.privateKey,
+      fingerprint: v6Key.getFingerprint(),
+    },
+  }
+}
+
 /** Read metadata off an armored key. Throws on anything that isn't a key. */
 export async function readKeyInfo(armored: string): Promise<KeyInfo> {
   // A private key parses as a public key too, so try the richer read first and
@@ -145,6 +225,27 @@ async function decryptPrivateKey(
 }
 
 /**
+ * Re-lock a decrypted private key with a passphrase, returning the armored
+ * encrypted form. The inverse of `decryptPrivateKey` — this is what backs the
+ * passphrase-protected export (a downloaded key must never land on disk in
+ * the clear).
+ */
+export async function encryptPrivateKey(
+  armoredOrKey: string | openpgp.PrivateKey,
+  passphrase: string,
+): Promise<string> {
+  const privateKey =
+    typeof armoredOrKey === 'string'
+      ? await openpgp.readPrivateKey({ armoredKey: armoredOrKey })
+      : armoredOrKey
+  const unlocked = privateKey.isDecrypted()
+    ? privateKey
+    : (privateKey as openpgp.PrivateKey)
+  const locked = await openpgp.encryptKey({ privateKey: unlocked, passphrase })
+  return typeof locked === 'string' ? locked : locked.armor()
+}
+
+/**
  * Encrypt (and by default sign) a plaintext body to one or more recipients.
  *
  * `recipientPublicKeys` should already include the sender's OWN public key so
@@ -175,13 +276,59 @@ export async function encryptMessage(params: {
   return armored as string
 }
 
+/** An armored message, parsed once so trying several own keys against it (see
+ * usePgpMessage) doesn't re-parse it per attempt — and so a malformed-armor
+ * failure surfaces on its own, distinguishable from "wrong key". */
+export type ParsedPgpMessage = Awaited<ReturnType<typeof openpgp.readMessage>>
+
+/** Parse armored ciphertext. Throws (e.g. "Misformed armored text") on
+ * anything that isn't a well-formed PGP message — never a key mismatch, since
+ * no key is involved yet. */
+export async function parsePgpMessage(armored: string): Promise<ParsedPgpMessage> {
+  return openpgp.readMessage({ armoredMessage: armored })
+}
+
 /**
- * Decrypt an armored message with the user's private key, and report the
- * signature verdict against whatever verification keys the caller supplies
- * (typically the sender's key from the keyring, if held).
+ * Which key(s) a message's public-key-encrypted session key packets actually
+ * target, as lowercase hex key IDs. A message is only decryptable by a key
+ * whose own ID (primary or subkey) appears here — read this BEFORE trying any
+ * key, so the read path can go straight to the one key that can actually open
+ * it instead of trying every held key in turn and treating a mismatch as
+ * routine.
+ *
+ * Empty means the message doesn't name its recipient(s) at all: purely
+ * password/symmetric-encrypted, or a PGP "hidden recipient" (a wildcard key ID
+ * of all zeros, sometimes used for privacy) — in either case there is no
+ * target to match against, so every held key genuinely has to be tried.
+ */
+export function pkeskKeyIDs(message: ParsedPgpMessage): string[] {
+  return message.packets
+    .filterByTag(openpgp.enums.packet.publicKeyEncryptedSessionKey)
+    .map((p) => (p as unknown as { publicKeyID: { toHex(): string } }).publicKeyID.toHex())
+    .filter((id) => id !== '0000000000000000') // wildcard: not a real target
+}
+
+/**
+ * Every key ID (primary + subkeys) an armored key — public OR private —
+ * claims to be. Deliberately does NOT require a passphrase: a key ID is
+ * public information carried on the unencrypted key packet, readable whether
+ * or not the private material is locked, so this can run before ever asking
+ * the user to unlock anything.
+ */
+export async function keyIDsOfArmored(armored: string): Promise<string[]> {
+  const key = armored.includes('PRIVATE KEY')
+    ? await openpgp.readPrivateKey({ armoredKey: armored })
+    : await openpgp.readKey({ armoredKey: armored })
+  return key.getKeyIDs().map((id) => id.toHex())
+}
+
+/**
+ * Decrypt an already-parsed message with the user's private key, and report
+ * the signature verdict against whatever verification keys the caller
+ * supplies (typically the sender's key from the keyring, if held).
  */
 export async function decryptMessage(params: {
-  armored: string
+  message: ParsedPgpMessage
   privateKey: string
   passphrase?: string
   /** Armored public keys to check the signature against; usually the sender's. */
@@ -192,9 +339,8 @@ export async function decryptMessage(params: {
     (params.verificationPublicKeys ?? []).map((armoredKey) => openpgp.readKey({ armoredKey })),
   )
 
-  const message = await openpgp.readMessage({ armoredMessage: params.armored })
   const { data, signatures } = await openpgp.decrypt({
-    message,
+    message: params.message,
     decryptionKeys,
     verificationKeys: verificationKeys.length ? verificationKeys : undefined,
   })

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
-import { generateKey, type GeneratedKey } from './openpgp'
+import { generateKeySet, type GeneratedKey } from './openpgp'
 import { wkdUrls, lookupByWkd } from './wkd'
 
 describe('wkdUrls', () => {
@@ -28,12 +28,23 @@ describe('wkdUrls', () => {
 describe('lookupByWkd', () => {
   let bob: GeneratedKey
   let bobBinary: Uint8Array
+  let dualBinary: Uint8Array
   beforeAll(async () => {
-    bob = await generateKey({ name: 'Bob', email: 'bob@proton.me' })
     const openpgp = await import('openpgp')
+    bob = await generateKeySet({ email: 'bob@proton.me' }).then((s) => s.v4)
     const key = await openpgp.readKey({ armoredKey: bob.publicKey })
     bobBinary = key.toPublic().write()
-  }, 30_000)
+    // The DUAL multi-key form our own publish path produces: two transferable
+    // public keys concatenated into one binary blob.
+    const set = await generateKeySet({ email: 'dual@proton.me' })
+    const k4 = await openpgp.readKey({ armoredKey: set.v4.publicKey })
+    const k6 = await openpgp.readKey({ armoredKey: set.v6.publicKey })
+    const a = k4.toPublic().write()
+    const b = k6.toPublic().write()
+    dualBinary = new Uint8Array(a.length + b.length)
+    dualBinary.set(a)
+    dualBinary.set(b, a.length)
+  }, 60_000)
 
   const fetchMock = vi.fn()
   beforeEach(() => {
@@ -48,18 +59,27 @@ describe('lookupByWkd', () => {
 
   it('fetches and re-armors a binary key from the advanced URL', async () => {
     fetchMock.mockResolvedValue(binaryResponse(200, bobBinary))
-    const key = await lookupByWkd('bob@proton.me')
-    expect(key).toContain('-----BEGIN PGP PUBLIC KEY BLOCK-----')
+    const keys = await lookupByWkd('bob@proton.me')
+    expect(keys?.[0]).toContain('-----BEGIN PGP PUBLIC KEY BLOCK-----')
     // Advanced URL is tried first.
     expect(fetchMock.mock.calls[0][0]).toContain('openpgpkey.proton.me')
+  })
+
+  it('splits a multi-key (dual v4+v6) blob into one entry per key', async () => {
+    fetchMock.mockResolvedValue(binaryResponse(200, dualBinary))
+    const keys = await lookupByWkd('dual@proton.me')
+    expect(keys).toHaveLength(2)
+    for (const key of keys ?? []) {
+      expect(key).toContain('-----BEGIN PGP PUBLIC KEY BLOCK-----')
+    }
   })
 
   it('falls back to the direct URL when advanced 404s', async () => {
     fetchMock
       .mockResolvedValueOnce(binaryResponse(404, new Uint8Array()))
       .mockResolvedValueOnce(binaryResponse(200, bobBinary))
-    const key = await lookupByWkd('bob@proton.me')
-    expect(key).toContain('PGP PUBLIC KEY')
+    const keys = await lookupByWkd('bob@proton.me')
+    expect(keys?.[0]).toContain('PGP PUBLIC KEY')
     expect(fetchMock.mock.calls[1][0]).toContain('https://proton.me/.well-known/openpgpkey/hu/')
   })
 

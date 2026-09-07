@@ -1,10 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest'
 import type { Event } from 'nostr-tools'
 import { nip19 } from 'nostr-tools'
 import { generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { keySigner, unwrapAndVerify, deliverTargets, messageStringToBytes } from '@protocol'
 import { buildWraps } from './send'
 import { clearProbeCache } from '@/lib/nostr/nip05'
+import { generateKeySet } from '@/lib/pgp/openpgp'
+import { addToKeyring } from '@/lib/pgp/keyring'
 
 const BRIDGE_SK = generateSecretKey()
 const BRIDGE_PK = getPublicKey(BRIDGE_SK)
@@ -191,5 +193,107 @@ describe('buildWraps', () => {
     expect(toBridge(wraps)).toHaveLength(0)
     // recipient + self
     expect(wraps).toHaveLength(2)
+  })
+
+  describe('mixed encryption for legacy recipients', () => {
+    let aliceSet: Awaited<ReturnType<typeof generateKeySet>>
+    let bobSet: Awaited<ReturnType<typeof generateKeySet>>
+    let carolSet: Awaited<ReturnType<typeof generateKeySet>>
+
+    beforeAll(async () => {
+      ;[aliceSet, bobSet, carolSet] = await Promise.all([
+        generateKeySet({ email: 'alice@mailstr.app' }),
+        generateKeySet({ email: 'bob@gmail.com' }),
+        generateKeySet({ email: 'carol@example.net' }),
+      ])
+    }, 60_000)
+
+    /** pgp maps: alice's dual own key + bob@gmail.com keyed, carol keyed not. */
+    async function mixedPgp() {
+      return {
+        pgpKeys: {
+          'alice@mailstr.app': {
+            publicKey: aliceSet.v4.publicKey,
+            privateKey: aliceSet.v4.privateKey,
+            fingerprint: aliceSet.v4.fingerprint,
+            v4: aliceSet.v4,
+            v6: aliceSet.v6,
+          },
+        },
+        pgpKeyring: await addToKeyring({}, bobSet.v4.publicKey),
+      }
+    }
+
+    it('sends ONE bridge wrap when every legacy recipient is encryptable', async () => {
+      const { wraps } = await buildWraps({
+        ...base,
+        to: ['bob@gmail.com', 'carol@example.net'],
+        pgp: {
+          ...(await mixedPgp()),
+          pgpKeyring: await addToKeyring(
+            await addToKeyring({}, bobSet.v4.publicKey),
+            carolSet.v4.publicKey,
+          ),
+        },
+      })
+      expect(toBridge(wraps)).toHaveLength(1)
+    })
+
+    it('splits into TWO bridge wraps when only some recipients are encryptable, both docs carrying the full To list', async () => {
+      const { wraps } = await buildWraps({
+        ...base,
+        to: ['bob@gmail.com', 'carol@example.net'],
+        body: 'mixed hello',
+        pgp: await mixedPgp(),
+      })
+
+      const bridgeWraps = toBridge(wraps)
+      expect(bridgeWraps).toHaveLength(2)
+
+      const docs: Array<{ targets: string[]; encrypted: boolean; to: string[] }> = []
+      for (const wrap of bridgeWraps) {
+        const result = await unwrapAndVerify(wrap, keySigner(BRIDGE_SK))
+        expect(result.ok).toBe(true)
+        if (!result.ok) return
+        const decoded = new TextDecoder().decode(messageStringToBytes(result.rumor.content))
+        docs.push({
+          targets: deliverTargets(result.rumor),
+          encrypted: decoded.includes('-----BEGIN PGP MESSAGE-----'),
+          to: [...decoded.matchAll(/^To: (.*)$/gm)].map((m) => m[1]),
+        })
+      }
+
+      // One encrypted mode (bob only) + one plaintext mode (carol only).
+      const enc = docs.find((d) => d.encrypted)!
+      const plain = docs.find((d) => !d.encrypted)!
+      expect(enc.targets).toEqual(['bob@gmail.com'])
+      expect(plain.targets).toEqual(['carol@example.net'])
+
+      // BOTH documents carry the complete To: header — every recipient sees
+      // the full audience, standard mixed-send transparency.
+      expect(enc.to[0]).toContain('bob@gmail.com')
+      expect(enc.to[0]).toContain('carol@example.net')
+      expect(plain.to[0]).toContain('bob@gmail.com')
+      expect(plain.to[0]).toContain('carol@example.net')
+
+      // The encrypted document must not carry the plaintext.
+      void enc
+      expect(plain.targets).not.toContain('bob@gmail.com')
+    })
+
+    it('sends plaintext-only when no pgp maps are given', async () => {
+      const { wraps } = await buildWraps({
+        ...base,
+        to: ['bob@gmail.com', 'carol@example.net'],
+        body: 'mixed hello',
+      })
+      const bridgeWraps = toBridge(wraps)
+      expect(bridgeWraps).toHaveLength(1)
+      const result = await unwrapAndVerify(bridgeWraps[0], keySigner(BRIDGE_SK))
+      if (!result.ok) return
+      const decoded = new TextDecoder().decode(messageStringToBytes(result.rumor.content))
+      expect(decoded).toContain('mixed hello')
+      expect(deliverTargets(result.rumor)).toEqual(['bob@gmail.com', 'carol@example.net'])
+    })
   })
 })

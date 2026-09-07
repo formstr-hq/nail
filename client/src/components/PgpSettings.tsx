@@ -3,17 +3,28 @@ import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { useOwnedAddresses } from '@/hooks/useOwnedAddresses'
 import { BRIDGE_DOMAIN } from '@/lib/nostr/constants'
-import type { PgpKeypair } from '@/lib/nostr/settings'
-import { generateKey, readKeyInfo } from '@/lib/pgp/openpgp'
-import { keyringKey, addToKeyring, removeFromKeyring, keyringEntries, type KeyringEntry } from '@/lib/pgp/keyring'
+import type { KeyHalf, PgpKeypair } from '@/lib/nostr/settings'
+import { generateKeySet, readKeyInfo, encryptPrivateKey } from '@/lib/pgp/openpgp'
+import {
+  keyringKey,
+  addToKeyring,
+  removeFromKeyring,
+  keyringEntries,
+  ownPublicKeysFor,
+  type KeyringEntry,
+} from '@/lib/pgp/keyring'
 import { publishToOwnWkd } from '@/lib/pgp/ownWkd'
 import { Button } from '@/components/ui/Button'
-import { AlertIcon, KeyIcon, TrashIcon, PlusIcon } from '@/components/ui/icons'
+import { AlertIcon, KeyIcon, TrashIcon, PlusIcon, LockIcon } from '@/components/ui/icons'
 
 /**
  * Publish a freshly generated public key to our own WKD directory — best-effort
  * and fire-and-forget, so it never blocks or fails key generation (the key is
  * already saved by the time this runs).
+ *
+ * With the DUAL set both public halves go up TOGETHER as one binary blob (the
+ * standard WKD multi-key form), so services that can't parse v6 take the v4
+ * half and modern clients can use either.
  *
  * Only our-domain addresses, and only to OUR WKD: the backend already vouches
  * for the identity via NIP-05, so it's authoritative with no email round-trip.
@@ -22,14 +33,36 @@ import { AlertIcon, KeyIcon, TrashIcon, PlusIcon } from '@/components/ui/icons'
  * party. (Keyserver LOOKUP stays, as a discovery fallback for correspondents
  * who chose to publish there themselves.)
  */
-function publishOwnKey(address: string, armoredPublicKey: string): void {
+function publishOwnKey(address: string, armoredPublicKeys: string[]): void {
   const { account, active } = useAccountStore.getState()
   const domain = address.split('@')[1]?.toLowerCase()
   if (!active || !account || domain !== BRIDGE_DOMAIN.toLowerCase()) return
 
-  void publishToOwnWkd({ address, armoredPublicKey, active }).catch((e) =>
+  void publishToOwnWkd({ address, armoredPublicKeys, active }).catch((e) =>
     console.warn('[pgp] WKD publish failed', e),
   )
+}
+
+/**
+ * The same publish `publishOwnKey` fires silently after generation, but
+ * awaited and surfaced — for the manual "Republish" action below.
+ *
+ * The automatic publish is fire-and-forget by design (never block key
+ * generation), but that also means a failure (a dropped request, a signer
+ * timeout, a backend hiccup) is invisible: WKD just keeps serving whatever it
+ * last held — silently stale — with no way to notice or recover short of
+ * generating an entirely new key, which only repeats the problem. This gives
+ * the user an explicit way to retry the SAME publish for the key they
+ * already hold, with a visible result.
+ */
+async function republishOwnKey(address: string, armoredPublicKeys: string[]): Promise<void> {
+  const { account, active } = useAccountStore.getState()
+  const domain = address.split('@')[1]?.toLowerCase()
+  if (!active || !account) throw new Error('Your session is locked — sign in again.')
+  if (domain !== BRIDGE_DOMAIN.toLowerCase()) {
+    throw new Error(`WKD publishing only applies to @${BRIDGE_DOMAIN} addresses.`)
+  }
+  await publishToOwnWkd({ address, armoredPublicKeys, active })
 }
 
 /** Same labelled-block shape SettingsModal uses, kept local to avoid coupling. */
@@ -182,8 +215,11 @@ function AliasKeyRow({
   const [working, setWorking] = useState(false)
   const [copied, setCopied] = useState(false)
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [republishing, setRepublishing] = useState(false)
+  const [republished, setRepublished] = useState(false)
 
-  // Has a key — show fingerprint, copy, remove.
+  // Has a key — show fingerprint, copy, export, remove.
   if (keypair) {
     return (
       <div className="rounded-md border border-input bg-muted/40 p-3">
@@ -209,6 +245,27 @@ function AliasKeyRow({
           >
             {copied ? 'Copied' : 'Copy public key'}
           </Button>
+          <Button size="sm" onClick={() => setExporting(true)}>
+            Export
+          </Button>
+          <Button
+            size="sm"
+            disabled={republishing}
+            onClick={() => {
+              setRepublishing(true)
+              setRepublished(false)
+              setError('')
+              republishOwnKey(address, ownPublicKeysFor(keypair))
+                .then(() => {
+                  setRepublished(true)
+                  setTimeout(() => setRepublished(false), 2500)
+                })
+                .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+                .finally(() => setRepublishing(false))
+            }}
+          >
+            {republishing ? 'Publishing…' : republished ? 'Published' : 'Republish to WKD'}
+          </Button>
           {confirmRemove ? (
             <>
               <Button size="sm" variant="danger" disabled={busy} onClick={() => onSet(null)}>
@@ -224,6 +281,9 @@ function AliasKeyRow({
             </Button>
           )}
         </div>
+        {exporting && (
+          <KeyExportDialog address={address} keypair={keypair} onClose={() => setExporting(false)} />
+        )}
       </div>
     )
   }
@@ -255,6 +315,10 @@ function AliasKeyRow({
             placeholder="Optional passphrase (extra protection at rest)"
             className={inputClass}
           />
+          <p className="text-[10.5px] leading-relaxed text-subtle">
+            Generates a dual key set — a v4 (GnuPG-compatible) key plus a v6 key — so every
+            mail service can write to you encrypted.
+          </p>
           <div className="flex gap-2">
             <Button
               size="sm"
@@ -264,18 +328,25 @@ function AliasKeyRow({
                 setWorking(true)
                 setError('')
                 try {
-                  const gen = await generateKey({ email: address, passphrase: passphrase || undefined })
+                  const gen = await generateKeySet({ email: address, passphrase: passphrase || undefined })
+                  const halves: Record<'v4' | 'v6', KeyHalf> = {
+                    v4: { publicKey: gen.v4.publicKey, privateKey: gen.v4.privateKey, fingerprint: gen.v4.fingerprint },
+                    v6: { publicKey: gen.v6.publicKey, privateKey: gen.v6.privateKey, fingerprint: gen.v6.fingerprint },
+                  }
                   onSet({
-                    publicKey: gen.publicKey,
-                    privateKey: gen.privateKey,
-                    fingerprint: gen.fingerprint,
+                    publicKey: gen.v4.publicKey,
+                    privateKey: gen.v4.privateKey,
+                    fingerprint: gen.v4.fingerprint,
                     passphraseProtected: !!passphrase,
+                    v4: halves.v4,
+                    v6: halves.v6,
                   })
                   setMode('idle')
                   setPassphrase('')
-                  // Publish the PUBLIC key so others can discover it and encrypt
-                  // to this address. Best-effort, and never blocks generation.
-                  publishOwnKey(address, gen.publicKey)
+                  // Publish BOTH public keys so others can discover them and
+                  // encrypt to this address. Best-effort, never blocks
+                  // generation.
+                  publishOwnKey(address, [gen.v4.publicKey, gen.v6.publicKey])
                 } catch (e) {
                   setError(e instanceof Error ? e.message : String(e))
                 } finally {
@@ -456,4 +527,172 @@ async function extractPublicKey(armoredPrivate: string): Promise<string> {
   const openpgp = await import('openpgp')
   const key = await openpgp.readPrivateKey({ armoredKey: armoredPrivate })
   return key.toPublic().armor()
+}
+
+/**
+ * The export dialog: download the alias's private key half(s) as one armored
+ * bundle.
+ *
+ * A key that's ALREADY passphrase-protected downloads as-is, still locked
+ * with its OWN (original) passphrase — no separate export passphrase to set.
+ * Re-encrypting with a new one here, as this used to do unconditionally,
+ * meant the file was locked with a passphrase that only existed for this one
+ * export and had nothing to do with the key's real at-rest passphrase —
+ * confusing at best, and actively wrong the moment someone tried to use the
+ * exported file's passphrase to unlock the SAME key elsewhere (in this app or
+ * any other), since the key stored in settings is still locked with the
+ * original, unrelated passphrase.
+ *
+ * Only an UNPROTECTED key still gates the download behind a passphrase
+ * prompt here — that one has no passphrase to preserve, and downloading it
+ * plain would put a bare secret key on disk.
+ */
+function KeyExportDialog({
+  address,
+  keypair,
+  onClose,
+}: {
+  address: string
+  keypair: PgpKeypair
+  onClose: () => void
+}) {
+  const [pass, setPass] = useState('')
+  const [pass2, setPass2] = useState('')
+  const [working, setWorking] = useState(false)
+  const [error, setError] = useState('')
+
+  // Every private half: dual halves when present, else the legacy single pair.
+  const halves: Array<KeyHalf & { passphraseProtected?: boolean }> = [
+    ...(keypair.v4 ? [keypair.v4] : []),
+    ...(keypair.v6 ? [keypair.v6] : []),
+  ]
+  if (!halves.length) {
+    halves.push({
+      publicKey: keypair.publicKey,
+      privateKey: keypair.privateKey,
+      fingerprint: keypair.fingerprint,
+    })
+  }
+
+  function download(bundle: string) {
+    const safe = address.replace(/[^a-z0-9._-]/gi, '_')
+    const blob = new Blob([bundle], { type: 'application/pgp-keys' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${safe}-private-keys.asc`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  async function doExportAsIs() {
+    setWorking(true)
+    setError('')
+    try {
+      download(halves.map((h) => h.privateKey).join('\n'))
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  async function doExportWithNewPassphrase() {
+    if (pass.length < 8) {
+      setError('Use at least 8 characters — this passphrase is all that protects the key.')
+      return
+    }
+    if (pass !== pass2) {
+      setError('Passphrases do not match.')
+      return
+    }
+    setWorking(true)
+    setError('')
+    try {
+      const blocks: string[] = []
+      for (const half of halves) {
+        blocks.push(await encryptPrivateKey(half.privateKey, pass))
+      }
+      download(blocks.join('\n'))
+      onClose()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  if (keypair.passphraseProtected) {
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-foreground/20 p-4">
+        <div className="w-full max-w-sm rounded-xl border border-border bg-card p-4 shadow-2xl">
+          <div className="flex items-center gap-2">
+            <LockIcon className="h-4 w-4 flex-none text-muted-foreground" />
+            <h3 className="flex-1 text-[13px] font-semibold text-foreground">Export private keys</h3>
+            <Button size="sm" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+          </div>
+          <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
+            Your private key{halves.length === 1 ? '' : 's'} for {address} {halves.length === 1 ? 'is' : 'are'}{' '}
+            already passphrase-protected. The file downloads locked with that same passphrase —
+            the one you use to unlock this key in this app.
+          </p>
+          {error && <p className="mt-2 text-[11.5px] text-destructive">{error}</p>}
+          <Button
+            variant="primary"
+            className="mt-3 w-full"
+            disabled={working}
+            onClick={() => void doExportAsIs()}
+          >
+            {working ? 'Preparing…' : 'Download'}
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-foreground/20 p-4">
+      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-4 shadow-2xl">
+        <div className="flex items-center gap-2">
+          <LockIcon className="h-4 w-4 flex-none text-muted-foreground" />
+          <h3 className="flex-1 text-[13px] font-semibold text-foreground">Export private keys</h3>
+          <Button size="sm" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
+        <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
+          Your private key{halves.length === 1 ? '' : 's'} for {address} will be encrypted with
+          this passphrase before download. The file is unusable without it — there is no
+          recovery if you forget it.
+        </p>
+        <input
+          type="password"
+          value={pass}
+          onChange={(e) => setPass(e.target.value)}
+          placeholder="Export passphrase (8+ characters)"
+          className={inputClass + ' mt-3'}
+          autoFocus
+        />
+        <input
+          type="password"
+          value={pass2}
+          onChange={(e) => setPass2(e.target.value)}
+          placeholder="Repeat passphrase"
+          className={inputClass + ' mt-2'}
+        />
+        {error && <p className="mt-2 text-[11.5px] text-destructive">{error}</p>}
+        <Button
+          variant="primary"
+          className="mt-3 w-full"
+          disabled={working || !pass || !pass2}
+          onClick={() => void doExportWithNewPassphrase()}
+        >
+          {working ? 'Encrypting…' : 'Download encrypted keys'}
+        </Button>
+      </div>
+    </div>
+  )
 }

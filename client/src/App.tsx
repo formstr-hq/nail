@@ -18,6 +18,7 @@ import { EmailList } from '@/components/EmailList'
 import { EmailView } from '@/components/EmailView'
 import { ComposeModal } from '@/components/ComposeModal'
 import { SettingsModal, type SectionId } from '@/components/SettingsModal'
+
 import { OnboardingModal } from '@/components/OnboardingModal'
 import { BrandGlyph, PenIcon, InboxIcon } from '@/components/ui/icons'
 import { IconButton } from '@/components/ui/Button'
