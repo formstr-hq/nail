@@ -56,6 +56,27 @@ These encode the audit findings (`docs/FRONTEND_AUDIT.md`) as hard rules. Violat
 11. **No unbounded work against relays/signers.** Any new subscription or per-event computation must state its bound (dedup guard, queue limit) in the diff.
 12. **Security boundaries are non-negotiable.** Email HTML renders only in the sandboxed iframe (`lib/mail/emailFrame.ts`); remote images stay opt-in; secrets never enter logs or `console.*`.
 
+## Known offenders (legacy anti-patterns on watch)
+
+These exist in the codebase today (audit refs point to `docs/FRONTEND_AUDIT.md`). They are **warnings, not licenses**: don't replicate the pattern, and shrink the offender when you touch it — but don't rewrite one wholesale in a feature diff either; refactors land as their own diffs per the merge plan.
+
+| Offender | Where | Why it's a warning |
+|---|---|---|
+| God components | `client/src/components/ComposeModal.tsx` (728 L), `SettingsModal.tsx` (674 L), `PgpSettings.tsx` (698 L), `EmailView.tsx` (461 L) | A1/A4 — split along seams before extending, not after |
+| Hand-rolled persistence | `client/src/store/mail.ts` (4 keys + legacy migration), `hooks/useOwnedAddresses.ts`, `store/theme.ts`, `store/dev.ts`, `lib/freshSignup.ts` | B1 — each reinvents serialization/corruption handling; the legacy `mailstr.read` migration must survive any consolidation |
+| Module-level lifecycle singletons | `hooks/useMailActions.ts` (`indexKeyInflight`), `store/account.ts` (`initialized`) | B2 — survive account switches; logout/login races can leak the previous account's state |
+| Overlay state as `useState` booleans + hand-rolled back stack | `client/src/App.tsx` (6-case `handleBack`), no router anywhere | A3/A5 — invisible to URL, no deep links, every new overlay must be manually added to the back handler or back exits the app |
+| Duplicate logic across apps | `client/src/components/LoginPage.tsx` ↔ `landing/src/components/SignupWizard.tsx` (~450 lines), `nip98`, `platform`, `session` | A1 — fixes must be applied twice; check the twin file before touching either |
+| Optimistic publishes without retry/feedback | `hooks/useMailActions.ts` (`apply` swallows failures) | B3 — a failed kind-34578 publish is silently lost until the next action |
+| Decode queue + watchdog inside an effect | `hooks/useInbox.ts` (5-dep effect, `setInterval`, bounded-3 pump in closure) | C1 — fragile dep array; a re-run replays every wrap through the signer |
+| `useState` seeds + sync-back effects from store | `client/src/components/SettingsModal.tsx` (`senderAddress`, `signature`, `relays`) | C2 — manual re-sync, staleness risk on every source change |
+| Store-shape full re-renders | `store/mail.ts` (`emails` map + `seenIds` replaced wholesale on each add; EmailList refilters all) | B4 — fine at hundreds of mails, jank at thousands; don't grow it |
+| Async resolve errors swallowed | `hooks/useResolveContext.ts` (logs only; UI never sees "legacy outbound unavailable") | D4 — new code must surface failure states in UI, not console |
+| Silent cross-device delete | `store/mail.ts` `hydrateFlags` clears `selectedId` with no UX affordance | D1 — don't add more "vanish without explanation" behaviors |
+| Landing redirect race | `landing/src/App.tsx` `checking` spinner has no timeout | D6 — new async gates need timeouts and a fall-through |
+
+Rule of thumb: if a diff adds code that would land in the left column, it needs a reason in writing — or a different shape.
+
 ## Command reference (run inside `client/`, `landing/`, or `web/`)
 
 ```sh
