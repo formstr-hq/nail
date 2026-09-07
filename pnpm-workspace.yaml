@@ -1,0 +1,7 @@
+packages:
+  - web
+  - client
+  - landing
+
+allowBuilds:
+  esbuild: true
