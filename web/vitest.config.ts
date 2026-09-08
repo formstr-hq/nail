@@ -9,7 +9,8 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // Node by default; component tests opt into happy-dom with a docblock.
     environment: "node",
   },
 });
