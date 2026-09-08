@@ -3,6 +3,7 @@ import { useAccountStore } from '@/app/store/account'
 import { useMailStore } from '@/app/store/mail'
 import { getLocalRelay, syncAccountRelays, localRelayBootError } from '@/app/lib/nostr/localRelay'
 import { decodeGiftWrap } from '@/app/lib/mail/receive'
+import { DecodeQueue } from '@/app/lib/mail/decodeQueue'
 import { protocolSigner } from '@/app/lib/nostr/protocol-signer'
 import { KIND_GIFTWRAP, DEFAULT_RELAYS, withHardcodedRelay } from '@/app/lib/nostr/constants'
 import type { Event, Filter } from 'nostr-tools'
@@ -19,6 +20,13 @@ export type InboxStatus =
   | { phase: 'connecting'; decoding: number }
   | { phase: 'live'; relays: string[]; decoding: number }
   | { phase: 'error'; message: string; decoding: number }
+
+/** Decrypting a gift wrap costs one signer call, and with a NIP-46 bunker
+ *  that is a full relay round-trip. The subscription has no `since`, so a
+ *  reload replays every wrap the relays hold and would fire all of those at
+ *  the signer simultaneously — enough to swamp a bunker and leave the inbox
+ *  silently empty. Run a bounded number at a time instead. */
+const MAX_CONCURRENT_DECRYPTS = 3
 
 export function useInbox(bridgePubkey: string | null) {
   const { account, active } = useAccountStore()
@@ -57,56 +65,28 @@ export function useInbox(bridgePubkey: string | null) {
     const relay = getLocalRelay()
     const signer = protocolSigner(active)
 
-    // Decrypting a gift wrap costs one signer call, and with a NIP-46 bunker
-    // that is a full relay round-trip. The subscription has no `since`, so a
-    // reload replays every wrap the relays hold and would fire all of those at
-    // the signer simultaneously — enough to swamp a bunker and leave the inbox
-    // silently empty. Run a bounded number at a time instead.
-    const MAX_CONCURRENT_DECRYPTS = 3
-    const queue: Event[] = []
-    let running = 0
-    let undecodable = 0
-
-    // Reported to the UI as "still reading N messages". Counts queued plus
-    // in-flight, so it only reaches zero when the backlog is genuinely done.
-    const reportDecoding = () => {
-      if (!alive) return
-      setStatus((s) => ({ ...s, decoding: queue.length + running }))
-    }
-
-    const pump = () => {
-      while (alive && running < MAX_CONCURRENT_DECRYPTS && queue.length) {
-        const event = queue.shift()!
-        running += 1
-        void decodeGiftWrap(event, signer, bridgePubkey, account!.pubkey)
-          .then((outcome) => {
-            if (!alive) return
-            if ('email' in outcome) {
-              // Stash the wrap author's key before the email itself: delete-
-              // forever needs it on hand, and a crash between the two must not
-              // strand the mail as undeletable.
-              if (outcome.wrapSecret)
-                useMailStore.getState().saveWrapKey(outcome.email.id, outcome.wrapSecret)
-              addEmail(outcome.email)
-              return
-            }
-            // Routine: relays hand us every wrap p-tagged to us, and most are
-            // other people's mail we cannot read. Only the rest is a signal.
-            if (outcome.failure.routine) return
-            undecodable += 1
-            console.warn(
-              `[inbox] rejected wrap ${event.id.slice(0, 8)}: ${outcome.failure.reason} ` +
-                `(${undecodable} so far)`,
-            )
-          })
-          .finally(() => {
-            running -= 1
-            pump()
-            reportDecoding()
-          })
-      }
-      reportDecoding()
-    }
+    // The bounded decode pump, extracted into a testable service
+    // (lib/mail/decodeQueue.ts). The hook only wires callbacks.
+    const queue = new DecodeQueue(MAX_CONCURRENT_DECRYPTS, {
+      onEmail: (email, wrapSecret) => {
+        if (!alive) return
+        // Stash the wrap author's key before the email itself: delete-
+        // forever needs it on hand, and a crash between the two must not
+        // strand the mail as undeletable.
+        if (wrapSecret) useMailStore.getState().saveWrapKey(email.id, wrapSecret)
+        addEmail(email)
+      },
+      onFailure: (event, reason) => {
+        if (!alive) return
+        console.warn(
+          `[inbox] rejected wrap ${event.id.slice(0, 8)}: ${reason}`,
+        )
+      },
+      onPendingChange: (pending) => {
+        if (!alive) return
+        setStatus((s) => ({ ...s, decoding: pending }))
+      },
+    })
 
     let cleanup: (() => void) | undefined
     try {
@@ -138,8 +118,7 @@ export function useInbox(bridgePubkey: string | null) {
           // local cache included) will keep serving the wrap; the tombstone,
           // not the decode-then-drop path, is what pays no signer round-trip.
           if (useMailStore.getState().deletedIds.has(event.id)) return
-          queue.push(event)
-          pump()
+          queue.push(event, (e) => decodeGiftWrap(e, signer, bridgePubkey, account!.pubkey))
         },
       })
 
@@ -148,7 +127,7 @@ export function useInbox(bridgePubkey: string | null) {
         sub.unobserve()
       }
       if (alive) {
-        setStatus({ phase: 'live', relays: withHardcodedRelay(DEFAULT_RELAYS), decoding: queue.length + running })
+        setStatus({ phase: 'live', relays: withHardcodedRelay(DEFAULT_RELAYS), decoding: queue.pending })
       }
     } catch (err) {
       console.error(err)
@@ -164,6 +143,7 @@ export function useInbox(bridgePubkey: string | null) {
     return () => {
       alive = false
       clearInterval(watchdog)
+      queue.stop()
       cleanup?.()
     }
   }, [account, active, addEmail, bridgePubkey, attempt])
