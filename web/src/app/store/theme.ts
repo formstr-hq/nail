@@ -1,19 +1,7 @@
 import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 
 export type ThemePreference = 'light' | 'dark' | 'system'
-
-const STORAGE_KEY = 'mailstr.theme'
-
-function readStored(): ThemePreference {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw === 'light' || raw === 'dark' || raw === 'system') return raw
-  } catch {
-    // Private browsing and blocked storage both throw here. A theme is not
-    // worth failing a boot over — fall through to the OS preference.
-  }
-  return 'system'
-}
 
 const systemQuery = () =>
   typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null
@@ -34,10 +22,24 @@ function paint(preference: ThemePreference): void {
 /**
  * Applied before React mounts so the first paint is already the right theme —
  * mounting first would flash the light palette at anyone who chose dark.
+ *
+ * Reads the same raw `mailstr.theme` value the persist middleware reads below,
+ * so the store's hydration and this pre-paint never disagree.
  */
 export function applyStoredTheme(): void {
-  const preference = readStored()
-  paint(preference)
+  try {
+    const raw = localStorage.getItem('mailstr.theme')
+    // New format (persist middleware JSON envelope) or the legacy bare value.
+    if (raw === 'light' || raw === 'dark' || raw === 'system') paint(raw)
+    else if (raw) {
+      const parsed = JSON.parse(raw) as { state?: { preference?: ThemePreference } }
+      if (parsed?.state?.preference) paint(parsed.state.preference)
+    }
+  } catch {
+    // Private browsing and blocked storage both throw here. A theme is not
+    // worth failing a boot over — fall through to the OS preference.
+    paint('system')
+  }
   // Only `system` tracks the OS; an explicit choice stays put.
   systemQuery()?.addEventListener('change', () => {
     if (useThemeStore.getState().preference === 'system') paint('system')
@@ -49,15 +51,20 @@ interface ThemeState {
   setPreference: (preference: ThemePreference) => void
 }
 
-export const useThemeStore = create<ThemeState>()((set) => ({
-  preference: readStored(),
-  setPreference: (preference) => {
-    paint(preference)
-    try {
-      localStorage.setItem(STORAGE_KEY, preference)
-    } catch {
-      // Storage refused it — the theme still applies for this session.
-    }
-    set({ preference })
-  },
-}))
+export const useThemeStore = create<ThemeState>()(
+  persist(
+    (set) => ({
+      preference: 'system',
+      setPreference: (preference) => {
+        paint(preference)
+        set({ preference })
+      },
+    }),
+    {
+      name: 'mailstr.theme',
+      storage: createJSONStorage(() => localStorage),
+      // The OS listener reads the store directly; painting happens in
+      // setPreference, so nothing extra needs persisting.
+    },
+  ),
+)

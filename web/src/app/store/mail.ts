@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist, type PersistStorage } from 'zustand/middleware'
 import type { Email, EmailFolder, MailFlags } from '@/app/types/mail'
 
 /**
@@ -15,6 +16,13 @@ import type { Email, EmailFolder, MailFlags } from '@/app/types/mail'
  * The relay copy remains the source of truth — `updatedAt` (the event's
  * `created_at`) decides which of two versions wins, so a stale replay never
  * clobbers a newer local or cross-device change.
+ *
+ * Persistence goes through zustand/persist with the SAME keys and value shapes
+ * the hand-rolled helpers used, so existing devices upgrade in place:
+ *  - `mailstr.mailstate.v1`  → mailState (Record<string, MailFlags>)
+ *  - `mailstr.wrapkeys.v1`   → wrapKeys (Record<string, string>)
+ *  - `mailstr.deleted.v1`    → deletedIds (string[])
+ *  - `mailstr.read` (legacy) → folded into mailState on migrate, never deleted
  */
 const STATE_KEY = 'mailstr.mailstate.v1'
 // The pre-sync build kept only a set of opened gift-wrap ids here. Fold it into
@@ -29,6 +37,8 @@ const LEGACY_READ_KEY = 'mailstr.read'
 // keeps "delete forever" from resurrecting on the next replay.
 const WRAP_KEYS_KEY = 'mailstr.wrapkeys.v1'
 const DELETED_KEY = 'mailstr.deleted.v1'
+
+// --- legacy loaders (pre-persist format, used only by the migrate path) ---
 
 function loadJsonObject<T>(key: string): Record<string, T> {
   try {
@@ -57,56 +67,119 @@ function loadIdSet(key: string): Set<string> {
   }
 }
 
-function persistJson(key: string, value: unknown): void {
+/**
+ * Fold the legacy `mailstr.read` set into mail state. Called from the persist
+ * migrate step on first hydration so nobody's read state resets on upgrade.
+ * The legacy key is NOT deleted: deleting it would break upgrades on devices
+ * that still run the old build alongside (see AGENTS rule 8).
+ */
+function foldLegacyReadState(state: Record<string, MailFlags>): Record<string, MailFlags> {
   try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // Storage refused it — still applies in memory for this session.
-  }
-}
-
-function loadWrapKeys(): Record<string, string> {
-  return loadJsonObject<string>(WRAP_KEYS_KEY)
-}
-
-function loadDeletedIds(): Set<string> {
-  return loadIdSet(DELETED_KEY)
-}
-
-function loadMailState(): Record<string, MailFlags> {
-  const state: Record<string, MailFlags> = {}
-  try {
-    const raw = localStorage.getItem(STATE_KEY)
-    const parsed: unknown = raw ? JSON.parse(raw) : {}
-    if (parsed && typeof parsed === 'object') {
-      for (const [id, flags] of Object.entries(parsed as Record<string, MailFlags>)) {
-        if (flags && typeof flags === 'object') state[id] = flags
-      }
+    const raw = localStorage.getItem(LEGACY_READ_KEY)
+    const ids: unknown = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(ids)) return state
+    const merged = { ...state }
+    for (const id of ids) {
+      if (typeof id === 'string' && !merged[id]) merged[id] = { read: true, updatedAt: 0 }
     }
-  } catch {
-    // Blocked/absent storage or malformed JSON — start empty. State just won't
-    // persist this session, a far smaller failure than a crash.
-  }
-  try {
-    const rawLegacy = localStorage.getItem(LEGACY_READ_KEY)
-    const ids: unknown = rawLegacy ? JSON.parse(rawLegacy) : []
-    if (Array.isArray(ids)) {
-      for (const id of ids) {
-        if (typeof id === 'string' && !state[id]) state[id] = { read: true, updatedAt: 0 }
-      }
-    }
+    return merged
   } catch {
     // Ignore a malformed legacy value.
+    return state
   }
-  return state
 }
 
-function persistMailState(state: Record<string, MailFlags>): void {
-  try {
-    localStorage.setItem(STATE_KEY, JSON.stringify(state))
-  } catch {
-    // Storage refused it — state still applies in memory for this session.
+/**
+ * The persist middleware's migrate step. The three persisted slices used to be
+ * written by hand-rolled helpers as BARE values (a JSON map / array per key,
+ * no persist envelope), so a pre-persist device's storage holds exactly the
+ * shapes below. migrate receives whatever getItem produced — reconstruct each
+ * slice, folding the legacy read set in.
+ */
+/**
+ * The persist middleware's migrate step (version-mismatch path). Reconstructs
+ * each slice; deletedIds arrive as the bare legacy array shape.
+ */
+function migratePersisted(raw: unknown): {
+  mailState: Record<string, MailFlags>
+  wrapKeys: Record<string, string>
+  deletedIds: string[]
+} {
+  const slices = (raw ?? {}) as {
+    mailState?: Record<string, MailFlags>
+    wrapKeys?: Record<string, string>
+    deletedIds?: unknown
   }
+  const deletedIds = new Set(loadIdSet(DELETED_KEY))
+  // A bare-array shape (pre-persist) is also accepted, in case a future
+  // rollback wrote one.
+  if (Array.isArray(slices.deletedIds)) {
+    for (const id of slices.deletedIds) {
+      if (typeof id === 'string') deletedIds.add(id)
+    }
+  }
+  return {
+    mailState: slices.mailState ?? {},
+    wrapKeys: slices.wrapKeys ?? loadJsonObject<string>(WRAP_KEYS_KEY),
+    deletedIds: Array.from(deletedIds),
+  }
+}
+
+/**
+ * PersistStorage that splits the store's persisted state across the SAME three
+ * localStorage keys (and bare JSON shapes) the hand-rolled helpers used. Each
+ * slice is written independently — a partial failure (quota, blocked storage)
+ * degrades exactly like the old helpers did, key by key.
+ */
+const mailStorage: PersistStorage<{
+  mailState: Record<string, MailFlags>
+  wrapKeys: Record<string, string>
+  deletedIds: string[]
+}> = {
+  getItem: () => {
+    try {
+      const mailState = loadJsonObject<MailFlags>(STATE_KEY)
+      const wrapKeys = loadJsonObject<string>(WRAP_KEYS_KEY)
+      const deletedIds = Array.from(loadIdSet(DELETED_KEY))
+      // A completely empty read means "nothing persisted yet" — return null so
+      // the persist middleware skips hydration/migrate entirely.
+      const hasAnything =
+        Object.keys(mailState).length > 0 ||
+        Object.keys(wrapKeys).length > 0 ||
+        deletedIds.length > 0
+      if (!hasAnything) return null
+      return { state: { mailState, wrapKeys, deletedIds } }
+    } catch {
+      return null
+    }
+  },
+  setItem: (_key, envelope) => {
+    const value = envelope.state
+    try {
+      if (value.mailState) localStorage.setItem(STATE_KEY, JSON.stringify(value.mailState))
+    } catch {
+      // Storage refused it — still applies in memory for this session.
+    }
+    try {
+      localStorage.setItem(WRAP_KEYS_KEY, JSON.stringify(value.wrapKeys))
+    } catch {
+      // Storage refused it — still applies in memory for this session.
+    }
+    try {
+      localStorage.setItem(DELETED_KEY, JSON.stringify(value.deletedIds))
+    } catch {
+      // Storage refused it — still applies in memory for this session.
+    }
+  },
+  removeItem: () => {
+    try {
+      localStorage.removeItem(STATE_KEY)
+      localStorage.removeItem(WRAP_KEYS_KEY)
+      localStorage.removeItem(DELETED_KEY)
+    } catch {
+      // Storage unavailable — nothing to clear.
+    }
+  },
 }
 
 /** True when the mail is filed away (archived or trashed), so it leaves Inbox. */
@@ -149,165 +222,191 @@ interface MailState {
   clear: () => void
 }
 
-export const useMailStore = create<MailState>()((set, get) => ({
-  emails: {},
-  seenIds: new Set(),
-  mailState: loadMailState(),
-  wrapKeys: loadWrapKeys(),
-  deletedIds: loadDeletedIds(),
-  selectedId: null,
-  folder: 'inbox',
-  query: '',
-  inboxFilter: null,
-
-  addEmail: (email) => {
-    if (get().seenIds.has(email.id)) return
-    // A deleted mail must never re-enter the view, however it arrives — a
-    // relay replaying a wrap whose kind-5 it ignored, or our own cache after
-    // reload (the local relay's deletion ledger is in-memory). Both the device
-    // tombstone and the synced deleted flag are checked.
-    if (get().deletedIds.has(email.id) || get().mailState[email.id]?.deleted) return
-    // Re-apply known state: a freshly fetched wrap arrives read:false, but we
-    // may have opened (or filed) it before, here or on another device.
-    const read = email.read || !!get().mailState[email.id]?.read
-    set((s) => ({
-      emails: { ...s.emails, [email.id]: { ...email, read } },
-      seenIds: new Set([...s.seenIds, email.id]),
-    }))
-  },
-
-  setFlag: (id, patch) => {
-    const prev = get().mailState[id]
-    const merged: MailFlags = { ...prev, ...patch, updatedAt: Math.floor(Date.now() / 1000) }
-    set((s) => {
-      const mailState = { ...s.mailState, [id]: merged }
-      persistMailState(mailState)
-      const email = s.emails[id]
-      const emails =
-        email && merged.read !== undefined && email.read !== merged.read
-          ? { ...s.emails, [id]: { ...email, read: !!merged.read } }
-          : s.emails
-      return { mailState, emails }
-    })
-    return merged
-  },
-
-  hydrateFlags: (entries) =>
-    set((s) => {
-      const mailState = { ...s.mailState }
-      const emails = { ...s.emails }
-      let deletedIds = s.deletedIds
-      let wrapKeys = s.wrapKeys
-      let selectedId = s.selectedId
-      let changed = false
-      for (const { ref, flags } of entries) {
-        const prev = mailState[ref]
-        // Newest wins. An optimistic local write stamps `updatedAt` with now, so
-        // a replay of an older relay version (or one it just echoed back) can't
-        // overwrite it.
-        if (prev && prev.updatedAt > flags.updatedAt) continue
-        mailState[ref] = flags
-        changed = true
-        if (flags.deleted) {
-          // Another device deleted this mail: purge it here too. Tombstoning
-          // matters as much as removing the entry — a relay that ignored the
-          // kind-5 will happily serve the wrap again on the next fetch.
-          if (!deletedIds.has(ref)) {
-            deletedIds = new Set(deletedIds)
-            deletedIds.add(ref)
-            persistJson(DELETED_KEY, [...deletedIds])
-          }
-          if (ref in wrapKeys) {
-            wrapKeys = { ...wrapKeys }
-            delete wrapKeys[ref]
-            persistJson(WRAP_KEYS_KEY, wrapKeys)
-          }
-          delete emails[ref]
-          if (selectedId === ref) selectedId = null
-          continue
-        }
-        const email = emails[ref]
-        if (email && email.read !== !!flags.read) emails[ref] = { ...email, read: !!flags.read }
-      }
-      if (!changed) return s
-      persistMailState(mailState)
-      return { mailState, emails, deletedIds, wrapKeys, selectedId }
-    }),
-
-  saveWrapKey: (id, wrapKey) => {
-    if (get().wrapKeys[id] === wrapKey) return
-    set((s) => {
-      const wrapKeys = { ...s.wrapKeys, [id]: wrapKey }
-      persistJson(WRAP_KEYS_KEY, wrapKeys)
-      return { wrapKeys }
-    })
-  },
-
-  markDeleted: (id) => {
-    const merged: MailFlags = {
-      ...get().mailState[id],
-      deleted: true,
-      updatedAt: Math.floor(Date.now() / 1000),
-    }
-    set((s) => {
-      const deletedIds = new Set(s.deletedIds)
-      deletedIds.add(id)
-      persistJson(DELETED_KEY, [...deletedIds])
-
-      const wrapKeys = { ...s.wrapKeys }
-      delete wrapKeys[id]
-      persistJson(WRAP_KEYS_KEY, wrapKeys)
-
-      const mailState = { ...s.mailState, [id]: merged }
-      persistMailState(mailState)
-
-      const emails = { ...s.emails }
-      delete emails[id]
-      // `seenIds` deliberately keeps the id: a relay replaying the wrap must
-      // not pay a signer round-trip only for addEmail's tombstone guard to
-      // drop the result — the onEvent pre-checks catch it first.
-      return {
-        deletedIds,
-        wrapKeys,
-        mailState,
-        emails,
-        selectedId: s.selectedId === id ? null : s.selectedId,
-      }
-    })
-    return merged
-  },
-
-  // Switching folders clears the search too: a query typed against Inbox
-  // almost never means the same thing in Trash, and carrying it over silently
-  // hides mail the user just asked to see.
-  setFolder: (folder) => set({ folder, selectedId: null, query: '' }),
-  setSelected: (id) => set({ selectedId: id }),
-  setQuery: (query) => set({ query }),
-
-  // Changing the visible alias also drops the open message and any search —
-  // both were scoped to the previous view and rarely mean the same thing here.
-  // `keepSelection` is for the composer's app-wide From switcher: it mirrors the
-  // choice into the sidebar highlight without yanking away the email the user
-  // is mid-compose against. Navigation from the sidebar still clears.
-  setInboxFilter: (address, keepSelection) =>
-    set(
-      keepSelection
-        ? { inboxFilter: address ? address.toLowerCase() : null }
-        : { inboxFilter: address ? address.toLowerCase() : null, selectedId: null, query: '' },
-    ),
-
-  // Wipe everything account-scoped when switching users. `mailState` is keyed by
-  // gift-wrap id (globally unique, so it never collides across accounts) and
-  // persisted per device, so it deliberately survives — mail opened or filed
-  // under one account keeps that state if it ever appears under another, and its
-  // offline cache stays warm across a switch.
-  clear: () =>
-    set({
+export const useMailStore = create<MailState>()(
+  persist(
+    (set, get) => ({
       emails: {},
       seenIds: new Set(),
+      mailState: {},
+      wrapKeys: {},
+      deletedIds: new Set(),
       selectedId: null,
-      folder: 'inbox',
+      folder: 'inbox' as EmailFolder,
       query: '',
       inboxFilter: null,
+
+      addEmail: (email) => {
+        if (get().seenIds.has(email.id)) return
+        // A deleted mail must never re-enter the view, however it arrives — a
+        // relay replaying a wrap whose kind-5 it ignored, or our own cache after
+        // reload (the local relay's deletion ledger is in-memory). Both the device
+        // tombstone and the synced deleted flag are checked.
+        if (get().deletedIds.has(email.id) || get().mailState[email.id]?.deleted) return
+        // Re-apply known state: a freshly fetched wrap arrives read:false, but we
+        // may have opened (or filed) it before, here or on another device.
+        const read = email.read || !!get().mailState[email.id]?.read
+        set((s) => ({
+          emails: { ...s.emails, [email.id]: { ...email, read } },
+          seenIds: new Set([...s.seenIds, email.id]),
+        }))
+      },
+
+      setFlag: (id, patch) => {
+        const prev = get().mailState[id]
+        const merged: MailFlags = { ...prev, ...patch, updatedAt: Math.floor(Date.now() / 1000) }
+        set((s) => {
+          const mailState = { ...s.mailState, [id]: merged }
+          const email = s.emails[id]
+          const emails =
+            email && merged.read !== undefined && email.read !== merged.read
+              ? { ...s.emails, [id]: { ...email, read: !!merged.read } }
+              : s.emails
+          return { mailState, emails }
+        })
+        return merged
+      },
+
+      hydrateFlags: (entries) =>
+        set((s) => {
+          const mailState = { ...s.mailState }
+          const emails = { ...s.emails }
+          let deletedIds = s.deletedIds
+          let wrapKeys = s.wrapKeys
+          let selectedId = s.selectedId
+          let changed = false
+          for (const { ref, flags } of entries) {
+            const prev = mailState[ref]
+            // Newest wins. An optimistic local write stamps `updatedAt` with now, so
+            // a replay of an older relay version (or one it just echoed back) can't
+            // overwrite it.
+            if (prev && prev.updatedAt > flags.updatedAt) continue
+            mailState[ref] = flags
+            changed = true
+            if (flags.deleted) {
+              // Another device deleted this mail: purge it here too. Tombstoning
+              // matters as much as removing the entry — a relay that ignored the
+              // kind-5 will happily serve the wrap again on the next fetch.
+              deletedIds = new Set(deletedIds)
+              deletedIds.add(ref)
+              if (ref in wrapKeys) {
+                wrapKeys = { ...wrapKeys }
+                delete wrapKeys[ref]
+              }
+              delete emails[ref]
+              if (selectedId === ref) selectedId = null
+              continue
+            }
+            const email = emails[ref]
+            if (email && email.read !== !!flags.read) emails[ref] = { ...email, read: !!flags.read }
+          }
+          if (!changed) return s
+          return { mailState, emails, deletedIds, wrapKeys, selectedId }
+        }),
+
+      saveWrapKey: (id, wrapKey) => {
+        if (get().wrapKeys[id] === wrapKey) return
+        set((s) => ({ wrapKeys: { ...s.wrapKeys, [id]: wrapKey } }))
+      },
+
+      markDeleted: (id) => {
+        const merged: MailFlags = {
+          ...get().mailState[id],
+          deleted: true,
+          updatedAt: Math.floor(Date.now() / 1000),
+        }
+        set((s) => {
+          const deletedIds = new Set(s.deletedIds)
+          deletedIds.add(id)
+
+          const wrapKeys = { ...s.wrapKeys }
+          delete wrapKeys[id]
+
+          const mailState = { ...s.mailState, [id]: merged }
+
+          const emails = { ...s.emails }
+          delete emails[id]
+          // `seenIds` deliberately keeps the id: a relay replaying the wrap must
+          // not pay a signer round-trip only for addEmail's tombstone guard to
+          // drop the result — the onEvent pre-checks catch it first.
+          return {
+            deletedIds,
+            wrapKeys,
+            mailState,
+            emails,
+            selectedId: s.selectedId === id ? null : s.selectedId,
+          }
+        })
+        return merged
+      },
+
+      // Switching folders clears the search too: a query typed against Inbox
+      // almost never means the same thing in Trash, and carrying it over silently
+      // hides mail the user just asked to see.
+      setFolder: (folder) => set({ folder, selectedId: null, query: '' }),
+      setSelected: (id) => set({ selectedId: id }),
+      setQuery: (query) => set({ query }),
+
+      // Changing the visible alias also drops the open message and any search —
+      // both were scoped to the previous view and rarely mean the same thing here.
+      // `keepSelection` is for the composer's app-wide From switcher: it mirrors the
+      // choice into the sidebar highlight without yanking away the email the user
+      // is mid-compose against. Navigation from the sidebar still clears.
+      setInboxFilter: (address, keepSelection) =>
+        set(
+          keepSelection
+            ? { inboxFilter: address ? address.toLowerCase() : null }
+            : { inboxFilter: address ? address.toLowerCase() : null, selectedId: null, query: '' },
+        ),
+
+      // Wipe everything account-scoped when switching users. `mailState` is keyed by
+      // gift-wrap id (globally unique, so it never collides across accounts) and
+      // persisted per device, so it deliberately survives — mail opened or filed
+      // under one account keeps that state if it ever appears under another, and its
+      // offline cache stays warm across a switch.
+      clear: () =>
+        set({
+          emails: {},
+          seenIds: new Set(),
+          selectedId: null,
+          folder: 'inbox',
+          query: '',
+          inboxFilter: null,
+        }),
     }),
-}))
+    {
+      // THREE storage keys, same names and bare-value shapes the hand-rolled
+      // helpers wrote, so existing devices upgrade in place and a rollback to
+      // the old build keeps working. The persist middleware writes a single
+      // `name` key, so instead of an envelope the custom storage below SPLITS
+      // the persisted state across the three keys (getItem merges them back).
+      // The legacy read-set fold happens in migrate (first hydration).
+      name: 'mailstr.mailstore.v1',
+      version: 1,
+      storage: mailStorage,
+      partialize: (s) => ({
+        mailState: s.mailState,
+        wrapKeys: s.wrapKeys,
+        deletedIds: [...s.deletedIds],
+      }),
+      // The storage round-trips deletedIds as a string[] (the legacy shape);
+      // merge converts it back into the Set the store works with and folds
+      // the legacy `mailstr.read` set in (runs on EVERY hydration, unlike
+      // migrate, so a device upgraded from the pre-persist build keeps its
+      // read state).
+      merge: (persisted, current) => {
+        const slices = (persisted ?? {}) as {
+          mailState?: Record<string, MailFlags>
+          wrapKeys?: Record<string, string>
+          deletedIds?: string[]
+        }
+        return {
+          ...current,
+          mailState: foldLegacyReadState(slices.mailState ?? {}),
+          wrapKeys: slices.wrapKeys ?? current.wrapKeys,
+          deletedIds: new Set(slices.deletedIds ?? []),
+        }
+      },
+      migrate: migratePersisted,
+    },
+  ),
+)

@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { create } from 'zustand'
+import { persist, createJSONStorage } from 'zustand/middleware'
 import { useAccountStore } from '@/app/store/account'
 import { fetchOwnedAddresses, Nip98AuthError } from '@/app/lib/api/addresses'
 
@@ -15,36 +17,62 @@ const cache = new Map<string, string[]>()
 // a background fetch revalidates (stale-while-revalidate). Deliberately local
 // and non-authoritative: it's only ever a head start, never the source of
 // truth, and a fetch always overwrites it.
-const PERSIST_PREFIX = 'mailstr.ownedAddresses:'
+//
+// Persisted through zustand/persist under the SAME per-pubkey keys the
+// hand-rolled helpers used (`mailstr.ownedAddresses:<pubkey>`), with each
+// value kept as the bare `string[]` shape so nothing is lost on upgrade.
+const ADDRESSES_KEY_PREFIX = 'mailstr.ownedAddresses:'
+
+interface OwnedAddressesPersist {
+  /** All cached per-pubkey address lists, keyed by the prefixed key. */
+  entries: Record<string, string[]>
+}
+
+// Read the per-pubkey legacy entries once at module load; the persist store
+// merges them so the hand-rolled values upgrade in place.
+function loadLegacyEntries(): Record<string, string[]> {
+  const entries: Record<string, string[]> = {}
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (!key?.startsWith(ADDRESSES_KEY_PREFIX)) continue
+      const parsed: unknown = JSON.parse(localStorage.getItem(key) ?? '')
+      if (Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')) {
+        entries[key] = parsed
+      }
+    }
+  } catch {
+    // Blocked/absent storage — start empty.
+  }
+  return entries
+}
+
+const useOwnedAddressesCache = create<OwnedAddressesPersist & { write: (pubkey: string, addresses: string[]) => void; drop: (pubkey: string) => void }>()(
+  persist(
+    (set) => ({
+      entries: loadLegacyEntries(),
+      write: (pubkey, addresses) =>
+        set((s) => ({
+          entries: { ...s.entries, [ADDRESSES_KEY_PREFIX + pubkey]: addresses },
+        })),
+      drop: (pubkey) =>
+        set((s) => {
+          const entries = { ...s.entries }
+          delete entries[ADDRESSES_KEY_PREFIX + pubkey]
+          return { entries }
+        }),
+    }),
+    {
+      name: 'mailstr.ownedAddresses.index.v1',
+      version: 1,
+      storage: createJSONStorage(() => localStorage),
+    },
+  ),
+)
+
 
 function readPersisted(pubkey: string): string[] | null {
-  try {
-    const raw = localStorage.getItem(PERSIST_PREFIX + pubkey)
-    if (!raw) return null
-    const parsed: unknown = JSON.parse(raw)
-    return Array.isArray(parsed) && parsed.every((x) => typeof x === 'string')
-      ? (parsed as string[])
-      : null
-  } catch {
-    // Blocked/absent storage or malformed JSON — behave as if nothing cached.
-    return null
-  }
-}
-
-function writePersisted(pubkey: string, addresses: string[]): void {
-  try {
-    localStorage.setItem(PERSIST_PREFIX + pubkey, JSON.stringify(addresses))
-  } catch {
-    // Storage refused it — the in-memory cache still serves this session.
-  }
-}
-
-function removePersisted(pubkey: string): void {
-  try {
-    localStorage.removeItem(PERSIST_PREFIX + pubkey)
-  } catch {
-    // ignore — nothing to clear or storage unavailable
-  }
+  return useOwnedAddressesCache.getState().entries[ADDRESSES_KEY_PREFIX + pubkey] ?? null
 }
 
 const AUTH_ERROR_MESSAGE = 'Session rejected — sign in again'
@@ -147,7 +175,7 @@ export function useOwnedAddresses() {
         // stays valid even if the user switched accounts mid-flight, so a
         // later switch back can reuse it instead of refetching.
         cache.set(pubkey, result)
-        writePersisted(pubkey, result)
+        useOwnedAddressesCache.getState().write(pubkey, result)
         if (!alive) return
         setAddresses(result)
       })
@@ -176,7 +204,7 @@ export function useOwnedAddresses() {
       cache.delete(pubkey)
       // Drop the persisted copy too, so this forced retry reports an error on a
       // repeat failure instead of silently keeping the stale list.
-      removePersisted(pubkey)
+      useOwnedAddressesCache.getState().drop(pubkey)
     }
     setReloadNonce((n) => n + 1)
   }, [pubkey, loading])
