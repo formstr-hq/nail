@@ -1,13 +1,15 @@
-# mailstr.app landing page
+# mailstr.app — merged web frontend
 
-SEO-ready static landing page for [mailstr.app](https://mailstr.app) — the Nostr
-mail bridge. Prerendered at build time (Vite SSG), styled after
-`about-formstr`, with a paid signup flow driven by the formstr-backend APIs.
+One app for [mailstr.app](https://mailstr.app): the SEO-ready landing
+(prerendered at build time, Vite SSG, styled after `about-formstr`) plus the
+mail client mounted at `/mails`. Signup is driven by the formstr-backend APIs.
 
-## Pages
+## Routes
 
-- `/` — landing page with the signup flow
-- `/privacy-policy` — rendered from `src/pages/privacy-policy.md`
+- `/` — landing page with the signup flow (prerendered)
+- `/privacy-policy` — rendered from `src/pages/privacy-policy.md` (prerendered)
+- `/mails` — the mail client (SPA shell; `noindex`, empty HTML — the client
+  renders entirely after hydration)
 
 ## Signup flow
 
@@ -27,21 +29,24 @@ mail bridge. Prerendered at build time (Vite SSG), styled after
 ```bash
 pnpm install
 pnpm dev           # expects formstr-backend on http://localhost:5000
-pnpm build         # tsc + client build + SSR build + prerender
+pnpm build         # tsc + client build + SSR build + prerender (+ SPA shell)
+pnpm test          # vitest unit tests (lib/ modules)
+pnpm e2e           # Playwright: landing + mail app specs against a mock relay
 pnpm preview
 ```
 
 Configuration is env-driven (see `.env.example`): `VITE_API_BASE_URL`,
-`VITE_WS_BASE_URL`, `VITE_MAIL_DOMAIN`, `VITE_MAILS_URL`. Dev defaults point
-at `http://localhost:5000`; production defaults at `https://api.formstr.app`.
+`VITE_WS_BASE_URL`, `VITE_API_CANONICAL_BASE_URL`, `VITE_MAIL_DOMAIN`,
+`VITE_MAILS_URL`. Dev defaults point at `http://localhost:5000`; production
+defaults at `https://api.formstr.app`.
 
 ## Deployment
 
-The Docker service builds the site and copies the dist to a host directory
-that the external nginx serves:
+One Docker service builds the whole site and copies the dist to a host
+directory that the external nginx serves:
 
 ```bash
-cp .env.example .env   # set LANDING_DIST_PATH (and API URLs if different)
+cp .env.example .env   # set WEB_DIST_PATH (and API URLs if different)
 docker compose up --build
 ```
 
@@ -49,27 +54,33 @@ The container exits after copying — re-run it to redeploy.
 
 ### External nginx
 
+The dist is fully static: prerendered landing pages at the root, the noindex
+SPA shell at `/mails/index.html`. `/mails` needs no proxy any more — every
+`/mails/*` URL serves the shell and the app hydrates on top:
+
 ```nginx
 server {
     server_name mailstr.app;
 
-    root /var/www/mailstr;   # = LANDING_DIST_PATH
+    root /var/www/mailstr;   # = WEB_DIST_PATH
     index index.html;
 
-    # mail UI (separate repo), proxy-passed
+    # mail UI: SPA shell + its assets (history navigations need the fallback)
     location /mails {
-        proxy_pass http://<mail-ui-upstream>;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        try_files $uri $uri/ /mails/index.html;
     }
 
     # prerendered routes resolve to their own index.html; anything else
-    # falls back to the SPA shell
+    # falls back to the landing SPA shell
     location / {
         try_files $uri $uri/index.html /index.html;
     }
 }
 ```
+
+If a path other than `/mails` is ever needed, set `VITE_MAILS_URL` at build
+time — the router prefix, the prerendered shell location, and the signup
+redirects all derive from it.
 
 ### Backend prerequisites
 

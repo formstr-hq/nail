@@ -1,4 +1,4 @@
-# AGENTS.md — nail frontend (client + landing → `web/`)
+# AGENTS.md — nail frontend (`web/`)
 
 Frontend work happens in the `nail/` repo: `/home/rama/Documents/Projects/formstr-hq/nail`. Scope is frontend only — `nostr-bridge/`, `mail-server/`, and the formstr API are out of bounds unless the contract says otherwise.
 
@@ -6,18 +6,19 @@ Frontend work happens in the `nail/` repo: `/home/rama/Documents/Projects/formst
 
 | Path                         | What                                                                  |
 | ---------------------------- | --------------------------------------------------------------------- |
-| `client/`                    | Webmail SPA (React 18, Vite 6, Tailwind 3, zustand, Capacitor shell)  |
-| `landing/`                   | Signup/landing site (React 19, Vite 7, Tailwind 4, SSG prerender)     |
+| `web/`                       | The frontend: landing (prerendered at `/`) + mail client (`/mails`) in one Vite app (React 19, Tailwind 4, zustand, Capacitor shell for Android) |
+| `web/src/lib/`               | Shared modules: `nip98`, `platform`, `session`, `signer`, `config`    |
+| `web/src/app/`               | The mail client: `components/`, `hooks/`, `store/`, `lib/`            |
 | `nostr-bridge/src/protocol/` | Shared wire protocol — imported via `@protocol`, never copy it        |
 | `docs/ARCHITECTURE.md`       | **Read before any non-trivial change.** Design constraints live there |
 | `shared/signer-ui.ts`        | Signer UI helpers shared with the bridge                              |
 
-Migration in flight: client and landing merge into `web/` (see `docs/plans/FRONTEND_MERGE_PLAN.md`). Until the merge lands, treat both apps as separate builds; after it lands, this file governs `web/`.
+The client/landing merge is complete: one app, one build, one deploy (see `docs/plans/FRONTEND_MERGE_PLAN.md` — phases 1–4 done; phase 5 is the post-merge refactor pass, separate PRs).
 
 ## Rules
 
 1. **Read `docs/ARCHITECTURE.md` first.** It records _why_ the protocol is shaped this way (kind 1301, gift wraps, NIP-05 as the mail path). Violating it breaks delivery, not just style.
-2. **Never duplicate protocol/mail logic between apps.** The known duplications (`nip98`, `platform`, signer-UI tuning) are acknowledged debt with a named fix (push signer UI tuning into `@formstr/signer`) — do not add new ones.
+2. **Never duplicate protocol/mail logic.** The remaining duplication (login-UI tuning in `SignupWizard` ↔ `LoginPage`) is acknowledged debt with a named fix (push it into `@formstr/signer`) — do not add new ones.
 3. **`lib/` is the boundary.** Pure, tested modules (`lib/mail`, `lib/pgp`, `lib/nostr`) hold logic; components/hooks stay thin. New logic goes in `lib/` with a `.test.ts` beside it — run `pnpm test` in the app you touched.
 4. **Every mail action is optimistic + reconciled by `updatedAt`.** Never block UI on relay publishes; never write a second source of truth for read/archived/trashed — go through `useMailStore` flags.
 5. **Signer calls cost relay round-trips (NIP-46).** Never add unbounded per-event signer work; keep decode queue bounds. Don't subscribe without dedup guards (`seenIds`/`deletedIds` pre-checks exist for this).
@@ -49,10 +50,10 @@ These encode the audit findings (`docs/FRONTEND_AUDIT.md`) as hard rules. Violat
 4. **No `useState` mirrors of store/async data.** Derive with selectors/`useMemo` beside the store; if you must copy store data into local state, the sync-back effect and its staleness risk need a written justification in the diff.
 5. **No module-level mutable singletons guarding lifecycle** (`let initialized = false`, module-scope promise caches) — they survive account switches and create cross-account leaks. State that persists belongs in a store with an explicit reset; in-flight dedup belongs inside the store/hook scope.
 6. **Effects orchestrate, services compute.** Schedulers, queues (e.g. the inbox decode pump), and watchdogs are extracted into plain testable modules — not closures inside `useEffect`. Effects with >3 deps or a `setInterval` inside are a smell requiring justification.
-7. **One persistence idiom.** All localStorage persistence goes through `zustand/persist` middleware (or, pre-merge, the `store/mail.ts` helpers) with namespaced keys and preserved migrations. Hand-rolled `localStorage.getItem` in a component or hook is rejected.
-8. **No new cross-app duplication.** Logic needed by both `client/` and `landing/` goes into a shared location (`shared/`, or `lib/` post-merge) in the same change — a copy-paste "for now" is a rejected diff.
+7. **One persistence idiom.** All localStorage persistence goes through `zustand/persist` middleware (or, pre-refactor, the `store/mail.ts` helpers) with namespaced keys and preserved migrations. Hand-rolled `localStorage.getItem` in a component or hook is rejected.
+8. **No new cross-app duplication.** Logic needed by both the landing and the mail client goes into `web/src/lib/` (or `shared/`) in the same change — a copy-paste "for now" is a rejected diff.
 9. **No hardcoded styling drift.** Colors/spacing come from the Tailwind theme tokens; a class-string pattern repeated 3+ times gets hoisted into a shared helper/component.
-10. **Router owns navigation state** (post-merge). No new overlay state as bare `useState` booleans in `App.tsx`; overlays get routes or a dedicated overlay store that the back handler reads.
+10. **Router owns navigation state.** No new overlay state as bare `useState` booleans in `App.tsx`; overlays get routes or a dedicated overlay store that the back handler reads.
 11. **No unbounded work against relays/signers.** Any new subscription or per-event computation must state its bound (dedup guard, queue limit) in the diff.
 12. **Security boundaries are non-negotiable.** Email HTML renders only in the sandboxed iframe (`lib/mail/emailFrame.ts`); remote images stay opt-in; secrets never enter logs or `console.*`.
 13. **Proven libraries before hand-rolled core logic.** For core modules and logic — crypto, parsing, protocol handling, encoding, date/time, storage, queues — use a known, well-reputed package with a permissive (non-copyleft) license instead of writing an implementation by hand. Hand-rolling is the exception: it requires the developer's explicit direction, or the agent stops and asks permission first, naming the library candidates it considered and why they don't fit. Copy-left (GPL/AGPL) dependencies need the same permission even when off-the-shelf.
@@ -63,28 +64,27 @@ These exist in the codebase today (audit refs point to `docs/FRONTEND_AUDIT.md`)
 
 | Offender | Where | Why it's a warning |
 |---|---|---|
-| God components | `client/src/components/ComposeModal.tsx` (728 L), `SettingsModal.tsx` (674 L), `PgpSettings.tsx` (698 L), `EmailView.tsx` (461 L) | A1/A4 — split along seams before extending, not after |
-| Hand-rolled persistence | `client/src/store/mail.ts` (4 keys + legacy migration), `hooks/useOwnedAddresses.ts`, `store/theme.ts`, `store/dev.ts`, `lib/freshSignup.ts` | B1 — each reinvents serialization/corruption handling; the legacy `mailstr.read` migration must survive any consolidation |
-| Module-level lifecycle singletons | `hooks/useMailActions.ts` (`indexKeyInflight`), `store/account.ts` (`initialized`) | B2 — survive account switches; logout/login races can leak the previous account's state |
-| Overlay state as `useState` booleans + hand-rolled back stack | `client/src/App.tsx` (6-case `handleBack`), no router anywhere | A3/A5 — invisible to URL, no deep links, every new overlay must be manually added to the back handler or back exits the app |
-| Duplicate logic across apps | `client/src/components/LoginPage.tsx` ↔ `landing/src/components/SignupWizard.tsx` (~450 lines), `nip98`, `platform`, `session` | A1 — fixes must be applied twice; check the twin file before touching either |
-| Optimistic publishes without retry/feedback | `hooks/useMailActions.ts` (`apply` swallows failures) | B3 — a failed kind-34578 publish is silently lost until the next action |
-| Decode queue + watchdog inside an effect | `hooks/useInbox.ts` (5-dep effect, `setInterval`, bounded-3 pump in closure) | C1 — fragile dep array; a re-run replays every wrap through the signer |
-| `useState` seeds + sync-back effects from store | `client/src/components/SettingsModal.tsx` (`senderAddress`, `signature`, `relays`) | C2 — manual re-sync, staleness risk on every source change |
-| Store-shape full re-renders | `store/mail.ts` (`emails` map + `seenIds` replaced wholesale on each add; EmailList refilters all) | B4 — fine at hundreds of mails, jank at thousands; don't grow it |
-| Async resolve errors swallowed | `hooks/useResolveContext.ts` (logs only; UI never sees "legacy outbound unavailable") | D4 — new code must surface failure states in UI, not console |
-| Silent cross-device delete | `store/mail.ts` `hydrateFlags` clears `selectedId` with no UX affordance | D1 — don't add more "vanish without explanation" behaviors |
-| Landing redirect race | `landing/src/App.tsx` `checking` spinner has no timeout | D6 — new async gates need timeouts and a fall-through |
+| God components | `web/src/app/components/ComposeModal.tsx` (728 L), `SettingsModal.tsx` (674 L), `PgpSettings.tsx` (698 L), `EmailView.tsx` (461 L) | A1/A4 — split along seams before extending, not after |
+| Hand-rolled persistence | `web/src/app/store/mail.ts` (4 keys + legacy migration), `hooks/useOwnedAddresses.ts`, `store/theme.ts`, `store/dev.ts`, `lib/freshSignup.ts` | B1 — each reinvents serialization/corruption handling; the legacy `mailstr.read` migration must survive any consolidation |
+| Module-level lifecycle singletons | `web/src/app/hooks/useMailActions.ts` (`indexKeyInflight`), `store/account.ts` (`initialized`) | B2 — survive account switches; logout/login races can leak the previous account's state |
+| Optimistic publishes without retry/feedback | `web/src/app/hooks/useMailActions.ts` (`apply` swallows failures) | B3 — a failed kind-34578 publish is silently lost until the next action |
+| Decode queue + watchdog inside an effect | `web/src/app/hooks/useInbox.ts` (5-dep effect, `setInterval`, bounded-3 pump in closure) | C1 — fragile dep array; a re-run replays every wrap through the signer |
+| `useState` seeds + sync-back effects from store | `web/src/app/components/SettingsModal.tsx` (`senderAddress`, `signature`, `relays`) | C2 — manual re-sync, staleness risk on every source change |
+| Store-shape full re-renders | `web/src/app/store/mail.ts` (`emails` map + `seenIds` replaced wholesale on each add; EmailList refilters all) | B4 — fine at hundreds of mails, jank at thousands; don't grow it |
+| Async resolve errors swallowed | `web/src/app/hooks/useResolveContext.ts` (logs only; UI never sees "legacy outbound unavailable") | D4 — new code must surface failure states in UI, not console |
+| Silent cross-device delete | `web/src/app/store/mail.ts` `hydrateFlags` clears `selectedId` with no UX affordance | D1 — don't add more "vanish without explanation" behaviors |
+| Landing redirect race | `web/src/pages/Home.tsx` `checking` spinner has no timeout | D6 — new async gates need timeouts and a fall-through |
+| Duplicate login-UI tuning | `web/src/components/SignupWizard.tsx` ↔ `web/src/app/components/LoginPage.tsx` (~450 lines each: `tuneLoginUi`, TAB_COPY, method list) | A1 — the old client/landing twin; fix in one file, check the other. Named fix: push tuning into `@formstr/signer` |
 
 Rule of thumb: if a diff adds code that would land in the left column, it needs a reason in writing — or a different shape.
 
-## Command reference (run inside `client/`, `landing/`, or `web/`)
+## Command reference (run inside `web/`)
 
 ```sh
-pnpm dev        # dev server (client proxies /api; E2E=1 disables watcher)
-pnpm build      # tsc -b && vite build (landing: + SSR + prerender)
-pnpm test       # vitest run (client)
-pnpm e2e        # playwright
+pnpm dev        # dev server (proxies /api; E2E=1 disables watcher)
+pnpm build      # tsc -b && vite build && vite build --ssr && prerender (+ /mails shell)
+pnpm test       # vitest run
+pnpm e2e        # playwright (landing + mail app specs, mock relay)
 pnpm lint       # eslint
 ```
 

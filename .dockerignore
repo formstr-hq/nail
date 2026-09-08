@@ -1,0 +1,14 @@
+# Root build context for web/Dockerfile — keep the context minimal so the
+# protocol copy and workspace install stay fast and no secrets enter the image.
+
+client
+landing
+mobile
+notifier
+docs
+node_modules
+**/node_modules
+**/dist
+**/.env
+**/.env.local
+.git

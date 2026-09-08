@@ -6,6 +6,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Build-time configuration lives in src/lib/config.ts — mailsUrl decides
+// where the mail app's SPA shell must be written.
+import { config } from "./src/lib/config.ts";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const abs = (p) => path.resolve(__dirname, p);
 
@@ -109,7 +113,18 @@ function setJsonLd(html, graph) {
   );
 }
 
-// Build the JSON-LD @graph for a route. The landing keeps its full graph
+// The mail app's SPA shell: nginx (and the Capacitor bundle) serve this for
+// every /mails* URL. Unlike the prerendered landing routes it must NOT ship
+// rendered markup — an empty root and a noindex keep the mailbox (and any
+// signed-in state it might imply) out of crawlers' hands. The dev-server SPA
+// fallback has no equivalent need: it serves no prerendered markup at all.
+//
+// mailsUrl may name the file itself ("/mails/index.html" — the Capacitor
+// bundle needs the filename) but the shell must be written at the directory.
+const APP_PREFIX =
+  config.mailsUrl.replace(/index\.html$/, "").replace(/\/+$/, "") || "/mails";
+
+// The JSON-LD @graph for a route. The landing keeps its full graph
 // from the template; other routes get the Organization + WebSite baseline
 // (so sameAs/publisher stay consistent) plus their own nodes.
 const baseGraph = JSON.parse(
@@ -187,6 +202,24 @@ for (const route of routes) {
   fs.writeFileSync(abs(outFile), html);
   console.log("pre-rendered", outFile);
 }
+
+// The mail app's SPA shell, after the prerendered routes: it doesn't go
+// through the render/meta machinery at all — the template as Vite emitted it
+// (empty root) plus a noindex, written at dist<mailsUrl>/index.html.
+function writeAppShell() {
+  const noindex = `<meta name="robots" content="noindex, nofollow" />`;
+  // Replace the template's index-everything robots directives — leaving them
+  // would make the shell's noindex self-contradictory.
+  const html = template
+    .replace(/<meta\s+name="robots"[^>]*>/i, noindex)
+    .replace(/<meta\s+name="googlebot"[^>]*>/i, "")
+    .replace(/<meta\s+name="bingbot"[^>]*>/i, "");
+  const outFile = `dist${APP_PREFIX}/index.html`;
+  fs.mkdirSync(path.dirname(abs(outFile)), { recursive: true });
+  fs.writeFileSync(abs(outFile), html);
+  console.log("spa shell  ", outFile);
+}
+writeAppShell();
 
 // The server bundle is only needed during prerender — don't ship it.
 fs.rmSync(abs("dist/server"), { recursive: true, force: true });

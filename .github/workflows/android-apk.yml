@@ -42,12 +42,10 @@ jobs:
       - name: Install SDK packages
         run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      # landing and client are built by mobile/scripts/build-web.mjs via pnpm,
-      # so their deps must be present before the combined build runs.
+      # web/ is built by mobile/scripts/build-web.mjs via pnpm, so its deps
+      # must be present before the combined build runs.
       - name: Install web app deps
-        run: |
-          pnpm --dir landing install --no-frozen-lockfile
-          pnpm --dir client install --no-frozen-lockfile
+        run: pnpm --dir web install --no-frozen-lockfile
 
       - name: Install mobile deps
         run: npm --prefix mobile ci

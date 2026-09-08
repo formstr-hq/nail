@@ -1,4 +1,7 @@
 User-agent: *
 Allow: /
+# The mail app's SPA shell renders nothing crawlable — keep it out of indexes
+# (its HTML also carries a noindex directive).
+Disallow: /mails
 
 Sitemap: https://mailstr.app/sitemap.xml
