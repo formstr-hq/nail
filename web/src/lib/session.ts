@@ -1,7 +1,5 @@
 import { signer, pool } from "./signer";
 import { config } from "./config";
-import { apiUrl, ownsMailbox } from "./api";
-import { buildNip98Header } from "./nip98";
 
 /**
  * A silent resume must never be able to hang the caller. `signer.unlock`
@@ -85,40 +83,21 @@ export function hasResumableSession(): boolean {
 }
 
 /**
- * On a plain visit, a returning user who already owns a mailbox is sent
- * straight to the inbox instead of being shown the signup hero again. This is
- * the page-level auto-redirect: it runs on mount, independent of the signup
- * wizard (which only mounts once "Claim yours" is clicked — so before this,
- * owners who just opened the page were never redirected).
+ * On a plain visit, a returning user with a persisted account is sent straight
+ * to the inbox instead of being shown the signup hero again. This is the
+ * page-level auto-redirect: it runs on mount, independent of the signup
+ * wizard (which only mounts once "Claim yours" is clicked).
  *
- * Every failure path resolves to "no redirect": a hiccup must never strand a
- * visitor on a blank page. Resolves `true` only when a redirect was triggered.
+ * Any persisted account counts — including a locked ncryptsec one, which has
+ * no silent unlock (the passphrase is never persisted) and which the mail app's
+ * own login page prompts for. Trying to verify mailbox ownership here first
+ * would need the signer plus an API round-trip and only delayed the redirect,
+ * so the landing never does that work: /mails owns re-auth and onboarding.
+ *
+ * Resolves `true` only when a redirect was triggered.
  */
 export async function redirectReturningOwner(): Promise<boolean> {
-  const resumed = await unlockWithTimeout().catch(() => null);
-  if (!resumed) return false;
-  const active = signer.getActiveSigner();
-  if (!active) return false;
-  try {
-    const owns = await Promise.race([
-      (async () => {
-        const header = await buildNip98Header(
-          active,
-          apiUrl("/api/nip-05/get-nip05"),
-          "GET",
-        );
-        return ownsMailbox(header);
-      })(),
-      new Promise<boolean>((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), RESUME_TIMEOUT_MS),
-      ),
-    ]);
-    if (owns) {
-      redirectToMails();
-      return true;
-    }
-  } catch {
-    // fall through — show the landing page
-  }
-  return false;
+  if (!hasResumableSession()) return false;
+  redirectToMails();
+  return true;
 }
