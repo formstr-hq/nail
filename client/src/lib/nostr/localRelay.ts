@@ -45,10 +45,21 @@ export function getLocalRelay(): LocalRelayClient {
   // exactly what "the client doesn't work on iOS Safari" looks like.
   let worker: Worker
   try {
-    worker = new Worker(
-      new URL('./relay.worker.ts', import.meta.url),
-      import.meta.env.DEV ? { type: 'module' } : undefined,
-    )
+    // Dev must spawn a MODULE worker (Vite serves sources as ESM, so a classic
+    // worker can't import the transformed sources). Production deliberately
+    // spawns a CLASSIC one: vite.config.ts bundles the worker as a single IIFE
+    // (`worker.format: "iife"`) because Safari before 15 throws on module
+    // workers, and this worker runs the entire mailbox — that throw is exactly
+    // what "the client doesn't work on iOS Safari" looks like.
+    //
+    // The options must be STATIC literals with a literal `type` — Vite's dev
+    // transform parses `new Worker(url, options)` and throws on anything
+    // dynamic (a ternary here broke the whole dev server) — hence two branches
+    // instead of one call with a computed type.
+    worker =
+      import.meta.env.DEV
+        ? new Worker(new URL('./relay.worker.ts', import.meta.url), { type: 'module' })
+        : new Worker(new URL('./relay.worker.ts', import.meta.url), { type: 'classic' })
   } catch (e) {
     workerBootError = e instanceof Error ? e.message : String(e)
     throw e

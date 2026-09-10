@@ -6,7 +6,7 @@ import type { Email, EmailFolder } from '@/types/mail'
 import type { InboxStatus } from '@/hooks/useInbox'
 import { useState } from 'react'
 import { SenderProofLine } from '@/components/ui/SenderProof'
-import { SearchIcon, InboxIcon, AlertIcon, RefreshIcon } from '@/components/ui/icons'
+import { SearchIcon, InboxIcon, AlertIcon, RefreshIcon, LockIcon } from '@/components/ui/icons'
 import { Button, IconButton } from '@/components/ui/Button'
 import { ConfirmButton } from '@/components/ui/ConfirmButton'
 
@@ -84,11 +84,24 @@ function EmailRow({ email, read, selected }: { email: Email; read: boolean; sele
 
       <div
         className={[
-          'mt-px truncate text-[12.5px]',
+          'mt-px flex items-center gap-1 truncate text-[12.5px]',
           read ? 'text-muted-foreground' : 'font-semibold text-foreground',
         ].join(' ')}
       >
-        {email.subject}
+        {/* An end-to-end encrypted body: a green closed lock before the
+            subject. The subject itself travels in the clear (headers are not
+            PGP-protected), so this marks the CONTENT's protection, and the
+            tooltip says exactly that rather than implying more. */}
+        {email.body.includes('-----BEGIN PGP MESSAGE-----') && (
+          <span
+            title="End-to-end encrypted"
+            aria-label="End-to-end encrypted"
+            className="flex-none text-emerald-600 dark:text-emerald-500"
+          >
+            <LockIcon className="h-3 w-3" />
+          </span>
+        )}
+        <span className="truncate">{email.subject}</span>
       </div>
 
       {email.body.trim() && (

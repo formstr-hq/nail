@@ -95,6 +95,40 @@ function inlineAttachments(parsed: ParsedAttachment[] | undefined): Attachment[]
 }
 
 /**
+ * Pull an RFC 3156 PGP/MIME body out of the parsed attachment list.
+ *
+ * `multipart/encrypted` splits an encrypted message into two sibling parts: a
+ * fixed `application/pgp-encrypted` control part (just the literal
+ * "Version: 1") and an `application/octet-stream` data part holding the
+ * actual armored ciphertext. postal-mime does not understand this structure —
+ * it has no `text`/`html` for a message shaped this way, and simply hands
+ * both parts back as opaque attachments. Detect that pairing here and lift the
+ * armor out so it can flow through the same `email.body` path inline-PGP mail
+ * already uses, rather than teaching every PGP consumer a second code path.
+ *
+ * Returns the data part alongside the armor text so the caller can exclude
+ * exactly that part (by reference) from the attachment list — other
+ * octet-stream attachments a message happens to carry must not be swallowed.
+ */
+function extractPgpMime(
+  attachments: ParsedAttachment[] | undefined,
+): { armored: string; dataPart: ParsedAttachment } | null {
+  const atts = attachments ?? []
+  if (!atts.some((a) => a.mimeType === 'application/pgp-encrypted')) return null
+
+  for (const a of atts) {
+    if (a.mimeType !== 'application/octet-stream') continue
+    const bytes =
+      typeof a.content === 'string'
+        ? new TextEncoder().encode(a.content)
+        : new Uint8Array(a.content instanceof Uint8Array ? a.content : new Uint8Array(a.content))
+    const text = new TextDecoder().decode(bytes)
+    if (text.includes('-----BEGIN PGP MESSAGE-----')) return { armored: text, dataPart: a }
+  }
+  return null
+}
+
+/**
  * Attachments too large to inline, offloaded to Blossom and referenced by an
  * `imeta` tag on the rumor.
  *
@@ -160,6 +194,12 @@ export async function decodeGiftWrap(
     )
     const rawBody = new TextDecoder().decode(rawBytes)
 
+    // RFC 3156 PGP/MIME: the ciphertext lives in a data attachment, not
+    // `parsed.text`. When present, treat its armor as the body — same as an
+    // inline-PGP message — instead of showing a blank email with two mystery
+    // attachments.
+    const pgpMime = looksLikeMail ? extractPgpMime(parsed.attachments) : null
+
     const senderProof = await establishSenderProof({
       fromAddress: parsed.from?.address,
       sealPubkey: seal.pubkey,
@@ -197,13 +237,21 @@ export async function decodeGiftWrap(
         to: (parsed.to ?? []).map(toDisplay),
         cc: ccAddresses.length ? ccAddresses : undefined,
         subject: parsed.subject ?? '(no subject)',
-        body: looksLikeMail ? (parsed.text ?? '') : rawBody,
+        body: pgpMime ? pgpMime.armored : looksLikeMail ? (parsed.text ?? '') : rawBody,
         bodyHtml: looksLikeMail ? (parsed.html ?? undefined) : undefined,
         // Attachments are out of scope for this pass. Surface that they exist
         // rather than dropping them silently, so a user is never unaware that
-        // a message carried one.
+        // a message carried one. The PGP/MIME control+data parts are the
+        // message body, not attachments, so they are excluded here once lifted
+        // into `body` above.
         attachments: [
-          ...inlineAttachments(parsed.attachments),
+          ...inlineAttachments(
+            pgpMime
+              ? (parsed.attachments ?? []).filter(
+                  (a) => a !== pgpMime.dataPart && a.mimeType !== 'application/pgp-encrypted',
+                )
+              : parsed.attachments,
+          ),
           ...hostedAttachments(rumor.tags),
         ],
         timestamp: rumor.created_at,

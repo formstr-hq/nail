@@ -15,6 +15,8 @@ import { probeNip05 } from '@/lib/nostr/nip05'
 import { buildRfc2822 } from './rfc2822'
 import { resolveRecipients, type ResolveContext } from './resolve'
 import type { MailAddress } from '@/types/mail'
+import type { PgpSettings } from '@/lib/pgp/keyring'
+import { keyForAddress } from '@/lib/pgp/keyring'
 
 /**
  * Does the signing key actually own the address it wants to send as?
@@ -87,6 +89,8 @@ export interface SendMailParams {
   references?: string[]
   ctx: ResolveContext
   signer: ProtocolSigner
+  /** PGP key maps, when the user wants encryption considered for legacy mail. */
+  pgp?: PgpSettings
 }
 
 /**
@@ -94,10 +98,9 @@ export interface SendMailParams {
  *
  * Split out from sendMail so the wire format is testable without relays.
  *
- * One wrap per Nostr recipient; exactly ONE wrap to the bridge carrying every
- * legacy recipient as a `deliver` tag; one wrap to self, which becomes the
- * Sent entry. The single bridge wrap matters: sending one per legacy recipient
- * made the bridge deliver N copies to the first address and none to the rest.
+ * One wrap per Nostr recipient; ONE wrap per legacy delivery MODE to the bridge
+ * (see the mixed-encryption note at `buildLegacyWraps`); one wrap to self,
+ * which becomes the Sent entry.
  */
 export async function buildWraps(
   params: SendMailParams,
@@ -129,10 +132,13 @@ export async function buildWraps(
     ...o.legacy.map((address) => ({ address })),
   ]
 
+  const fullTo = headerList(toOut)
+  const fullCc = cc.length ? headerList(ccOut) : undefined
+
   const rfc2822 = buildRfc2822({
     from,
-    to: headerList(toOut),
-    cc: cc.length ? headerList(ccOut) : undefined,
+    to: fullTo,
+    cc: fullCc,
     subject: params.subject,
     body: params.body,
     bodyHtml: params.bodyHtml,
@@ -149,7 +155,7 @@ export async function buildWraps(
   const wraps: Event[] = []
   const targets: string[] = []
 
-  const add = async (recipientPubkey: string, deliverTo?: string[]) => {
+  const add = async (recipientPubkey: string, deliverTo?: string[], rfcOverride?: string) => {
     // One ephemeral key per wrap, generated first and shared between the rumor
     // (WRAP_KEY_TAG — what makes the recipient's "delete forever" real) and the
     // wrap signature. Splitting them hands the recipient a useless key.
@@ -157,7 +163,7 @@ export async function buildWraps(
     const rumor = buildMailRumor({
       senderPubkey,
       recipientPubkey,
-      rfc2822: content,
+      rfc2822: rfcOverride ?? content,
       deliverTo,
       wrapSecret: ephemeralSk,
     })
@@ -197,7 +203,60 @@ export async function buildWraps(
         errors: [unregisteredSenderError(from.address, ctx.localDomains)],
       }
     }
-    await add(ctx.bridgePubkey, legacy)
+
+    // MIXED encryption for legacy recipients: those we hold a key for get a
+    // PGP-encrypted RFC 2822 document; the rest go out as plaintext. Each mode
+    // rides its own bridge wrap (one wrap per mode, NOT per recipient — the
+    // bridge expands `deliver` tags), and each document carries the FULL
+    // To/Cc header lists so every recipient sees the complete audience,
+    // including those who received it in the other form — the standard
+    // "you were BCC'd by encryption" transparency a mixed send must preserve.
+    const pgp = params.pgp
+    const encryptable = pgp ? legacy.filter((a) => !!keyForAddress(pgp, a)) : []
+    const plaintext = pgp ? legacy.filter((a) => !keyForAddress(pgp, a)) : legacy
+
+    let encryptedRfc: string | undefined
+    if (encryptable.length && params.pgp) {
+      try {
+        const { encryptBody } = await import('@/lib/pgp/compose')
+        const armored = await encryptBody({
+          body: params.body,
+          fromAddress: from.address,
+          recipients: encryptable,
+          settings: params.pgp,
+        })
+        encryptedRfc = bytesToMessageString(
+          new TextEncoder().encode(
+            buildRfc2822({
+              from,
+              to: fullTo,
+              cc: fullCc,
+              subject: params.subject,
+              body: armored,
+              inReplyTo: params.inReplyTo,
+              references: params.references,
+            }),
+          ),
+        )
+      } catch {
+        // Encryption failed for an unexpected reason — demote the whole
+        // encryptable set to plaintext rather than dropping the message.
+        // Rare: keys existed, so this is only malformed key material.
+        plaintext.push(...encryptable)
+        encryptable.length = 0
+        encryptedRfc = undefined
+      }
+    }
+
+    // Encrypted document first: its recipients get ciphertext, and the document
+    // lists the full audience. The plaintext wrap (when any) follows with the
+    // same full headers.
+    if (encryptable.length && encryptedRfc) {
+      await add(ctx.bridgePubkey, encryptable, encryptedRfc)
+    }
+    if (plaintext.length) {
+      await add(ctx.bridgePubkey, plaintext)
+    }
   }
 
   await add(senderPubkey)

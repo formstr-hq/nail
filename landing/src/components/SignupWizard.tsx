@@ -268,7 +268,7 @@ import { buildNip98Header } from "../lib/nip98";
 import { redirectToMails, unlockWithTimeout } from "../lib/session";
 import InvoiceQR from "./InvoiceQR";
 
-type Step = "login" | "resolving" | "name" | "pay" | "done";
+type Step = "login" | "resolving" | "name" | "pay" | "keys" | "done";
 type Availability =
   | "idle"
   | "checking"
@@ -556,8 +556,7 @@ export default function SignupWizard({
   };
 
   const onPaid = () => {
-    setStep("done");
-    setTimeout(redirectToMails, 2500);
+    setStep("keys");
   };
 
   const address = `${name || "you"}@${config.mailDomain}`;
@@ -578,6 +577,7 @@ export default function SignupWizard({
               {step === "resolving" && "One moment…"}
               {step === "name" && "Pick your address"}
               {step === "pay" && "One payment, and it's yours"}
+              {step === "keys" && "You're all set"}
               {step === "done" && "Welcome to Mail by Formstr"}
             </h3>
             <p className="mt-0.5 text-sm text-gray-500">
@@ -588,6 +588,7 @@ export default function SignupWizard({
               {step === "resolving" && "Checking your account"}
               {step === "name" && "This becomes your email and your NIP-05 handle."}
               {step === "pay" && `Claiming ${address}`}
+              {step === "keys" && "Your address is confirmed and ready."}
               {step === "done" && "Taking you to your inbox…"}
             </p>
           </div>
@@ -842,6 +843,23 @@ export default function SignupWizard({
           />
         )}
 
+        {step === "keys" && (
+          <div className="flex flex-col items-center gap-3 py-6 text-center">
+            <PartyPopper size={40} className="text-primary" />
+            <p className="text-lg font-bold text-ink">{address} is yours.</p>
+            <p className="text-sm text-gray-500">Next: your inbox.</p>
+            <button
+              type="button"
+              onClick={() => {
+                setStep("done");
+                redirectToMails();
+              }}
+              className="mt-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary/90"
+            >
+              Open your inbox →
+            </button>
+          </div>
+        )}
         {step === "done" && (
           <div className="flex flex-col items-center gap-3 py-6 text-center">
             <PartyPopper size={40} className="text-primary" />

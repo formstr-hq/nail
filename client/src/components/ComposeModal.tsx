@@ -158,9 +158,11 @@ export function ComposeModal({
 
   // --- PGP encryption gate ---
   // Keys are per-alias, so encryption needs a key for the FROM alias
-  // specifically (that's what signs and self-encrypts), plus a public key for
-  // every recipient — a body encrypted to a missing recipient is one they can't
-  // read. `missingKeys` names the gaps so the UI can explain the disabled toggle.
+  // specifically (that's what signs and self-encrypts). Recipient keys are
+  // PER-RECIPIENT: those we hold keys for get encrypted mail, those without
+  // get plaintext (mixed delivery) — a missing key is no longer a blocker, it
+  // just demotes that one recipient. `missingKeys` names the gaps so the UI
+  // can explain who is being sent plaintext.
   const hasFromKey = Boolean(ownKeypairFor(settings, fromAddress))
   const missingKeys = useMemo(
     () =>
@@ -172,7 +174,7 @@ export function ComposeModal({
         : [],
     [recipients, settings.pgpKeyring, settings.pgpKeys],
   )
-  const canEncrypt = hasFromKey && recipients.length > 0 && missingKeys.length === 0
+  const canEncrypt = hasFromKey && recipients.length > 0
 
   // Auto-discover missing recipient keys from the keyserver. A hit lands in the
   // keyring and flips canEncrypt on by itself — this is what makes "have a key ⇒
@@ -183,10 +185,11 @@ export function ComposeModal({
   // recipient IS the signal that they use PGP — if the user went to the trouble
   // of having someone's key, that's exactly who they want to encrypt to,
   // regardless of which provider hosts the address. So the default is simply
-  // "on when we can", and the only thing that produces cleartext is a missing
-  // key (→ canEncrypt false). `userOverride` records a manual flip so this
-  // reactive default never fights a deliberate choice: once the user sets the
-  // toggle, their pick wins until encryption stops being possible.
+  // "on when we can", and recipients WITHOUT a key are demoted to plaintext
+  // (mixed delivery) rather than blocking encryption entirely. `userOverride`
+  // records a manual flip so this reactive default never fights a deliberate
+  // choice: once the user sets the toggle, their pick wins until encryption
+  // stops being possible.
   const [userOverride, setUserOverride] = useState<boolean | null>(null)
   const encrypt = canEncrypt && (userOverride ?? true)
   // Drop a manual override once it's moot (encryption became impossible), so the
@@ -194,11 +197,19 @@ export function ComposeModal({
   useEffect(() => {
     if (!canEncrypt && userOverride !== null) setUserOverride(null)
   }, [canEncrypt, userOverride])
-  // Why the message will go out unencrypted, if it will — used to explain the
-  // red lock when the user clicks it. `action` promotes the fix to a CTA when
-  // there's a concrete next step (set up a key). `null` means it IS encrypted.
+  // The per-recipient state this message will go out in, for the status line.
+  // `null` means everything is encrypted (or encryption is simply off).
+  const mixed = encrypt && missingKeys.length > 0
+  // Why the message will go out (partly) unencrypted, if it will — used to
+  // explain the red lock when the user clicks it. `action` promotes the fix to
+  // a CTA when there's a concrete next step (set up a key). `null` means it IS
+  // fully encrypted.
   const noEncryptReason: { text: string; cta?: string; action?: () => void } | null = encrypt
-    ? null
+    ? mixed
+      ? {
+          text: `No encryption key found for ${missingKeys.join(', ')} — they'll receive this as plaintext; everyone else gets encrypted mail.`,
+        }
+      : null
     : !hasFromKey
       ? {
           text: `You don't have a PGP key for ${fromAddress}.`,
@@ -207,14 +218,10 @@ export function ComposeModal({
         }
       : recipients.length === 0
         ? { text: 'Add a recipient to encrypt this message.' }
-        : missingKeys.length
-          ? {
-              text: `No encryption key found for ${missingKeys.join(', ')} — they can't receive encrypted mail.`,
-            }
-          : {
-              // canEncrypt is true but the user turned it off manually.
-              text: 'Encryption is off for this message. Click the lock to turn it on.',
-            }
+        : {
+            // canEncrypt is true but the user turned it off manually.
+            text: 'Encryption is off for this message. Click the lock to turn it on.',
+          }
   // Anchored popover explaining the red lock; toggled by clicking it.
   const [showLockInfo, setShowLockInfo] = useState(false)
 
@@ -327,25 +334,29 @@ export function ComposeModal({
     setSending(true)
     setError('')
     try {
+      // The From alias's own key signs any encrypted body; unlock it if locked.
+      // With mixed encryption (below) this applies to BOTH the inline-encrypted
+      // compose path and send.ts's per-recipient legacy path — each needs the
+      // session passphrase once, after which it's cached for the tab.
+      const fromKey = ownKeypairFor(settings, fromAddress)
+      let passphrase =
+        fromKey?.passphraseProtected ? getSessionPassphrase(fromKey.fingerprint) ?? undefined : undefined
+      if (fromKey?.passphraseProtected && !passphrase) {
+        const entered = window.prompt('Enter your PGP key passphrase to sign this message')
+        if (!entered) {
+          setError('A passphrase is required to sign and send an encrypted message.')
+          setSending(false)
+          return
+        }
+        setSessionPassphrase(fromKey.fingerprint, entered)
+        passphrase = entered
+      }
+
       // Encrypt the body in place when the toggle is on: the inline-PGP block
       // replaces the plaintext, so every wrap (each recipient plus the Sent
-      // self-copy) carries the armored body and send.ts needs no PGP awareness.
+      // self-copy) carries the armored body.
       let outgoingBody = body
       if (encrypt) {
-        // The From alias's own key signs and self-encrypts; unlock it if locked.
-        const fromKey = ownKeypairFor(settings, fromAddress)
-        let passphrase =
-          fromKey?.passphraseProtected ? getSessionPassphrase(fromKey.fingerprint) ?? undefined : undefined
-        if (fromKey?.passphraseProtected && !passphrase) {
-          const entered = window.prompt('Enter your PGP key passphrase to sign this message')
-          if (!entered) {
-            setError('A passphrase is required to sign and send an encrypted message.')
-            setSending(false)
-            return
-          }
-          setSessionPassphrase(fromKey.fingerprint, entered)
-          passphrase = entered
-        }
         outgoingBody = await encryptBody({
           body,
           fromAddress,
@@ -365,6 +376,13 @@ export function ComposeModal({
         references: draft?.references,
         ctx,
         signer: protocolSigner(active),
+        // Let the send path encrypt per-recipient for legacy/bridge recipients
+        // (mixed encryption): those with keys get PGP ciphertext, the rest
+        // plaintext. Nostr-direct recipients are already gift-wrap encrypted.
+        pgp: {
+          pgpKeys: settings.pgpKeys,
+          pgpKeyring: settings.pgpKeyring,
+        },
       })
       onClose()
     } catch (e) {
@@ -582,7 +600,9 @@ export function ComposeModal({
           <div className="flex items-start gap-2 border-t border-border bg-background/60 px-3.5 py-2">
             <LockIcon className="mt-px h-3.5 w-3.5 flex-none text-muted-foreground" />
             <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-              Encrypted with PGP. The subject line is <em>not</em> encrypted.
+              {mixed
+                ? `Encrypted for ${recipients.length - missingKeys.length} recipient${recipients.length - missingKeys.length === 1 ? '' : 's'}; ${missingKeys.join(', ')} receive plaintext.`
+                : 'Encrypted with PGP. The subject line is not encrypted.'}
             </p>
           </div>
         )}
@@ -640,19 +660,29 @@ export function ComposeModal({
                 else if (canEncrypt) setUserOverride(true)
                 else setShowLockInfo((v) => !v)
               }}
-              aria-label={encrypt ? 'Encrypted — click to turn off' : 'Not encrypted — why?'}
+              aria-label={
+                encrypt
+                  ? mixed
+                    ? 'Partly encrypted — details'
+                    : 'Encrypted — click to turn off'
+                  : 'Not encrypted — why?'
+              }
               title={
                 encrypt
-                  ? 'Encrypted with PGP — click to turn off'
+                  ? mixed
+                    ? `Mixed: encrypted for ${recipients.length - missingKeys.length}, plaintext for ${missingKeys.length}`
+                    : 'Encrypted with PGP — click to turn off'
                   : canEncrypt
                     ? 'Not encrypted — click to encrypt'
                     : 'Not encrypted — click to see why'
               }
               className={[
                 'flex h-8 w-8 items-center justify-center rounded-md transition-colors',
-                encrypt
+                encrypt && !mixed
                   ? 'text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-500'
-                  : 'text-destructive hover:bg-destructive/10',
+                  : encrypt && mixed
+                    ? 'text-amber-600 hover:bg-amber-500/10 dark:text-amber-500'
+                    : 'text-destructive hover:bg-destructive/10',
               ].join(' ')}
             >
               {encrypt ? <LockIcon className="h-4 w-4" /> : <LockOpenIcon className="h-4 w-4" />}
@@ -664,7 +694,9 @@ export function ComposeModal({
                 <div className="fixed inset-0 z-40" onClick={() => setShowLockInfo(false)} />
                 <div className="absolute bottom-full right-0 z-50 mb-2 w-60 rounded-md border border-border bg-card p-3 shadow-lg">
                   <div className="flex items-start gap-2">
-                    <LockOpenIcon className="mt-px h-3.5 w-3.5 flex-none text-destructive" />
+                    <LockOpenIcon
+                      className={`mt-px h-3.5 w-3.5 flex-none ${encrypt && mixed ? 'text-amber-600 dark:text-amber-500' : 'text-destructive'}`}
+                    />
                     <p className="text-[11.5px] leading-relaxed text-foreground">
                       {noEncryptReason.text}
                     </p>

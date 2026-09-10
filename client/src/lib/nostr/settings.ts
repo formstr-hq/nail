@@ -54,6 +54,11 @@ export interface MailSettings {
   // those addresses publicly and permanently — the exact privacy leak aliases
   // exist to prevent. So each address gets its own distinct keypair, and nothing
   // cryptographically ties one alias to another.
+  //
+  // Each alias carries a DUAL set — a v4-packet (GnuPG-compatible) pair plus a
+  // v6-format pair — because some mail services cannot yet parse v6 keys. Both
+  // public halves are published to WKD concatenated, and outbound mail is
+  // encrypted to both.
   pgpKeys?: Record<string, PgpKeypair> // Own keypairs, keyed by lowercased
                            // address. Private keys ride inside this NIP-44-
                            // encrypted settings blob (like mailIndexKey) — synced
@@ -64,13 +69,28 @@ export interface MailSettings {
                            // keyserver discovery.
 }
 
-/** One of the user's own alias keypairs. */
+/**
+ * One of the user's own alias key slots. A single `PgpKeypair` (the pre-dual
+ * shape) is still understood — `v4`/`v6` are optional until migrated, and
+ * helpers fall back to treating the top-level pair as whichever version it is.
+ */
 export interface PgpKeypair {
   publicKey: string        // armored public key — safe to publish
   privateKey: string       // armored private key — secret; passphrase-encrypted
                            // here iff passphraseProtected
   fingerprint: string      // this key's fingerprint, for session-passphrase keying
   passphraseProtected?: boolean // true when privateKey is passphrase-locked
+  /** The v4-packet (GnuPG-compatible) half of the dual set, when generated. */
+  v4?: KeyHalf
+  /** The v6-format half of the dual set, when generated. */
+  v6?: KeyHalf
+}
+
+/** One half of a dual key set. */
+export interface KeyHalf {
+  publicKey: string
+  privateKey: string
+  fingerprint: string
 }
 
 export async function saveSettings(

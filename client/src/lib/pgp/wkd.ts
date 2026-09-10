@@ -64,15 +64,18 @@ export async function wkdUrls(email: string): Promise<string[]> {
 }
 
 /**
- * Look up an address's public key via WKD. Returns the armored key, or `null`
+ * Look up an address's public key(s) via WKD. Returns ALL keys found, or `null`
  * when the domain doesn't publish one, blocks CORS, or the response isn't a
  * valid key — all of which are routine "no key here, try elsewhere" outcomes,
  * never errors.
  *
- * WKD serves the key as BINARY (a raw transferable key, not armored), so the
- * bytes are handed to the OpenPGP layer to re-armor and validate.
+ * WKD serves the key as BINARY (a raw transferable key, not armored), and the
+ * standard multi-key form is a CONCATENATION of transferable keys (our own
+ * publish path produces exactly that: v4 + v6). So the bytes are parsed as a
+ * keyring via `readKeys`, which iterates every embedded key; each is re-armored
+ * and validated.
  */
-export async function lookupByWkd(email: string): Promise<string | null> {
+export async function lookupByWkd(email: string): Promise<string[] | null> {
   for (const url of await wkdUrls(email)) {
     let res: Response
     try {
@@ -85,19 +88,21 @@ export async function lookupByWkd(email: string): Promise<string | null> {
     if (!res.ok) continue
     try {
       const bytes = new Uint8Array(await res.arrayBuffer())
-      const armored = await armorPublicKey(bytes)
-      await validatePublicKey(armored)
-      return armored
+      const openpgp = await import('openpgp')
+      // readKeys walks a concatenated multi-key blob — the standard WKD form.
+      const keys = await openpgp.readKeys({ binaryKeys: bytes })
+      if (!keys.length) continue
+      const armoreds = await Promise.all(
+        keys.map(async (key) => {
+          const armored = key.toPublic().armor()
+          await validatePublicKey(armored)
+          return armored
+        }),
+      )
+      return armoreds
     } catch {
       continue
     }
   }
   return null
-}
-
-/** Re-armor a binary (transferable) public key into the armored form we store. */
-async function armorPublicKey(binary: Uint8Array): Promise<string> {
-  const openpgp = await import('openpgp')
-  const key = await openpgp.readKey({ binaryKey: binary })
-  return key.toPublic().armor()
 }
