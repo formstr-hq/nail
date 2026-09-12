@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useAccountStore } from '@/store/account'
 import { useSettingsStore } from '@/store/settings'
 import { useOwnedAddresses } from '@/hooks/useOwnedAddresses'
@@ -14,6 +15,7 @@ import {
   type KeyringEntry,
 } from '@/lib/pgp/keyring'
 import { publishToOwnWkd } from '@/lib/pgp/ownWkd'
+import { saveToDisk } from '@/lib/saveFile'
 import { Button } from '@/components/ui/Button'
 import { AlertIcon, KeyIcon, TrashIcon, PlusIcon, LockIcon } from '@/components/ui/icons'
 
@@ -574,22 +576,16 @@ function KeyExportDialog({
     })
   }
 
-  function download(bundle: string) {
+  async function download(bundle: string) {
     const safe = address.replace(/[^a-z0-9._-]/gi, '_')
-    const blob = new Blob([bundle], { type: 'application/pgp-keys' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${safe}-private-keys.asc`
-    a.click()
-    URL.revokeObjectURL(url)
+    await saveToDisk(bundle, `${safe}-private-keys.asc`, 'application/pgp-keys')
   }
 
   async function doExportAsIs() {
     setWorking(true)
     setError('')
     try {
-      download(halves.map((h) => h.privateKey).join('\n'))
+      await download(halves.map((h) => h.privateKey).join('\n'))
       onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -614,7 +610,7 @@ function KeyExportDialog({
       for (const half of halves) {
         blocks.push(await encryptPrivateKey(half.privateKey, pass))
       }
-      download(blocks.join('\n'))
+      await download(blocks.join('\n'))
       onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -623,8 +619,12 @@ function KeyExportDialog({
     }
   }
 
+  // Portaled to <body>: rendered inside the scrolling settings pane, this
+  // overlay is subject to the pane's clipping/stacking in the native WebView
+  // (its bottom lands behind the Settings footer). A body-level portal makes
+  // it a true top-level modal.
   if (keypair.passphraseProtected) {
-    return (
+    return createPortal(
       <div className="fixed inset-0 z-[60] flex items-center justify-center bg-foreground/20 p-4">
         <div className="w-full max-w-sm rounded-xl border border-border bg-card p-4 shadow-2xl">
           <div className="flex items-center gap-2">
@@ -649,11 +649,12 @@ function KeyExportDialog({
             {working ? 'Preparing…' : 'Download'}
           </Button>
         </div>
-      </div>
+      </div>,
+      document.body,
     )
   }
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-foreground/20 p-4">
       <div className="w-full max-w-sm rounded-xl border border-border bg-card p-4 shadow-2xl">
         <div className="flex items-center gap-2">
@@ -693,6 +694,7 @@ function KeyExportDialog({
           {working ? 'Encrypting…' : 'Download encrypted keys'}
         </Button>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

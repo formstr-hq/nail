@@ -9,6 +9,7 @@ import { BRIDGE_DOMAIN } from "@/lib/nostr/constants";
 import { RelayManager } from "@/components/RelayManager";
 import { PgpSettings } from "@/components/PgpSettings";
 import { buyAddressUrl, config } from "@/lib/api/config";
+import { saveToDisk } from "@/lib/saveFile";
 import { Button, IconButton } from "@/components/ui/Button";
 import {
   XIcon,
@@ -125,13 +126,11 @@ function KeyBackup() {
   };
 
   const download = () => {
-    const blob = new Blob([`${ncryptsec}\n`], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `mailstr-key-${account.npub.slice(4, 16)}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
+    void saveToDisk(
+      `${ncryptsec}\n`,
+      `mailstr-key-${account.npub.slice(4, 16)}.txt`,
+      "text/plain",
+    ).catch(console.error);
   };
 
   return (
@@ -387,11 +386,14 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
           )}
 
           {/* Content column — always visible on md+; on mobile only once a
-              section has been tapped. */}
+              section has been tapped. min-h-0 lets it shrink to the card's
+              height on mobile (column flex): without it the section content
+              stretches the column and the scroll area below never scrolls,
+              spilling over the Save footer. */}
           <div
             className={[
               mobileDetail ? "flex" : "hidden",
-              "min-w-0 flex-1 flex-col md:flex",
+              "min-h-0 min-w-0 flex-1 flex-col md:flex",
             ].join(" ")}
           >
             {/* Back to the menu — mobile only. */}
@@ -654,7 +656,7 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
         </div>
 
         {error && (
-          <div className="flex items-start gap-2 border-t border-border bg-destructive/10 px-4 py-2">
+          <div className="flex flex-none items-start gap-2 border-t border-border bg-destructive/10 px-4 py-2">
             <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-destructive" />
             <p className="text-[11.5px] leading-relaxed text-destructive">
               {error}
@@ -662,7 +664,7 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
           </div>
         )}
 
-        <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+        <div className="flex flex-none justify-end gap-2 border-t border-border px-4 py-3">
           <Button onClick={onClose}>Cancel</Button>
           <Button variant="primary" onClick={handleSave} disabled={saving}>
             {saving ? "Saving…" : "Save changes"}
