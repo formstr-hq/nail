@@ -26,7 +26,7 @@ export function AttachmentRow({ attachment }: { attachment: Attachment }) {
       const bytes = await resolveAttachment(attachment)
       // A hosted file only reveals its size once fetched; keep it on screen.
       setSize(bytes.byteLength)
-      saveToDisk(bytes, attachment.filename, attachment.contentType)
+      await saveToDisk(bytes, attachment.filename, attachment.contentType)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
