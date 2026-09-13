@@ -48,33 +48,15 @@ function assertFetchableUrl(url: string): void {
 }
 
 /**
- * A filename safe to hand a download.
+ * A filename safe to hand a download. Lives with the save-to-disk machinery in
+ * `lib/saveFile.ts` — re-exported here for the attachment callers and tests.
  *
  * The sender chooses this string. Path separators would let it escape the
  * downloads directory on clients that honour them, and a leading dot hides
  * the file. Everything questionable is replaced rather than rejected, so a
  * hostile name still downloads under a harmless one.
- *
- * Two classes of invisible character are stripped, for different reasons:
- *
- *  - C0 controls and DEL, which can truncate or corrupt the name downstream.
- *  - Bidirectional overrides. A name containing U+202E renders in the save
- *    dialog with its extension reversed - "invoice<RLO>fdp.exe" reads as
- *    "invoiceexe.pdf" while staying an executable on disk, so stripping
- *    C0 alone leaves the extension-spoofing trick fully intact.
  */
-const UNSAFE_INVISIBLE =
-  // eslint-disable-next-line no-control-regex
-  /[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g
-
-export function safeFilename(name: string): string {
-  const flattened = name
-    .replace(/[/\\]/g, '_')
-    .replace(UNSAFE_INVISIBLE, '')
-    .replace(/^\.+/, '')
-    .trim()
-  return flattened.slice(0, 200) || 'attachment'
-}
+export { safeFilename } from '@/app/lib/saveFile'
 
 /** Human-readable size. Returns null when the size is not yet known. */
 export function formatSize(bytes: number | undefined): string | null {
@@ -142,18 +124,7 @@ export async function resolveAttachment(attachment: Attachment): Promise<Uint8Ar
   return decryptAttachment(blob, attachment.blossomKey, attachment.blossomNonce)
 }
 
-/** Hand bytes to the browser as a download. */
-export function saveToDisk(bytes: Uint8Array, filename: string, contentType: string): void {
-  // The sender also chose contentType. It only labels the blob here — nothing
-  // renders it — but keep it off the "runs in a tab" path regardless.
-  const blob = new Blob([bytes as BlobPart], { type: contentType || 'application/octet-stream' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = safeFilename(filename)
-  anchor.rel = 'noopener'
-  document.body.append(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(url)
-}
+/** Hand bytes to the user as a file — browser download on the web, the native
+ * share sheet inside the Capacitor app (where an anchor download does
+ * nothing). Shared with the PGP key export and the account key backup. */
+export { saveToDisk } from '@/app/lib/saveFile'

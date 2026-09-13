@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAccountStore } from '@/app/store/account'
+import { saveToDisk } from '@/app/lib/saveFile'
 import { Button } from '@/app/components/ui/Button'
 import { Field } from '@/app/components/settings/Field'
 
@@ -39,13 +40,11 @@ export function KeyBackupSection() {
   }
 
   const download = () => {
-    const blob = new Blob([`${ncryptsec}\n`], { type: 'text/plain' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `mailstr-key-${account.npub.slice(4, 16)}.txt`
-    a.click()
-    URL.revokeObjectURL(url)
+    void saveToDisk(
+      `${ncryptsec}\n`,
+      `mailstr-key-${account.npub.slice(4, 16)}.txt`,
+      'text/plain',
+    ).catch(console.error)
   }
 
   return (

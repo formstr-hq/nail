@@ -203,11 +203,14 @@ export function SettingsModal({ onClose, initialSection, onBuyAddress }: Setting
           )}
 
           {/* Content column — always visible on md+; on mobile only once a
-              section has been tapped. */}
+              section has been tapped. min-h-0 lets it shrink to the card's
+              height on mobile (column flex): without it the section content
+              stretches the column and the scroll area below never scrolls,
+              spilling over the Save footer. */}
           <div
             className={[
               mobileDetail ? 'flex' : 'hidden',
-              'min-w-0 flex-1 flex-col md:flex',
+              'min-h-0 min-w-0 flex-1 flex-col md:flex',
             ].join(' ')}
           >
             {/* Back to the menu — mobile only. */}
@@ -268,13 +271,13 @@ export function SettingsModal({ onClose, initialSection, onBuyAddress }: Setting
         </div>
 
         {error && (
-          <div className="flex items-start gap-2 border-t border-border bg-destructive/10 px-4 py-2">
+          <div className="flex flex-none items-start gap-2 border-t border-border bg-destructive/10 px-4 py-2">
             <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-destructive" />
             <p className="text-[11.5px] leading-relaxed text-destructive">{error}</p>
           </div>
         )}
 
-        <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+        <div className="flex flex-none justify-end gap-2 border-t border-border px-4 py-3">
           <Button onClick={onClose}>Cancel</Button>
           <Button variant="primary" onClick={handleSave} disabled={saving}>
             {saving ? 'Saving…' : 'Save changes'}
