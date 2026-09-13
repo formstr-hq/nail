@@ -28,17 +28,26 @@ mail client mounted at `/mails`. Signup is driven by the formstr-backend APIs.
 
 ```bash
 pnpm install
-pnpm dev           # expects formstr-backend on http://localhost:5000
+pnpm dev           # API proxied to VITE_API_PROXY_TARGET (default https://api.formstr.app)
 pnpm build         # tsc + client build + SSR build + prerender (+ SPA shell)
 pnpm test          # vitest unit tests (lib/ modules)
 pnpm e2e           # Playwright: landing + mail app specs against a mock relay
 pnpm preview
 ```
 
+In dev the browser only issues same-origin requests: Vite's `/api` and `/ws`
+proxies forward them upstream (stripping `Origin`/`Referer`, which the API
+answers with a 500 — see docs/ARCHITECTURE.md). To run against a local
+formstr-backend on port 5000:
+
+```bash
+VITE_API_PROXY_TARGET=http://localhost:5000 pnpm dev
+```
+
 Configuration is env-driven (see `.env.example`): `VITE_API_BASE_URL`,
 `VITE_WS_BASE_URL`, `VITE_API_CANONICAL_BASE_URL`, `VITE_MAIL_DOMAIN`,
-`VITE_MAILS_URL`. Dev defaults point at `http://localhost:5000`; production
-defaults at `https://api.formstr.app`.
+`VITE_MAILS_URL`. Dev defaults go through the Vite proxy; production defaults
+at `https://api.formstr.app`.
 
 ## Deployment
 

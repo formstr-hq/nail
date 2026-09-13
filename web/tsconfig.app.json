@@ -27,7 +27,9 @@
     "paths": {
       "@/*": ["src/*"],
       "@protocol": ["../nostr-bridge/src/protocol/index.ts"],
-      "@protocol/*": ["../nostr-bridge/src/protocol/*"]
+      "@protocol/*": ["../nostr-bridge/src/protocol/*"],
+      "nostr-tools": ["node_modules/nostr-tools"],
+      "nostr-tools/*": ["node_modules/nostr-tools/*"]
     }
   },
   "include": ["src", "../nostr-bridge/src/protocol"],

@@ -93,6 +93,15 @@ export default defineConfig({
           })
         },
       },
+      // Payment-status WebSocket (paymentSocket → /ws?hash=…). The upgrade
+      // request is not caught by the '/api' rule, so it needs its own entry;
+      // `ws: true` proxies the HTTP upgrade handshake.
+      '/ws': {
+        target: process.env.VITE_API_PROXY_TARGET ?? 'https://api.formstr.app',
+        changeOrigin: true,
+        secure: true,
+        ws: true,
+      },
     },
   },
   resolve: {
