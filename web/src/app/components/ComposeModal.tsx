@@ -48,6 +48,8 @@ interface ComposeModalProps {
   setMinimized: (minimized: boolean) => void
   /** Opens Settings on the Encryption tab — the CTA when the user has no key. */
   onOpenEncryptionSettings: () => void
+  /** Opens the in-app buy-address flow (the "Get an alias" CTAs). */
+  onBuyAddress: () => void
 }
 
 export function ComposeModal({
@@ -59,6 +61,7 @@ export function ComposeModal({
   minimized,
   setMinimized,
   onOpenEncryptionSettings,
+  onBuyAddress,
 }: ComposeModalProps) {
   const { account, active } = useAccountStore()
   const { settings } = useSettingsStore()
@@ -343,11 +346,11 @@ export function ComposeModal({
         {error && (
           <ErrorBanner
             error={error}
-            fix={isUnregisteredSenderError(error) ? <AliasFix alias={ownedAliases[0]} onSwitch={switchToAlias} /> : undefined}
+            fix={isUnregisteredSenderError(error) ? <AliasFix alias={ownedAliases[0]} onSwitch={switchToAlias} onBuyAddress={onBuyAddress} /> : undefined}
           />
         )}
 
-        {npubBlocked && <NpubGuardBanner fix={<AliasFix alias={ownedAliases[0]} onSwitch={switchToAlias} />} />}
+        {npubBlocked && <NpubGuardBanner fix={<AliasFix alias={ownedAliases[0]} onSwitch={switchToAlias} onBuyAddress={onBuyAddress} />} />}
 
         {discovering && !encrypt && <DiscoveryBanner />}
 
@@ -369,6 +372,7 @@ export function ComposeModal({
             setInboxFilter(address, true)
           }}
           hasAlias={hasAlias}
+          onBuyAddress={onBuyAddress}
           encrypt={encrypt}
           mixed={mixed}
           canEncrypt={canEncrypt}

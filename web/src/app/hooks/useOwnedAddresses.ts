@@ -78,6 +78,20 @@ function readPersisted(pubkey: string): string[] | null {
 const AUTH_ERROR_MESSAGE = 'Session rejected — sign in again'
 
 /**
+ * Shared refresh signal, as a store so every mounted instance of this hook is
+ * subscribed and re-fetches when it bumps. A purchase completing in the
+ * in-app buy modal must refresh all consumers at once (sidebar alias list,
+ * Settings, composer) — a per-instance nonce can't reach the instances
+ * mounted elsewhere, and a bare module variable can't notify anyone.
+ */
+const useOwnedAddressesRefresh = create<{ tick: number }>(() => ({ tick: 0 }))
+
+/** Force every mounted useOwnedAddresses() instance to refetch. */
+export function reloadOwnedAddresses(): void {
+  useOwnedAddressesRefresh.setState((s) => ({ tick: s.tick + 1 }))
+}
+
+/**
  * Which mailstr.app nip05 addresses the signed-in account owns. Only ever
  * mounted while Settings is open (per the plan), which is what makes "fetch
  * when this hook mounts and account/active are available" equivalent to
@@ -117,7 +131,9 @@ export function useOwnedAddresses() {
     Boolean(pubkey && active && !cache.has(pubkey) && !readPersisted(pubkey)),
   )
   const [error, setError] = useState<string | null>(null)
-  const [reloadNonce, setReloadNonce] = useState(0)
+  // Shared refresh tick — every instance of this hook re-fetches when it bumps
+  // (a purchase completed in the buy modal), which is the point of the store.
+  const reloadTick = useOwnedAddressesRefresh((s) => s.tick)
 
   // Render-time reset: closes the gap where a synchronous account-store
   // update (e.g. logout's `set({ account: null, active: null })`) changes
@@ -146,13 +162,11 @@ export function useOwnedAddresses() {
       return
     }
 
-    const cached = cache.get(pubkey)
-    if (cached) {
-      setAddresses(cached)
-      setError(null)
-      setLoading(false)
-      return
-    }
+    // Mount/revalidate — and re-run whenever the shared tick advances (a
+    // purchase completed in the buy modal): `reloadTick` is a dependency.
+    // On plain mount the session cache may already hold the list (another
+    // instance fetched it); we still revalidate silently — the API is one
+    // authed GET and it is the only source of truth.
 
     // Nothing in the session cache. Show any persisted result immediately and
     // revalidate silently; only spin when we have nothing at all to show.
@@ -196,17 +210,19 @@ export function useOwnedAddresses() {
     return () => {
       alive = false
     }
-  }, [pubkey, active, reloadNonce])
+  }, [pubkey, active, reloadTick])
 
   const reload = useCallback(() => {
     if (loading) return // fetch for the current pubkey is already in flight
+    // Drop the session and persisted copies, so this forced retry reports an
+    // error on a repeat failure instead of silently keeping a stale list, then
+    // bump the shared tick: this instance's effect re-runs (reloadTick is a
+    // dependency) and every other mounted instance revalidates too.
     if (pubkey) {
       cache.delete(pubkey)
-      // Drop the persisted copy too, so this forced retry reports an error on a
-      // repeat failure instead of silently keeping the stale list.
       useOwnedAddressesCache.getState().drop(pubkey)
     }
-    setReloadNonce((n) => n + 1)
+    reloadOwnedAddresses()
   }, [pubkey, loading])
 
   return { addresses, loading, error, reload }

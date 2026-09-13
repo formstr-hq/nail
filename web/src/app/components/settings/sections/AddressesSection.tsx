@@ -1,5 +1,4 @@
 import { BRIDGE_DOMAIN } from '@/app/lib/nostr/constants'
-import { buyAddressUrl } from '@/lib/buyAddress'
 import { Button } from '@/app/components/ui/Button'
 import { AlertIcon, PlusIcon } from '@/app/components/ui/icons'
 import { Field, inputClass } from '@/app/components/settings/Field'
@@ -14,6 +13,8 @@ export interface AddressesSectionProps {
   addressesLoading: boolean
   addressesError: string
   reloadAddresses: () => void
+  /** Open the in-app buy-address modal (no more new-tab deep link). */
+  onBuyAddress: () => void
   /** Fixed select options: owned addresses + the npub bridge address. */
   senderOptions: string[]
   senderMode: string
@@ -30,6 +31,7 @@ export function AddressesSection(props: AddressesSectionProps) {
     addressesLoading,
     addressesError,
     reloadAddresses,
+    onBuyAddress,
     senderMode,
     senderAddress,
     onSenderModeChange,
@@ -75,32 +77,17 @@ export function AddressesSection(props: AddressesSectionProps) {
               ))}
             </div>
           )}
-          {/* Purchasing lives in the landing app (the tier/invoice/payment
-      flow only exists there); we deep-link with ?buy=1, which
-      opens its wizard in purchase mode and suppresses its own
-      returning-owner redirect so it can't bounce back here.
-      We also stash the intent in shared same-origin storage: the
-      Android webview can drop the query string when opening the
-      link, in which case the landing reads this flag instead. */}
-          <a
-            href={buyAddressUrl()}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => {
-              try {
-                localStorage.setItem('mailstr.buyIntent', '1')
-              } catch {
-                // storage unavailable — the ?buy=1 param alone carries it
-              }
-            }}
-            className="mt-1 inline-flex h-8 items-center justify-center gap-2 self-start whitespace-nowrap rounded-md border border-primary bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors duration-[120ms] hover:bg-primary/90"
-          >
+          {/* The purchase wizard embeds in place now (route /mails/buy) —
+              no new-tab deep link, no buyIntent stash for the landing to
+              read back. Completed purchases refresh this list through the
+              shared owned-addresses reload tick. */}
+          <Button size="md" onClick={onBuyAddress} className="mt-1 self-start">
             <PlusIcon className="h-4 w-4" />
             Buy a new address
-          </a>
+          </Button>
           <p className="text-[11px] leading-relaxed text-subtle">
-            Opens the signup page in a new tab. New addresses appear here once paid —
-            reload the list with “Try again”.
+            New addresses appear here once paid — reload the list with “Try again”
+            if one is missing.
           </p>
         </Field>
       )}

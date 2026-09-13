@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { config } from "../lib/config";
 import { parseIdentityInput } from "../lib/nostr";
-import { hasBuyIntent, clearBuyIntent } from "../lib/session";
+import { hasBuyIntent } from "../lib/session";
 
 // The wizard drags in the signer + QR libraries — keep them out of the
 // landing page's initial bundle.
@@ -25,16 +25,14 @@ export default function SignupSection() {
     open: false,
   });
 
-  // A `?buy=1` deep link (the client's "Buy a new address" button) opens the
-  // wizard straight away in purchase mode. The page-level auto-redirect is
-  // suppressed for this same intent (see App), so an existing owner lands here
-  // instead of being bounced back to their inbox. Deferred to an effect (not a
-  // lazy initial state) on purpose: the page is prerendered/SSR'd with the
-  // wizard closed, so opening it must happen after hydration or the server and
-  // client markup would mismatch.
+  // A `?buy=1` deep link opens the wizard straight away in purchase mode. The
+  // page-level auto-redirect is suppressed for this same intent (see App), so
+  // an existing owner lands here instead of being bounced back to their inbox.
+  // Deferred to an effect (not a lazy initial state) on purpose: the page is
+  // prerendered/SSR'd with the wizard closed, so opening it must happen after
+  // hydration or the server and client markup would mismatch.
   useEffect(() => {
     if (hasBuyIntent()) {
-      clearBuyIntent(); // consume so it can't leak into a later organic visit
       // eslint-disable-next-line react-hooks/set-state-in-effect -- see above: post-hydration open is intentional
       setWizard({ open: true, purchase: true });
     }

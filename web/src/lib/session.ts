@@ -32,40 +32,22 @@ export function redirectToMails(params?: Record<string, string>) {
 }
 
 /**
- * Whether the URL carries an explicit `?buy=1` intent. The mail client links
- * existing owners here to buy an *additional* address, so this visit must NOT
- * be bounced straight back to the inbox by the returning-user auto-redirect
- * below — otherwise the two redirects ping-pong and the buy screen is
- * unreachable.
+ * Whether the URL carries an explicit `?buy=1` intent. The landing's wizard
+ * opens in purchase mode on such a visit (an existing owner claiming an
+ * *additional* address), so this visit must NOT be bounced straight back to
+ * the inbox by the returning-user auto-redirect below — otherwise the two
+ * redirects ping-pong and the buy screen is unreachable.
+ *
+   * The mail client's buy flow is now an in-app overlay (store/buyOverlay) and
+   * no longer navigates here, so the `mailstr.buyIntent` storage fallback that
+   * papered over the Android webview dropping query strings has no writer and
+   * was removed with it.
  */
 export function hasBuyIntent(
   search = typeof window !== "undefined" ? window.location.search : "",
 ): boolean {
-  if (new URLSearchParams(search).get("buy") === "1") return true;
-  // Fallback for contexts where the `?buy=1` query didn't survive — notably the
-  // Android webview opening the client's Buy link in a fresh window, where the
-  // query can be dropped and the landing loads with no intent. The client
-  // stashes the same intent in shared same-origin storage right before
-  // navigating here, so the wizard still opens in purchase mode (and never
-  // bounces an owner to their inbox on sign-in). Consumed by clearBuyIntent()
-  // once the wizard mounts, so it can't leak into a later organic visit.
-  try {
-    return typeof window !== "undefined" && localStorage.getItem(BUY_INTENT_KEY) === "1";
-  } catch {
-    return false;
-  }
+  return new URLSearchParams(search).get("buy") === "1";
 }
-
-/** Consume the stashed buy intent once it has opened the wizard. */
-export function clearBuyIntent(): void {
-  try {
-    localStorage.removeItem(BUY_INTENT_KEY);
-  } catch {
-    // storage unavailable — nothing to clear
-  }
-}
-
-const BUY_INTENT_KEY = "mailstr.buyIntent";
 
 /**
  * Synchronous: is there a persisted account a silent resume could unlock?

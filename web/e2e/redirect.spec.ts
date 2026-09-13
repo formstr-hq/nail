@@ -3,12 +3,13 @@ import { test, expect } from '@playwright/test'
 /**
  * The landing auto-redirects a returning user who already owns a mailbox
  * straight to the inbox (see lib/session.ts + App). These specs guard the two
- * ways that must NOT misfire — the failure the client's "Buy a new address"
- * deep link depends on:
+ * ways that must NOT misfire:
  *
  *  1. A fresh, signed-out visitor is never redirected away from the hero.
  *  2. A `?buy=1` visit is never bounced to the inbox — it opens the signup
- *     wizard so an existing owner can claim an additional address.
+ *     wizard so an existing owner can claim an additional address. (The mail
+ *     client's buy flow is the in-app /mails/buy route now, but the landing
+ *     still honours the deep link.)
  *
  * The positive case (an owner *is* redirected) isn't covered here: it needs a
  * silently-resumable signer session, which can't be faked without a real key,

@@ -23,9 +23,11 @@ interface SettingsModalProps {
   onClose: () => void
   /** Which pane to open on. Defaults to Addresses. */
   initialSection?: SectionId
+  /** Open the in-app buy-address modal (from the Addresses pane). */
+  onBuyAddress: () => void
 }
 
-export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
+export function SettingsModal({ onClose, initialSection, onBuyAddress }: SettingsModalProps) {
   const { account, active } = useAccountStore()
   const { settings, save } = useSettingsStore()
   const { preference, setPreference } = useThemeStore()
@@ -226,6 +228,7 @@ export function SettingsModal({ onClose, initialSection }: SettingsModalProps) {
                   addressesLoading={addressesLoading}
                   addressesError={addressesErrorRaw ?? ''}
                   reloadAddresses={reloadAddresses}
+                  onBuyAddress={onBuyAddress}
                   senderOptions={senderDraft.senderOptions}
                   senderMode={senderDraft.senderMode}
                   senderAddress={senderDraft.senderAddress}

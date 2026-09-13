@@ -71,24 +71,21 @@ export function EncryptedBanner({
 }
 
 /** The alias fix shared by the pre-send npub guard and the send-time bounce
- *  banner: switch to an alias you already own, or go buy one. */
+ *  banner: switch to an alias you already own, or open the in-app buy flow. */
 export function AliasFix({
   alias,
   onSwitch,
+  onBuyAddress,
 }: {
   alias?: string
   onSwitch: () => void
+  onBuyAddress: () => void
 }) {
   if (!alias) {
     return (
-      <a
-        href="/"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex h-7 items-center whitespace-nowrap rounded-md border border-input bg-card px-2.5 text-xs font-medium text-foreground transition-colors duration-[120ms] hover:bg-accent"
-      >
+      <Button size="sm" onClick={onBuyAddress}>
         Get an alias →
-      </a>
+      </Button>
     )
   }
   return (

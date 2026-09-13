@@ -11,6 +11,8 @@ export function ComposerFooter(props: {
   fromOptions: string[]
   onFromChange: (address: string) => void
   hasAlias: boolean
+  /** Open the in-app buy-address flow (the "Get an alias" nudge). */
+  onBuyAddress: () => void
   /** The lock STATUS colors: encrypted → green, mixed → amber, off → red. */
   encrypt: boolean
   mixed: boolean
@@ -32,6 +34,7 @@ export function ComposerFooter(props: {
     fromOptions,
     onFromChange,
     hasAlias,
+    onBuyAddress,
     encrypt,
     mixed,
     canEncrypt,
@@ -71,18 +74,17 @@ export function ComposerFooter(props: {
           ))}
         </select>
         {/* No purchased alias yet: the npub works for mailstr.app mail, but
-            anything external needs an alias. Nudge to the landing, where
-            aliases are bought (the mail app lives at /mails, so "/" is the
-            signup screen). Opens in a tab so the draft is preserved. */}
+            anything external needs an alias. Opens the in-app buy flow — it
+            used to new-tab to "/", where the landing's returning-owner
+            redirect would bounce an owner straight back to the inbox. */}
         {!hasAlias && (
-          <a
-            href="/"
-            target="_blank"
-            rel="noopener noreferrer"
+          <button
+            type="button"
+            onClick={onBuyAddress}
             className="mt-1 inline-block text-[10.5px] text-muted-foreground underline hover:text-foreground"
           >
             Get an alias →
-          </a>
+          </button>
         )}
       </div>
       <div className="relative flex-none">

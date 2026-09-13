@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router";
 import { config } from "@/lib/config";
 import { useAccountStore } from "@/app/store/account";
 import { useComposeOverlay } from "@/app/store/composeOverlay";
+import { useBuyOverlay } from "@/app/store/buyOverlay";
 import { syncMailNotifications } from "@/app/lib/notifications";
 import { installAndroidBackHandler } from "@/app/lib/androidBack";
 import { useSettingsStore } from "@/app/store/settings";
@@ -21,6 +22,8 @@ import { EmailList } from '@/app/components/EmailList'
 import { EmailView } from '@/app/components/EmailView'
 import { ComposeModal } from '@/app/components/ComposeModal'
 import { SettingsModal, type SectionId } from '@/app/components/SettingsModal'
+import { BuyAddressModal } from '@/app/components/BuyAddressModal'
+import { reloadOwnedAddresses } from '@/app/hooks/useOwnedAddresses'
 
 import { OnboardingModal } from '@/app/components/OnboardingModal'
 import { BrandGlyph, PenIcon, InboxIcon } from '@/app/components/ui/icons'
@@ -119,6 +122,12 @@ function MailApp() {
       }),
     [navigate],
   )
+  // The buy flow is an overlay (store/buyOverlay), not a route: it opens over
+  // the Settings pane or an open composer, and a URL would unmount — and lose
+  // — that context. The Android back handler pops it first (see handleBack).
+  const buyingAddress = useBuyOverlay((s) => s.visible)
+  const openBuy = useCallback(() => useBuyOverlay.getState().open(), [])
+  const closeBuy = useCallback(() => useBuyOverlay.getState().close(), [])
 
   // The app's manual "reload": re-open both standing subscriptions, which each
   // kick off a fresh upstream sync. There's no browser refresh in the native
@@ -146,6 +155,12 @@ function MailApp() {
   // the handler only covers the overlays that aren't navigation: the compose
   // window (overlay store) and the open email (store-selected, not a route).
   const handleBack = useCallback((): boolean => {
+    // 0. The buy-address wizard is open → close it (it renders above
+    //    everything else it can be opened over).
+    if (useBuyOverlay.getState().visible) {
+      useBuyOverlay.getState().close()
+      return true
+    }
     // 1. Compose modal is open → close it (or restore it if minimized).
     const compose = useComposeOverlay.getState()
     if (compose.draft) {
@@ -209,6 +224,7 @@ function MailApp() {
             onSettings={() => openSettings("menu")}
             onOpenRelays={() => openSettings("relays")}
             onAddAccount={() => setAddingAccount(true)}
+            onBuyAddress={() => openBuy()}
             aliases={selfAddresses}
             status={status}
           />
@@ -235,6 +251,10 @@ function MailApp() {
                 }}
                 onAddAccount={() => {
                   setAddingAccount(true)
+                  setNavOpen(false)
+                }}
+                onBuyAddress={() => {
+                  openBuy()
                   setNavOpen(false)
                 }}
                 aliases={selfAddresses}
@@ -274,12 +294,14 @@ function MailApp() {
           minimized={composeMinimized}
           setMinimized={(m) => useComposeOverlay.getState().setMinimized(m)}
           onOpenEncryptionSettings={() => openSettings("encryption")}
+          onBuyAddress={() => openBuy()}
         />
       )}
       {settingsSection && (
         <SettingsModal
           initialSection={settingsSection === "menu" ? undefined : settingsSection}
           onClose={closeSettings}
+          onBuyAddress={() => openBuy()}
         />
       )}
 
@@ -301,6 +323,19 @@ function MailApp() {
         (isFreshSignup(account.pubkey) || settingsEventExists) && (
           <OnboardingModal status={status} />
         )}
+
+      {/* Buying an address embeds the landing's purchase wizard over the app.
+          Completion refreshes every owned-address consumer at once (sidebar,
+          Settings, composer) via the shared reload tick. */}
+      {buyingAddress && (
+        <BuyAddressModal
+          onClose={() => closeBuy()}
+          onComplete={() => {
+            reloadOwnedAddresses()
+            closeBuy()
+          }}
+        />
+      )}
 
       {/* Adding an account switches the active one on success, so wipe the
           previous inbox and close the overlay. The signer modal renders its

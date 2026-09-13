@@ -288,6 +288,9 @@ export default function SignupWizard({
   initialName,
   onClose,
   purchaseMode = false,
+  onComplete,
+  skipLogin = false,
+  initialPubkey,
 }: {
   /** Name the user typed in the hero input, if it was a name. */
   initialName?: string;
@@ -299,9 +302,26 @@ export default function SignupWizard({
    * being redirected straight back where they came from.
    */
   purchaseMode?: boolean;
+  /**
+   * Embedded completion (the mail client's in-app buy modal): replaces the
+   * "Open your inbox" redirect with a caller-supplied continuation, so the
+   * wizard can close and hand control back to the page that opened it.
+   * Absent on the landing, which keeps the redirect behaviour.
+   */
+  onComplete?: () => void;
+  /**
+   * Embedded mode only: the mail client mounts this wizard with a live,
+   * already-resumed session, so step straight to address selection instead of
+   * rendering the sign-in picker for the silent resume to immediately replace.
+   * If the session turns out to be dead mid-purchase, requestInvoice falls
+   * back to the normal login step.
+   */
+  skipLogin?: boolean;
+  /** The account pubkey in embedded mode — signs the NIP-98 invoice request. */
+  initialPubkey?: string;
 }) {
-  const [step, setStep] = useState<Step>("login");
-  const [pubkey, setPubkey] = useState<string | null>(null);
+  const [step, setStep] = useState<Step>(skipLogin ? "name" : "login");
+  const [pubkey, setPubkey] = useState<string | null>(initialPubkey ?? null);
   const [name, setName] = useState(initialName ?? "");
   const [nameCheck, setNameCheck] = useState<{
     name: string;
@@ -847,16 +867,25 @@ export default function SignupWizard({
           <div className="flex flex-col items-center gap-3 py-6 text-center">
             <PartyPopper size={40} className="text-primary" />
             <p className="text-lg font-bold text-ink">{address} is yours.</p>
-            <p className="text-sm text-gray-500">Next: your inbox.</p>
+            <p className="text-sm text-gray-500">
+              {onComplete
+                ? "It's linked to this account and will appear in your address lists."
+                : "Next: your inbox."}
+            </p>
             <button
               type="button"
               onClick={() => {
-                setStep("done");
-                redirectToMails();
+                // Embedded mode hands control straight back — the parent
+                // unmounts the wizard, so the "done" step never shows here.
+                if (onComplete) onComplete();
+                else {
+                  setStep("done");
+                  redirectToMails();
+                }
               }}
               className="mt-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary/90"
             >
-              Open your inbox →
+              {onComplete ? "Done" : "Open your inbox →"}
             </button>
           </div>
         )}

@@ -4,7 +4,7 @@ import { AccountSwitcher } from '@/app/components/AccountSwitcher'
 import { matchesAlias } from '@/app/lib/mail/aliasFilter'
 import type { EmailFolder } from '@/app/types/mail'
 import type { InboxStatus } from '@/app/hooks/useInbox'
-import { BrandGlyph, PenIcon, SettingsIcon, InboxIcon, AtSignIcon } from '@/app/components/ui/icons'
+import { BrandGlyph, PenIcon, SettingsIcon, InboxIcon, AtSignIcon, PlusIcon } from '@/app/components/ui/icons'
 import calendarAppIcon from '@/app/assets/calendar-app-icon.png'
 import { Button, IconButton } from '@/app/components/ui/Button'
 import { ThemeToggle } from '@/app/components/ui/ThemeToggle'
@@ -23,6 +23,8 @@ interface SidebarProps {
   /** Open Settings straight to the Relays pane (from the relay status line). */
   onOpenRelays: () => void
   onAddAccount: () => void
+  /** Open the in-app "buy a new address" flow. */
+  onBuyAddress: () => void
   /** The account's own addresses, for the per-alias inbox filter. */
   aliases: string[]
   status: InboxStatus
@@ -65,7 +67,7 @@ function RelayState({ status }: { status: InboxStatus }) {
   )
 }
 
-export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, aliases, status }: SidebarProps) {
+export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onBuyAddress, aliases, status }: SidebarProps) {
   const { folder, setFolder, emails, mailState, inboxFilter, setInboxFilter } = useMailStore()
   const { account } = useAccountStore()
 
@@ -133,6 +135,24 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, ali
             ))}
           </nav>
         )}
+
+        {/* The buy action sits directly under the alias inboxes it extends —
+            an action row, not a filter, so it stays outside that nav and is
+            always visible (even with no aliases yet). */}
+        <nav aria-label="Address" className="flex flex-col gap-px px-2">
+          <button
+            type="button"
+            onClick={onBuyAddress}
+            className={[
+              'flex items-center gap-2 rounded-md border-l-2 border-l-transparent px-3 py-2.5 text-left',
+              'text-[15px] text-muted-foreground transition-colors duration-[120ms]',
+              'hover:bg-accent/60 hover:text-foreground',
+            ].join(' ')}
+          >
+            <PlusIcon className="h-4 w-4 flex-none text-subtle" />
+            <span>Buy a new address</span>
+          </button>
+        </nav>
 
         <nav aria-label="Mail folders" className="flex flex-col gap-px px-2">
           <div className="eyebrow px-2 pb-1.5">Folders</div>

@@ -54,7 +54,15 @@ test('bounce banner — no owned alias (Get an alias CTA)', async ({ page }) => 
 
   const banner = page.locator('div.bg-destructive\\/10')
   await expect(banner.getByText(/External recipients are delivered through the bridge/i)).toBeVisible()
-  await expect(banner.getByRole('link', { name: /get an alias/i })).toBeVisible()
+  // The CTA opens the in-app buy-address modal (a button, not the old
+  // new-tab link to "/").
+  const cta = banner.getByRole('button', { name: /get an alias/i })
+  await expect(cta).toBeVisible()
+  await cta.click()
+  await expect(page.getByRole('heading', { name: /pick your address/i })).toBeVisible()
+  // Close it so the screenshot shows the banner state the spec is about.
+  await page.getByRole('button', { name: 'Close' }).last().click()
+  await expect(page.getByRole('heading', { name: /pick your address/i })).toBeHidden()
   await page.screenshot({ path: 'test-results/compose-bounce-noalias.png' })
 })
 

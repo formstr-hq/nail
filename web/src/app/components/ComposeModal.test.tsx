@@ -43,6 +43,7 @@ const PROPS = {
   minimized: false,
   setMinimized: vi.fn(),
   onOpenEncryptionSettings: vi.fn(),
+  onBuyAddress: vi.fn(),
 }
 
 beforeEach(() => {
