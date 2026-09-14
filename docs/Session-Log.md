@@ -312,3 +312,47 @@ rev-3 audit fix pass + ADR-002/003). The rev-3 work was committed first
     nostr-bridge` the alias resolves to — is fixed as part of this move and
     verified with a real image build.
 
+
+## 2026-09-14 — Restore `cursor: pointer` on buttons (Tailwind v4 preflight regression)
+
+Context consulted: the three entries above (rev-2 workspace merge + ADR-001,
+rev-3 audit + ADR-002/003, flat `client/` layout + ADR-004).
+
+### What changed
+
+1. **Root cause.** The mail client was ported Tailwind 3 → 4 in merge phase 2
+   (`16bf719`). Tailwind v4's preflight intentionally dropped v3's
+   `button, [role="button"] { cursor: pointer }` rule ("Buttons use the
+   default cursor", v4 upgrade guide), so every native `<button>` in the app
+   — mail rows, folder rows, composer chrome, Send — silently regressed to
+   the browser's `default` arrow. The only `cursor: pointer` left was in the
+   `@formstr/signer` stylesheet and three hand-written rules in `index.css`,
+   which is why the login modal still looked right and the mailbox did not.
+2. **Fix.** Added the upgrade guide's documented compat shim to
+   `client/web/src/index.css` under `@layer base`:
+   `button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer }`.
+   The `:not(:disabled)` guard keeps `disabled:cursor-not-allowed`/opacity
+   affordances honest; the signer's own higher-specificity rules are
+   unaffected.
+3. **Regression test.** New `client/web/e2e/app/cursor.spec.ts` asserts the
+   computed cursor on a sidebar folder button and the shared `Button`
+   ("Write") as `pointer`, and the composer's disabled Send as
+   `not-allowed`. Verified it fails on the pre-fix stylesheet (first
+   assertion reads `default`) and passes with the fix.
+
+### Verification (at this working tree)
+
+- `pnpm --filter mailstr-web build` — pass; the compiled CSS contains
+  `button:not(:disabled),[role=button]:not(:disabled){cursor:pointer}`.
+- `pnpm --filter mailstr-web e2e` — 14/14 pass (new spec included); the new
+  spec fails when the `index.css` hunk is stashed (13/14), proving the guard.
+- `pnpm --filter mailstr-web test` — 30 files / 235 tests pass.
+- `pnpm --filter mailstr-web lint` — clean.
+
+### Follow-ups
+
+- Tailwind v4 targets Safari 16.4+ while AGENTS rule 6 pins the browser floor
+  at Safari 14 / iOS 15 (the relay worker still ships IIFE for that reason).
+  This is pre-existing from the phase-2 port, not introduced here; flagging
+  it as an architecture question rather than silently widening the floor.
+
