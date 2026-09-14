@@ -1,4 +1,4 @@
-# AGENTS.md — nail frontend (`web/`)
+# AGENTS.md — nail frontend (`client/web/`)
 
 Frontend work happens in the `nail/` repo: `/home/rama/Documents/Projects/formstr-hq/nail`. Scope is frontend only — `nostr-bridge/`, `mail-server/`, and the formstr API are out of bounds unless the contract says otherwise.
 
@@ -6,14 +6,14 @@ Frontend work happens in the `nail/` repo: `/home/rama/Documents/Projects/formst
 
 | Path                         | What                                                                  |
 | ---------------------------- | --------------------------------------------------------------------- |
-| `web/`                       | The frontend: landing (prerendered at `/`) + mail client (`/mails`) in one Vite app (React 19, Tailwind 4, zustand, Capacitor shell for Android) |
-| `web/src/lib/`               | Shared modules: `nip98`, `platform`, `session`, `signer`, `config`    |
-| `web/src/app/`               | The mail client: `components/`, `hooks/`, `store/`, `lib/`            |
+| `client/web/`                | The frontend: landing (prerendered at `/`) + mail client (`/mails`) in one Vite app (React 19, Tailwind 4, zustand) |
+| `client/web/src/lib/`        | Shared modules: `nip98`, `platform`, `session`, `signer`, `config`    |
+| `client/web/src/app/`        | The mail client: `components/`, `hooks/`, `store/`, `lib/`            |
 | `nostr-bridge/src/protocol/` | Shared wire protocol — imported via `@protocol`, never copy it        |
-| `mobile/`                    | Capacitor Android shell; consumes `web/`'s built `dist` — no app source of its own |
+| `client/`                    | Capacitor native shell (`android/`, future `ios/`); consumes `client/web/`'s built `dist` — no app source of its own |
 | `docs/ARCHITECTURE.md`       | **Read before any non-trivial change.** Design constraints live there |
 
-The client/landing merge is complete: one app, one build, one deploy (see `docs/plans/FRONTEND_MERGE_PLAN.md` — phases 1–5 done). `mobile/` is a pnpm-workspace member (`pnpm-workspace.yaml`) and installs/builds from the repo root; `shared/` was deleted as dead code — shared frontend logic lives in `web/src/lib/`.
+The client/landing merge is complete: one app, one build, one deploy (see `docs/plans/FRONTEND_MERGE_PLAN.md` — phases 1–5 done). `client/` and `client/web/` are pnpm-workspace members (`pnpm-workspace.yaml`) and install/build from the repo root; `shared/` was deleted as dead code — shared frontend logic lives in `client/web/src/lib/`.
 
 All rules, and architecture principles are non negotiable unless specifically stated otherwise. Ask the user if there is a contradiction.
 
@@ -55,7 +55,7 @@ These encode the audit findings (`docs/FRONTEND_AUDIT.md`) as hard rules. Violat
 5. **No module-level mutable singletons guarding lifecycle** (`let initialized = false`, module-scope promise caches) — they survive account switches and create cross-account leaks. State that persists belongs in a store with an explicit reset; in-flight dedup belongs inside the store/hook scope.
 6. **Effects orchestrate, services compute.** Schedulers, queues (e.g. the inbox decode pump), and watchdogs are extracted into plain testable modules — not closures inside `useEffect`. Effects with >3 deps or a `setInterval` inside are a smell requiring justification.
 7. **One persistence idiom.** All localStorage persistence goes through `zustand/persist` middleware (or, pre-refactor, the `store/mail.ts` helpers) with namespaced keys and preserved migrations. Hand-rolled `localStorage.getItem` in a component or hook is rejected.
-8. **No new cross-app duplication.** Logic needed by both the landing and the mail client goes into `web/src/lib/` in the same change — a copy-paste "for now" is a rejected diff. (`shared/` is gone; the login-UI tuning both surfaces use now lives in `web/src/lib/loginUi.ts`.)
+8. **No new cross-app duplication.** Logic needed by both the landing and the mail client goes into `client/web/src/lib/` in the same change — a copy-paste "for now" is a rejected diff. (`shared/` is gone; the login-UI tuning both surfaces use now lives in `client/web/src/lib/loginUi.ts`.)
 9. **No hardcoded styling drift.** Colors/spacing come from the Tailwind theme tokens; a class-string pattern repeated 3+ times gets hoisted into a shared helper/component.
 10. **Router owns navigation state.** No new overlay state as bare `useState` booleans in `App.tsx`; overlays get routes or a dedicated overlay store that the back handler reads.
 11. **No unbounded work against relays/signers.** Any new subscription or per-event computation must state its bound (dedup guard, queue limit) in the diff.
@@ -67,7 +67,7 @@ These encode the audit findings (`docs/FRONTEND_AUDIT.md`) as hard rules. Violat
 These are the remaining tracked residuals after the rev-3 audit fix pass
 (`docs/FRONTEND_AUDIT.md`, revision 3). They are **warnings, not licenses**:
 don't replicate the pattern, and shrink the offender when you touch it. Paths
-without a `web/src/` prefix are under `web/src/app/`.
+without a `client/web/src/` prefix are under `client/web/src/app/`.
 
 | Offender | Where | Why it's a warning |
 |---|---|---|
@@ -75,7 +75,7 @@ without a `web/src/` prefix are under `web/src/app/`.
 | `useState` form seed without sync-back | `components/SettingsModal.tsx` (`signature`, `relays`), `hooks/useSenderDraft.ts` | C1 residual — accepted per rule 4: drafts with no sync-back, and saves are patches (B6) so they cannot clobber |
 | Unbounded on-disk history growth | `store/mail.ts` (`mailState`/`wrapKeys` maps never pruned; tombstones accumulate) | D14 residual — deletions are single-stored now; historical read/archive entries still grow |
 | Hook/component test gaps | `hooks/useInbox.ts`, `hooks/useMailMeta.ts` lack direct unit tests | E-4 residual — covered indirectly (e2e + lib tests); add a unit test before extending either |
-| Orphaned stylesheet risk | `web/src/index.css` is the only live global sheet; if you add a new entry, import it (the deleted `app/index.css` is the cautionary tale) | E-6 — verify an import exists before assuming styles ship |
+| Orphaned stylesheet risk | `client/web/src/index.css` is the only live global sheet; if you add a new entry, import it (the deleted `app/index.css` is the cautionary tale) | E-6 — verify an import exists before assuming styles ship |
 | Android back edge cases | `lib/androidBack.ts` exits on decline; new overlays must still be added to `App.tsx` `handleBack` | D12 — a missed overlay now exits the app rather than silently no-oping |
 
 Everything else from the rev-2 offender list was fixed in the rev-3 pass and is
@@ -107,16 +107,16 @@ pnpm --filter mailstr-web build     # tsc + vite + SSR + prerender + /mails shel
 pnpm --filter mailstr-web test      # vitest run
 pnpm --filter mailstr-web lint      # eslint
 pnpm --filter mailstr-web e2e       # playwright (landing + mail app specs, mock relay)
-pnpm --filter mailstr-mobile build  # build web/, assemble www/, cap sync android
+pnpm --filter mailstr-client build  # build client/web, assemble www/, cap sync android
 ```
 
-Inside `web/` (`pnpm dev`, `pnpm build`, `pnpm test`, `pnpm e2e`, `pnpm lint`
-all work as before); inside `mobile/`, `pnpm build` / `pnpm apk:debug` /
-`pnpm apk:release`.
+Inside `client/web/` (`pnpm dev`, `pnpm build`, `pnpm test`, `pnpm e2e`,
+`pnpm lint` all work as before); inside `client/`, `pnpm build` /
+`pnpm apk:debug` / `pnpm apk:release`.
 
 ## Verification before you claim done
 
-- `pnpm build` + `pnpm test` + `pnpm lint` in the app you touched, at the exact commit you'll cite. `.github/workflows/web-ci.yml` runs the same gate (lint → test → build → e2e) on pushes/PRs touching `web/` or the protocol, so a green CI run is the strongest evidence.
+- `pnpm build` + `pnpm test` + `pnpm lint` in the app you touched, at the exact commit you'll cite. `.github/workflows/web-ci.yml` runs the same gate (lint → test → build → e2e) on pushes/PRs touching `client/web/` or the protocol, so a green CI run is the strongest evidence.
 - The shared protocol lives in `nostr-bridge/src/protocol/`; if you changed it, also run `pnpm test` in `nostr-bridge/` and `tsc --noEmit` in `nostr-bridge/` and `e2e-nostr/` (both consume it).
 - Any claim about mail delivery behavior needs either a unit test around `lib/mail`/`lib/nostr` or an `e2e-nostr` run — never "should work".
 - UI claims: name the e2e spec that exercises it.

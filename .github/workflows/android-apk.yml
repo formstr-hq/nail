@@ -42,13 +42,14 @@ jobs:
       - name: Install SDK packages
         run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      # One workspace install covers both web and mobile (pnpm-workspace.yaml).
-      # build-web.mjs runs web/'s build, so lockfile drift must fail here.
+      # One workspace install covers both client/web and the native shell
+      # (pnpm-workspace.yaml). build-web.mjs runs client/web's build, so
+      # lockfile drift must fail here.
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile
 
       - name: Build combined web bundle and sync
-        run: pnpm --filter mailstr-mobile run build
+        run: pnpm --filter mailstr-client run build
 
       - name: Resolve Gradle task
         id: task
@@ -58,12 +59,12 @@ jobs:
         run: echo "name=assemble${BT^}" >> "$GITHUB_OUTPUT"
 
       - name: Assemble APK
-        working-directory: mobile/android
+        working-directory: client/android
         run: ./gradlew ${{ steps.task.outputs.name }} --no-daemon --console=plain
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: mailstr-${{ inputs.build_type }}-apk
-          path: mobile/android/app/build/outputs/apk/**/*.apk
+          path: client/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error

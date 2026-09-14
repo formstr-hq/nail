@@ -32,7 +32,7 @@ export default defineConfig({
     // instead.
     {
       command: 'node relay-server.js',
-      cwd: '../e2e-nostr',
+      cwd: '../../e2e-nostr',
       env: { ...process.env, PORT: '4699' },
       port: 4699,
       reuseExistingServer: !process.env.CI,

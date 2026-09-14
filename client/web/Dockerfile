@@ -9,9 +9,9 @@
 #   VITE_MAIL_DOMAIN    address domain (default mailstr.app)
 #   VITE_MAILS_URL      where the mail UI lives (default /mails)
 
-# Build context is the REPO ROOT, not web/ — the app imports the shared wire
-# protocol from nostr-bridge, which must therefore be inside the context.
-# docker-compose.yml sets `context: .` with `dockerfile: web/Dockerfile`.
+# Build context is the REPO ROOT, not client/web — the app imports the shared
+# wire protocol from nostr-bridge, which must therefore be inside the context.
+# docker-compose.yml sets `context: .` with `dockerfile: client/web/Dockerfile`.
 
 FROM node:24-alpine AS builder
 
@@ -23,20 +23,22 @@ RUN corepack prepare pnpm@10.15.0 --activate
 # Workspace root: the lockfile owns dependency resolution for the whole
 # workspace, so it must be in place before the filtered install.
 COPY pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY web/package.json web/
+COPY client/package.json client/
+COPY client/web/package.json client/web/
 RUN pnpm install --frozen-lockfile --filter mailstr-web
 
-COPY web/ web/
+COPY client/web/ client/web/
 
-# Must land at /nostr-bridge so that ../nostr-bridge/src/protocol resolves
-# from the web/ working directory, matching the vite + tsconfig aliases.
-COPY nostr-bridge/src/protocol/ /nostr-bridge/src/protocol/
+# Must land at /app/nostr-bridge so that ../../nostr-bridge/src/protocol
+# resolves from the client/web working directory, matching the vite + tsconfig
+# aliases (client/web → ../.. is /app).
+COPY nostr-bridge/src/protocol/ /app/nostr-bridge/src/protocol/
 
 # The protocol sources import nostr-tools (and their .test.ts files import
-# vitest). Because they sit at /nostr-bridge — a sibling of /app — TypeScript's
-# upward node_modules lookup never reaches /app/node_modules. Point it there so
+# vitest). They sit outside the workspace project, so TypeScript's upward
+# node_modules lookup never reaches client/web/node_modules. Point it there so
 # these already-installed web deps resolve during `tsc -b`.
-RUN ln -s /app/node_modules /nostr-bridge/node_modules
+RUN ln -s /app/client/web/node_modules /app/nostr-bridge/node_modules
 
 ARG VITE_API_BASE_URL
 ARG VITE_WS_BASE_URL
@@ -49,11 +51,11 @@ ENV VITE_API_BASE_URL=${VITE_API_BASE_URL} \
     VITE_MAIL_DOMAIN=${VITE_MAIL_DOMAIN} \
     VITE_MAILS_URL=${VITE_MAILS_URL}
 
-RUN cd web && pnpm run build
+RUN cd client/web && pnpm run build
 
 # ── Runtime stage: copy built assets to the mounted nginx directory on start ──
 FROM alpine:latest
 
-COPY --from=builder /app/web/dist /build-output
+COPY --from=builder /app/client/web/dist /build-output
 
 CMD ["sh", "-c", "mkdir -p /output && cp -rT /build-output /output && echo 'Deployed web dist to /output'"]

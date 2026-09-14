@@ -20,18 +20,18 @@ A signed-out user opens on the landing page. Buying an address and the
 
 ## Build
 
-`mobile/` is part of the root pnpm workspace (`pnpm-workspace.yaml`), so all
+`client/` is part of the root pnpm workspace (`pnpm-workspace.yaml`), so all
 dependencies install in one place — from the repo root:
 
 ```bash
-pnpm install             # once, installs web/ + mobile/
-pnpm --filter mailstr-mobile run build       # build the web app, assemble www/, cap sync
-pnpm --filter mailstr-mobile run apk:debug   # -> android/app/build/outputs/apk/debug/app-debug.apk
+pnpm install             # once, installs client/web/ + the native shell
+pnpm --filter mailstr-client run build       # build the web app, assemble www/, cap sync
+pnpm --filter mailstr-client run apk:debug   # -> android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Or from `mobile/`: `pnpm run build`, `pnpm run apk:debug`. `build:web`
-(invoked by `build`) runs web/'s own build, whose deps the workspace install
-already provided.
+Or from `client/`: `pnpm run build`, `pnpm run apk:debug`. `build:web`
+(invoked by `build`) runs `client/web/`'s own build, whose deps the workspace
+install already provided.
 
 `cap sync` regenerates `android/capacitor.settings.gradle` with pnpm's
 `.pnpm`-store paths; that file is generated, not hand-edited.
@@ -49,8 +49,8 @@ classes). Those env values are `0` on the web, so the same source serves both.
 Capacitor's local server does **not** resolve a bare directory (`/mails/`) to
 its `index.html` — it falls back to the root `index.html` (the landing SPA),
 which silently bounces you back to landing. So `scripts/build-web.mjs` builds
-web/ with `VITE_MAILS_URL=/mails/index.html` (mobile-only; the web deploy
-keeps its default `/mails`).
+`client/web/` with `VITE_MAILS_URL=/mails/index.html` (native-only; the web
+deploy keeps its default `/mails`).
 
 ## CI
 

@@ -3,16 +3,16 @@
 # bindings, dropping both into the app module. Invoked by Gradle (preBuild) and
 # runnable by hand. Idempotent; outputs are git-ignored build artifacts.
 #
-#   mobile/android/app/src/main/jniLibs/<abi>/libnotifier.so   (the native lib)
-#   mobile/android/app/src/main/java/uniffi/notifier/*.kt      (the bindings)
+#   client/android/app/src/main/jniLibs/<abi>/libnotifier.so   (the native lib)
+#   client/android/app/src/main/java/uniffi/notifier/*.kt      (the bindings)
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-mobile="$(dirname "$here")"
-repo="$(dirname "$mobile")"
+client="$(dirname "$here")"
+repo="$(dirname "$client")"
 crate="$repo/notifier"
-jni="$mobile/android/app/src/main/jniLibs"
-bindings="$mobile/android/app/src/main/java"
+jni="$client/android/app/src/main/jniLibs"
+bindings="$client/android/app/src/main/java"
 
 # Locate an NDK: honour ANDROID_NDK_HOME, else pick the highest version under
 # the SDK so a fresh checkout builds without extra env.

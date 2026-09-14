@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(__dirname, "../..");
-const webDir = path.join(repo, "web");
+const webDir = path.join(repo, "client", "web");
 const www = path.resolve(__dirname, "../www");
 
 // Point the handoff at the client's index file explicitly. Capacitor's local

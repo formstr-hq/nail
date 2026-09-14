@@ -1,8 +1,8 @@
 {
-  "name": "mailstr-mobile",
+  "name": "mailstr-client",
   "private": true,
   "version": "0.2.0",
-  "description": "Capacitor Android wrapper for Mailstr (landing @ / + client @ /mails/).",
+  "description": "Capacitor native shell (Android/iOS) wrapping the Mailstr web build (landing @ / + client @ /mails/).",
   "type": "module",
   "scripts": {
     "build:web": "node scripts/build-web.mjs",

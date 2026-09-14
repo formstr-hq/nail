@@ -105,7 +105,7 @@ export default defineConfig({
     },
   },
   resolve: {
-    // The protocol sources live in ../nostr-bridge, which has no node_modules
+    // The protocol sources live in ../../nostr-bridge, which has no node_modules
     // of its own, so bare imports like `nostr-tools/pure` in those files can't
     // resolve from their own directory. Dedupe forces Vite to resolve these
     // from the web root, where they're installed.
@@ -115,7 +115,7 @@ export default defineConfig({
       // The wire protocol lives in nostr-bridge and is shared verbatim with
       // the bridge and the e2e suite, so client and bridge cannot drift apart.
       // Kept outside web/ deliberately; the Dockerfile copies it in.
-      '@protocol': path.resolve(__dirname, '../nostr-bridge/src/protocol'),
+      '@protocol': path.resolve(__dirname, '../../nostr-bridge/src/protocol'),
     },
   },
 })

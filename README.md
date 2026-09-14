@@ -11,9 +11,10 @@ Licensed under the [MIT License](LICENSE).
 | Directory | Description |
 |-----------|-------------|
 | `nostr-bridge/` | Node.js LMTP server that translates between email and Nostr events |
-| `client/` | React web UI for managing your Nostr mail identity |
-| `landing/` | Marketing landing page |
+| `client/web/` | The frontend: prerendered landing (`/`) + mail client (`/mails`) |
+| `client/` | Capacitor native shell (`android/`, future `ios/`) around `client/web/`'s build |
 | `e2e-nostr/` | End-to-end test suite (Vitest + mock relay) |
+| `notifier/` | Rust crate for native Android mail notifications |
 
 ---
 

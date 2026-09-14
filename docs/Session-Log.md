@@ -219,3 +219,96 @@ web build/lint/235 tests/13 e2e green, and the assembled mobile bundle served
 headlessly to confirm the lazy `App` chunk resolves under `/mails/` with no
 console errors.
 
+## 2026-09-14 — Flat `client/` layout: `mobile/` removed, `web/` → `client/web/`
+
+Context consulted: the two entries above (rev-2 workspace merge + ADR-001,
+rev-3 audit fix pass + ADR-002/003). The rev-3 work was committed first
+(`frontend audit rev 3…`) so this restructure is a standalone, reviewable diff.
+
+### What changed
+
+1. **One `client/` folder, no `mobile/`.** `git mv mobile client` then
+   `git mv web client/web`. The native shell is now `client/` itself
+   (`package.json`, `capacitor.config.ts`, `scripts/`, `android/`, future
+   `ios/`) and the web app is nested at `client/web/`. History preserved via
+   git rename detection.
+2. **Package rename:** `mailstr-mobile` → `mailstr-client`; description now
+   says native shell (Android/iOS) instead of "Android wrapper". `mailstr-web`
+   keeps its name. CI filters updated to match.
+3. **Workspace:** `pnpm-workspace.yaml` lists `client` + `client/web`;
+   `pnpm-lock.yaml` regenerated (importers `client:` / `client/web:`), still
+   `--frozen-lockfile`-clean.
+4. **Alias depth +1** because `client/web` is two levels below the root:
+   `vite.config.ts`, `vitest.config.ts`, `tsconfig.app.json` (`@protocol`,
+   `include`/`exclude`), and `playwright.config.ts` (`../../e2e-nostr`).
+5. **Build scripts:** `client/scripts/build-web.mjs` resolves
+   `repo/client/web`; `build-notifier.sh` renames its `mobile` var to `client`
+   (relative offsets unchanged, as is the Gradle `../scripts/...` invocation).
+6. **Docker:** compose points at `client/web/Dockerfile`; the Dockerfile
+   copies `client/web`/`client/package.json` and builds `cd client/web`, and
+   now copies the protocol to `/app/nostr-bridge` so the `../../nostr-bridge`
+   alias actually resolves (the pre-move `/nostr-bridge` copy did not match
+   the `/app/...` alias — latent bug, fixed and verified by a real image
+   build). `.dockerignore` ignores only the native dirs (`client/android`,
+   `client/ios`, `client/www`) instead of the whole `client`.
+7. **Docs:** `AGENTS.md` (title, repo map, rules 8, offenders, commands,
+   verification), root `README.md` (repo table was stale from before the
+   merge — now lists `client/web`, `client`, `notifier`), `client/README.md`,
+   `docs/ARCHITECTURE.md` (component table + callers + protocol section),
+   `docs/fiat-iap-plan.md` (paths retargeted to the merged layout).
+8. **`scripts/render-app-icon.py`:** `RES` points at `client/android/...`;
+   the dead `client/public` + `landing/public` favicon writes (deleted in the
+   merge, guarded by `exists()`) are replaced by the live
+   `client/web/public/favicon.svg` target, and the unreferenced
+   `favicon-512.png` output (no web manifest consumes it) is dropped.
+
+### Verification (at this working tree)
+
+- `pnpm install` — workspace resolves `client` + `client/web`; lockfile
+  regeneration is the only change after the initial move.
+- `pnpm --filter mailstr-web lint` — clean.
+- `pnpm --filter mailstr-web test` — 30 files / 235 tests pass.
+- `pnpm --filter mailstr-web build` — prerender + `/mails` shell ok.
+- `pnpm --filter mailstr-web e2e` — 13/13 pass.
+- `pnpm --filter mailstr-client run build` — web build → `client/www` →
+  `cap sync android` (5 plugins); `capacitor.settings.gradle` unchanged
+  (depth preserved).
+- `pnpm --filter mailstr-client run apk:debug` — BUILD SUCCESSFUL;
+  `client/android/app/build/outputs/apk/debug/app-debug.apk` (+ notifier
+  `.so`/bindings cross-compiled by the Gradle preBuild task).
+- `docker build -f client/web/Dockerfile .` — image builds; `/build-output`
+  contains `index.html` + `mails/index.html` + assets. `docker compose
+  config` resolves.
+
+### ADR-004: one flat `client/` tree; `mobile/` is removed (supersedes ADR-001)
+
+- **Status:** accepted (2026-09-14). Supersedes ADR-001 (2026-09-13), whose
+  workspace-membership decision this restructure carries forward but whose
+  two-directory shape it replaces.
+- **Context:** ADR-001 merged `mobile/` into the pnpm workspace so one
+  lockfile served both. The remaining split (`web/` + `mobile/`) still named
+  the native shell by one of its two platforms, while the roadmap
+  (`docs/fiat-iap-plan.md` phase 3b) adds `client/ios`. A flat
+  `client/{web,android,ios}` tree makes the shell's platform folders siblings
+  under a neutral name and matches the plan the iOS work will follow.
+- **Decision:** `mobile/` is removed as a directory; its contents become
+  `client/` (the native shell). `web/` moves to `client/web/` (the sole
+  workspace member that carries app source). Workspace lists both `client`
+  (shell, for Capacitor deps) and `client/web` (app); the package is renamed
+  `mailstr-client`. The shell stays a pure consumer: `client/scripts/
+  build-web.mjs` builds `client/web` and assembles `www/`; no web code
+  imports the shell.
+- **Consequences:**
+  - Relative offsets that assumed the old depth were updated once:
+    `@protocol`/e2e aliases (+1 level), Dockerfile paths, CI workdir/artifact
+    paths, and `render-app-icon.py`. `capacitor.settings.gradle` and the
+    Gradle→notifier script path needed no change (same depth).
+  - `mailstr-mobile` references in historical docs (this log's earlier
+    entries, `docs/FRONTEND_AUDIT.md`) stay as the record of what ran then;
+    living docs use `mailstr-client`.
+  - iOS can now be added with `npx cap add ios` inside `client/` with no
+    path churn (macOS + Xcode required; not scaffolded here).
+  - The Dockerfile's protocol copy bug — `/nostr-bridge` vs the `/app/
+    nostr-bridge` the alias resolves to — is fixed as part of this move and
+    verified with a real image build.
+

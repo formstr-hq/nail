@@ -1,6 +1,6 @@
 packages:
-  - web
-  - mobile
+  - client
+  - client/web
 
 allowBuilds:
   esbuild: true

@@ -35,7 +35,7 @@ correspondents structurally impossible.
 
 | Component | Runtime | Role |
 |---|---|---|
-| `web/` | Browser (React, Vite) | The frontend: landing (prerendered at `/`) + webmail UI at `/mails`. Holds the user's key via `@formstr/signer`. |
+| `client/web/` | Browser (React, Vite) | The frontend: landing (prerendered at `/`) + webmail UI at `/mails`. Holds the user's key via `@formstr/signer`. |
 | `nostr-bridge/` | Node, sidecar to mailcow | Translates between SMTP and Nostr. The only trusted component. |
 | `e2e-nostr/` | Vitest | End-to-end suite against a mock relay and a real mailcow. |
 | formstr API | External (`api.formstr.app`) | Name purchase and ownership lookup. NIP-98 authed. **Not in the mail path.** |
@@ -52,7 +52,7 @@ correspondents structurally impossible.
 | | `api.formstr.app` | `mailstr.app/.well-known/nostr.json` |
 |---|---|---|
 | Auth | NIP-98 signed requests | none, public |
-| Callers | `web/` — browsers only | `web/`, **`nostr-bridge/`** |
+| Callers | `client/web/` — browsers only | `client/web/`, **`nostr-bridge/`** |
 | Mail path | no | **yes — hard dependency** |
 
 Verified 2026-07-20: these are different hosts.
@@ -441,7 +441,7 @@ before returning, so callers do not each have to warm it.
 ## 9. Shared protocol module
 
 The wire format has one implementation — `nostr-bridge/src/protocol/` —
-imported by the frontend (`web/`, via the `@protocol` alias) and the e2e
+imported by the frontend (`client/web/`, via the `@protocol` alias) and the e2e
 suite (which also consumes `@protocol`; its older `nostr-helper.ts` only
 speaks relay WebSocket plumbing, not the wire format).
 
