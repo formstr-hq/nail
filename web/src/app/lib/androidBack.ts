@@ -47,9 +47,11 @@ function nativeApp(): AppPlugin | null {
  *
  * @param dispatch Called on every back press. Must close the topmost in-app
  *                  "screen" if there is one (open modal, then reading email,
- *                  then root) and return `true`. Returning `false` lets the
- *                  gesture fall through — at the root of the client, that's
- *                  the desired behavior (no pop, no bounce to landing).
+ *                  then root) and return `true`. Returning `false` at the root
+ *                  asks us to exit the app: Capacitor's plugin fires the JS
+ *                  event and does NOT fall through once a listener exists, so
+ *                  declining here would make back a no-op forever (audit D12).
+ *                  `exitApp()` is what restores "back at root leaves the app".
  * @returns A disposer that removes the listener.
  */
 export async function installAndroidBackHandler(
@@ -60,7 +62,11 @@ export async function installAndroidBackHandler(
 
   await app.removeAllListeners()
   const handle = await app.addListener('backButton', () => {
-    dispatch()
+    const handled = dispatch()
+    // At the client root there is no in-app screen left to pop, and the WebView
+    // history cannot be popped safely (its first entry is the landing page).
+    // Exit the app instead of swallowing the gesture.
+    if (!handled) void app.exitApp?.()
   })
   return () => {
     void handle.remove()

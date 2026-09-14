@@ -50,7 +50,10 @@ export type PgpMessageState =
  */
 export function usePgpMessage(email: Email | null, passphraseNonce = 0): PgpMessageState {
   const settings = useSettingsStore((s) => s.settings)
-  const [state, setState] = useState<PgpMessageState>({ kind: 'none' })
+  // State is tagged with the email id it was computed for, so switching
+  // messages can never render the previous message's decrypt result while the
+  // new one is still being processed.
+  const [computed, setComputed] = useState<{ emailId: string; state: PgpMessageState } | null>(null)
 
   const body = email?.body ?? ''
   const isPgp = !!email && isPgpMessage(body)
@@ -89,13 +92,9 @@ export function usePgpMessage(email: Email | null, passphraseNonce = 0): PgpMess
     })
 
   useEffect(() => {
-    if (!email || !isPgp) {
-      setState({ kind: 'none' })
-      return
-    }
-    if (ownKeys.length === 0) {
-      // A PGP body we have no key to even attempt — show the blob, don't error.
-      setState({ kind: 'no-key' })
+    if (!email || !isPgp || ownKeys.length === 0) {
+      // `none` / `no-key` are derived below from email/isPgp/ownKeys, so the
+      // effect only ever runs the async decrypt for a real candidate.
       return
     }
 
@@ -115,7 +114,7 @@ export function usePgpMessage(email: Email | null, passphraseNonce = 0): PgpMess
       try {
         message = await parsePgpMessage(armored)
       } catch (e) {
-        if (alive) setState({ kind: 'error', reason: e instanceof Error ? e.message : String(e) })
+        if (alive) setComputed({ emailId: email.id, state: { kind: 'error', reason: e instanceof Error ? e.message : String(e) } })
         return
       }
 
@@ -148,7 +147,7 @@ export function usePgpMessage(email: Email | null, passphraseNonce = 0): PgpMess
           // We know EXACTLY which key this needs, and it isn't one we hold —
           // no reason to try anything else, and no "locked" prompt to show
           // for a key we don't have in the first place.
-          setState({ kind: 'no-key' })
+          setComputed({ emailId: email.id, state: { kind: 'no-key' } })
           return
         }
       }
@@ -184,7 +183,7 @@ export function usePgpMessage(email: Email | null, passphraseNonce = 0): PgpMess
             verificationPublicKeys: senderKey ? [senderKey] : undefined,
           })
           console.debug('[pgp] decrypted with', kp.keypairFingerprint)
-          if (alive) setState({ kind: 'decrypted', ...(await unwrapMimeEnvelope(result.text)), signature: result.signature })
+          if (alive) setComputed({ emailId: email.id, state: { kind: 'decrypted', ...(await unwrapMimeEnvelope(result.text)), signature: result.signature } })
           return
         } catch (e) {
           const reason = e instanceof Error ? e.message : String(e)
@@ -223,11 +222,12 @@ export function usePgpMessage(email: Email | null, passphraseNonce = 0): PgpMess
         'wrongPassphrase',
         wrongPassphrase,
       )
-      setState(
-        lockedFingerprint
+      setComputed({
+        emailId: email.id,
+        state: lockedFingerprint
           ? { kind: 'locked', fingerprint: lockedFingerprint, address: lockedAddress, wrongPassphrase }
           : { kind: 'no-key' },
-      )
+      })
     })()
 
     return () => {
@@ -243,9 +243,12 @@ export function usePgpMessage(email: Email | null, passphraseNonce = 0): PgpMess
     passphraseNonce,
   ])
 
-  return state
+  if (!email || !isPgp) return { kind: 'none' }
+  if (ownKeys.length === 0) return { kind: 'no-key' }
+  // Only show a result computed for THIS message; while a new message's
+  // decrypt is in flight, report the derived initial state.
+  return computed?.emailId === email.id ? computed.state : { kind: 'none' }
 }
-
 /**
  * Pull just the armored PGP block out of a body that may have surrounding text
  * (some clients wrap the block in explanatory lines). openpgp is strict about

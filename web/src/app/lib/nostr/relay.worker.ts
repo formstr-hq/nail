@@ -28,8 +28,21 @@ const service = new RelayService({
 // main thread know the store is warm (interests declared during boot may have
 // EOSE'd on an empty store); our client ignores the frame today but it is the
 // documented hook for re-declaring against the cache later.
-void service.start().then(() => {
-  channel.post({ kind: 'hydrated' })
-})
+//
+// A rejected start() (IndexedDB unavailable — private browsing, storage
+// pressure) must NOT be silent: without a frame the main thread sits on
+// "connecting" forever. Report it over the same channel so useInbox's watchdog
+// can turn it into the honest error state it shows for spawn failures.
+void service
+  .start()
+  .then(() => {
+    channel.post({ kind: 'hydrated' })
+  })
+  .catch((e: unknown) => {
+    channel.post({
+      kind: 'bootError',
+      message: e instanceof Error ? e.message : String(e),
+    })
+  })
 
 export {}

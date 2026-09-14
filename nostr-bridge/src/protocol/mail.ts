@@ -4,6 +4,7 @@ import { bytesToHex, hexToBytes } from "nostr-tools/utils";
 import type { Event } from "nostr-tools";
 import { KIND_MAIL, KIND_SEAL, KIND_GIFTWRAP, MAX_RUMOR_AGE_SECONDS } from "./constants.js";
 import type { ProtocolSigner, Rumor, UnwrapResult } from "./types.js";
+import { isSignerFailure } from "./types.js";
 
 const TWO_DAYS = 2 * 24 * 60 * 60;
 
@@ -172,11 +173,16 @@ export async function unwrapAndVerify(
   const acceptKinds = opts.acceptKinds ?? [KIND_MAIL];
 
   // Failure here is routine: relays hand us every wrap p-tagged to us, and
-  // most are not ours to decrypt.
+  // most are not ours to decrypt. But not every throw is "not ours": a signer
+  // that timed out, refused, or errored (NIP-46 bunker down) also throws, and
+  // classifying that as routine swallows real mail with no signal. The signer
+  // wrapper tags those failures (SignerTimeoutError) so callers can tell the
+  // two apart — see the client's DecodeQueue failure taxonomy.
   let sealPlaintext: string;
   try {
     sealPlaintext = await signer.nip44Decrypt(wrap.pubkey, wrap.content);
-  } catch {
+  } catch (e) {
+    if (isSignerFailure(e)) return { ok: false, reason: "signer-error" };
     return { ok: false, reason: "not-for-us" };
   }
 

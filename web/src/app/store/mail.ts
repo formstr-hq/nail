@@ -190,6 +190,9 @@ export function isFiled(flags: MailFlags | undefined): boolean {
 interface MailState {
   emails: Record<string, Email>   // keyed by event ID
   seenIds: Set<string>
+  /** kind-34578 metadata event ids already decoded this session, so a relay
+   *  replay never pays a second signer round-trip (mirrors `seenIds`). */
+  seenMetaIds: Set<string>
   mailState: Record<string, MailFlags> // read/archived/trashed/deleted by gift-wrap id
   /** Wrap-author ephemeral keys captured at unwrap; powers NIP-09 delete. */
   wrapKeys: Record<string, string>
@@ -198,11 +201,24 @@ interface MailState {
   selectedId: string | null
   folder: EmailFolder
   query: string
+  /**
+   * Set when a cross-device delete removed the mail the user had open, so the
+   * UI can say why the pane emptied instead of it vanishing silently (D1).
+   */
+  selectionClearedReason: 'deleted' | null
+  /**
+   * The last background mail-state publish that failed, so the UI can say
+   * cross-device sync is degraded instead of losing the failure to the console
+   * (audit B3). Cleared on the next successful publish or dismissal.
+   */
+  syncError: string | null
   // Which of the account's own addresses to show mail for, lowercased, or
   // `null` for "all mail". Every message still arrives at the one Nostr key;
   // this filters the view by which alias it was addressed from/to.
   inboxFilter: string | null
   addEmail: (email: Email) => void
+  /** Remember a kind-34578 event id as decoded, so replays skip the signer. */
+  markMetaSeen: (id: string) => void
   /** Merge a delta into a mail's flags and return the merged set for publishing. */
   setFlag: (id: string, patch: Partial<Omit<MailFlags, 'updatedAt'>>) => MailFlags
   /** Apply state learned from the relay, newest-wins by `updatedAt`. */
@@ -219,6 +235,8 @@ interface MailState {
   setSelected: (id: string | null) => void
   setQuery: (query: string) => void
   setInboxFilter: (address: string | null, keepSelection?: boolean) => void
+  clearSelectionClearedReason: () => void
+  setSyncError: (message: string | null) => void
   clear: () => void
 }
 
@@ -227,6 +245,7 @@ export const useMailStore = create<MailState>()(
     (set, get) => ({
       emails: {},
       seenIds: new Set(),
+      seenMetaIds: new Set(),
       mailState: {},
       wrapKeys: {},
       deletedIds: new Set(),
@@ -234,6 +253,8 @@ export const useMailStore = create<MailState>()(
       folder: 'inbox' as EmailFolder,
       query: '',
       inboxFilter: null,
+      selectionClearedReason: null,
+      syncError: null,
 
       addEmail: (email) => {
         if (get().seenIds.has(email.id)) return
@@ -249,6 +270,11 @@ export const useMailStore = create<MailState>()(
           emails: { ...s.emails, [email.id]: { ...email, read } },
           seenIds: new Set([...s.seenIds, email.id]),
         }))
+      },
+
+      markMetaSeen: (id) => {
+        if (get().seenMetaIds.has(id)) return
+        set((s) => ({ seenMetaIds: new Set([...s.seenMetaIds, id]) }))
       },
 
       setFlag: (id, patch) => {
@@ -273,19 +299,27 @@ export const useMailStore = create<MailState>()(
           let deletedIds = s.deletedIds
           let wrapKeys = s.wrapKeys
           let selectedId = s.selectedId
+          let selectionClearedReason = s.selectionClearedReason
           let changed = false
           for (const { ref, flags } of entries) {
+            // A tombstoned mail stays gone: a relay replaying an older
+            // non-delete version (or a kind-34578 written before the delete)
+            // must not re-create its flags entry. Same guard as addEmail.
+            if (deletedIds.has(ref)) continue
             const prev = mailState[ref]
             // Newest wins. An optimistic local write stamps `updatedAt` with now, so
             // a replay of an older relay version (or one it just echoed back) can't
             // overwrite it.
             if (prev && prev.updatedAt > flags.updatedAt) continue
-            mailState[ref] = flags
             changed = true
             if (flags.deleted) {
               // Another device deleted this mail: purge it here too. Tombstoning
               // matters as much as removing the entry — a relay that ignored the
               // kind-5 will happily serve the wrap again on the next fetch.
+              // The `deletedIds` tombstone is the durable record; the per-mail
+              // flags entry is dropped so storage does not grow with a second
+              // copy of every deletion (D14).
+              delete mailState[ref]
               deletedIds = new Set(deletedIds)
               deletedIds.add(ref)
               if (ref in wrapKeys) {
@@ -293,14 +327,21 @@ export const useMailStore = create<MailState>()(
                 delete wrapKeys[ref]
               }
               delete emails[ref]
-              if (selectedId === ref) selectedId = null
+              if (selectedId === ref) {
+                selectedId = null
+                selectionClearedReason = 'deleted'
+              }
               continue
             }
+            mailState[ref] = flags
             const email = emails[ref]
             if (email && email.read !== !!flags.read) emails[ref] = { ...email, read: !!flags.read }
+            // Archived/trashed are deliberately NOT mirrored onto the email
+            // entry: `mailState` is the single source of truth for filing, and
+            // `EmailList` derives the folder from these flags via isFiled (D2).
           }
           if (!changed) return s
-          return { mailState, emails, deletedIds, wrapKeys, selectedId }
+          return { mailState, emails, deletedIds, wrapKeys, selectedId, selectionClearedReason }
         }),
 
       saveWrapKey: (id, wrapKey) => {
@@ -321,7 +362,11 @@ export const useMailStore = create<MailState>()(
           const wrapKeys = { ...s.wrapKeys }
           delete wrapKeys[id]
 
-          const mailState = { ...s.mailState, [id]: merged }
+          // The merged flags are returned for publishing, not stored: the
+          // tombstone set is the durable local record and keeping a flags
+          // entry per deleted mail would grow storage forever (D14).
+          const mailState = { ...s.mailState }
+          delete mailState[id]
 
           const emails = { ...s.emails }
           delete emails[id]
@@ -342,9 +387,11 @@ export const useMailStore = create<MailState>()(
       // Switching folders clears the search too: a query typed against Inbox
       // almost never means the same thing in Trash, and carrying it over silently
       // hides mail the user just asked to see.
-      setFolder: (folder) => set({ folder, selectedId: null, query: '' }),
-      setSelected: (id) => set({ selectedId: id }),
+      setFolder: (folder) => set({ folder, selectedId: null, query: '', selectionClearedReason: null }),
+      setSelected: (id) => set({ selectedId: id, selectionClearedReason: null }),
       setQuery: (query) => set({ query }),
+      clearSelectionClearedReason: () => set({ selectionClearedReason: null }),
+      setSyncError: (message) => set({ syncError: message }),
 
       // Changing the visible alias also drops the open message and any search —
       // both were scoped to the previous view and rarely mean the same thing here.
@@ -367,10 +414,13 @@ export const useMailStore = create<MailState>()(
         set({
           emails: {},
           seenIds: new Set(),
+          seenMetaIds: new Set(),
           selectedId: null,
           folder: 'inbox',
           query: '',
           inboxFilter: null,
+          selectionClearedReason: null,
+          syncError: null,
         }),
     }),
     {

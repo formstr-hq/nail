@@ -44,6 +44,13 @@ describe('parseRecipients', () => {
   it('trims, drops empties', () => {
     expect(parseRecipients(' a@x.com , ,b@y.com ')).toEqual(['a@x.com', 'b@y.com'])
   })
+
+  it('drops duplicate addresses case-insensitively, keeping first spelling', () => {
+    expect(parseRecipients('A@x.com, a@X.com, b@y.com, B@y.com')).toEqual([
+      'A@x.com',
+      'b@y.com',
+    ])
+  })
 })
 
 describe('defaultNpubAddress', () => {

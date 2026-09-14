@@ -8,6 +8,7 @@ import type { InboxStatus } from '@/app/hooks/useInbox'
 import { RelayManager } from '@/app/components/RelayManager'
 import { Button } from '@/app/components/ui/Button'
 import { AlertIcon, BrandGlyph } from '@/app/components/ui/icons'
+import { Overlay } from '@/app/components/ui/Overlay'
 
 // How hard we try to read the current relay list before giving up. A read that
 // comes back empty is only trustworthy once relays are actually reachable, so we
@@ -41,20 +42,20 @@ type Phase = 'loading' | 'has-list' | 'no-list' | 'unreachable'
  */
 export function OnboardingModal({ status }: { status: InboxStatus }) {
   const { account, active } = useAccountStore()
-  const { settings, save } = useSettingsStore()
+  const { save } = useSettingsStore()
 
   const [relays, setRelays] = useState<string[]>(DEFAULT_RELAYS)
-  const [phase, setPhase] = useState<Phase>('loading')
+  // A key created on the landing (or our own login UI) provably has no list, so
+  // we can trust "empty" even before relays connect. Stable per account.
+  const accountPubkey = account?.pubkey
+  const knownNew = useMemo(
+    () => (accountPubkey ? isFreshSignup(accountPubkey) : false),
+    [accountPubkey],
+  )
+  const [phase, setPhase] = useState<Phase>(knownNew ? 'no-list' : 'loading')
   const [runId, setRunId] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-
-  // A key created on the landing (or our own login UI) provably has no list, so
-  // we can trust "empty" even before relays connect. Stable per account.
-  const knownNew = useMemo(
-    () => (account ? isFreshSignup(account.pubkey) : false),
-    [account?.pubkey],
-  )
 
   // Did the inbox actually reach relays? That's what makes an empty 10050 mean
   // "no list" rather than "couldn't check". Read through a ref so the retry loop
@@ -67,14 +68,10 @@ export function OnboardingModal({ status }: { status: InboxStatus }) {
 
   useEffect(() => {
     if (!account) return
-    // A brand-new key provably has no list — no need to read at all, and we must
-    // not depend on relays being reachable to move a fresh signup forward.
-    if (knownNew) {
-      setRelays(DEFAULT_RELAYS)
-      setPhase('no-list')
-      setError('')
-      return
-    }
+    // A brand-new key provably has no list — the state above already started in
+    // `no-list`, so there is nothing to fetch and no relay-reachability
+    // dependency for a fresh signup.
+    if (knownNew) return
     let alive = true
     ;(async () => {
       setPhase('loading')
@@ -128,7 +125,8 @@ export function OnboardingModal({ status }: { status: InboxStatus }) {
     try {
       if (publish) await publishDmRelays(relays, account.pubkey, active)
       // Stamping onboardedAt flips the gate in App and unmounts this screen.
-      await save({ ...settings, onboardedAt: Date.now() }, account.pubkey, active)
+      // A patch, not a full snapshot: a concurrent settings edit must survive.
+      await save({ onboardedAt: Date.now() }, account.pubkey, active)
       clearFreshSignup()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
@@ -154,8 +152,8 @@ export function OnboardingModal({ status }: { status: InboxStatus }) {
           : 'Checking your current relays…'
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-foreground/40 p-0 backdrop-blur-sm md:items-center md:p-6">
-      <div className="safe-bottom flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:max-w-md md:rounded-xl">
+    <Overlay height="dialog" align="bottom-sheet" safe="bottom" className="bg-foreground/40 backdrop-blur-sm">
+      <div className="flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-xl border border-border bg-card shadow-2xl md:max-w-md md:rounded-xl">
         <div className="flex flex-col items-center gap-2 border-b border-border px-5 py-5 text-center">
           <BrandGlyph size={30} />
           <h2 className="text-base font-semibold tracking-tight">{heading}</h2>
@@ -227,6 +225,6 @@ export function OnboardingModal({ status }: { status: InboxStatus }) {
           </div>
         )}
       </div>
-    </div>
+    </Overlay>
   )
 }

@@ -16,7 +16,8 @@ import { isFreshSignup } from '@/app/lib/freshSignup'
 import { useResolveContext } from '@/app/hooks/useResolveContext'
 import { useOwnedAddresses } from '@/app/hooks/useOwnedAddresses'
 import type { Draft } from '@/app/lib/mail/draft'
-import { LoginPage, SignerLogin } from '@/app/components/LoginPage'
+import { LoginPage } from '@/app/components/LoginPage'
+import { SignerLogin } from '@/app/components/login/SignerLogin'
 import { Sidebar } from '@/app/components/Sidebar'
 import { EmailList } from '@/app/components/EmailList'
 import { EmailView } from '@/app/components/EmailView'
@@ -26,7 +27,7 @@ import { BuyAddressModal } from '@/app/components/BuyAddressModal'
 import { reloadOwnedAddresses } from '@/app/hooks/useOwnedAddresses'
 
 import { OnboardingModal } from '@/app/components/OnboardingModal'
-import { BrandGlyph, PenIcon, InboxIcon } from '@/app/components/ui/icons'
+import { BrandGlyph, PenIcon, InboxIcon, AlertIcon } from '@/app/components/ui/icons'
 import { IconButton } from '@/app/components/ui/Button'
 
 /** Settings modal route param: a section id, or "menu" for the mobile menu. */
@@ -67,8 +68,8 @@ function MailApp() {
   const { account, active } = useAccountStore()
   const { load, settings, loaded: settingsLoaded, eventExists: settingsEventExists } =
     useSettingsStore()
-  const { selectedId, setSelected } = useMailStore()
-  const ctx = useResolveContext()
+  const { selectedId, setSelected, syncError, setSyncError } = useMailStore()
+  const { ctx, bridgeError } = useResolveContext()
   const { status, retry } = useInbox(ctx.bridgePubkey)
   // Keep read/archived/trashed state synced across devices via kind-34578 events.
   const { refresh: refreshMeta } = useMailMeta()
@@ -88,6 +89,11 @@ function MailApp() {
   )
   const closeCompose = useCallback(
     () => useComposeOverlay.getState().close(),
+    [],
+  )
+
+  const setComposeMinimized = useCallback(
+    (m: boolean) => useComposeOverlay.getState().setMinimized(m),
     [],
   )
 
@@ -181,10 +187,9 @@ function MailApp() {
       setSelected(null)
       return true
     }
-    // 4. Root of the client: do nothing. Returning false leaves the gesture
-    //    unhandled. At the root there's no history to pop, so the OS's next
-    //    press exits the app — that's the desired behavior, not a bounce to
-    //    landing.
+    // 4. Root of the client: return false so the back handler exits the app.
+    //    (The WebView's first history entry is the landing page, so popping
+    //    history would bounce the user out to the marketing site.)
     return false
   }, [setSelected, navOpen])
 
@@ -204,6 +209,19 @@ function MailApp() {
 
   return (
     <div className="mail-app safe-y flex h-[100dvh] flex-col bg-background text-foreground">
+      {syncError && (
+        <div className="flex items-center gap-2 border-b border-border bg-destructive/10 px-3 py-1.5">
+          <AlertIcon className="h-3.5 w-3.5 flex-none text-destructive" />
+          <p className="flex-1 text-[11.5px] leading-relaxed text-foreground">{syncError}</p>
+          <button
+            type="button"
+            onClick={() => setSyncError(null)}
+            className="flex-none text-[11.5px] font-semibold text-primary"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       {/* Mobile chrome. The three panes cannot all fit, so navigation moves
           into a drawer and the list/reading panes swap rather than stack. */}
       <header className="flex items-center gap-2 border-b border-border bg-surface-nav px-3 py-2 md:hidden">
@@ -288,11 +306,12 @@ function MailApp() {
         <ComposeModal
           onClose={closeCompose}
           ctx={ctx}
+          bridgeError={bridgeError}
           draft={composeDraft}
           selfAddresses={selfAddresses}
           ownedAliases={addresses}
           minimized={composeMinimized}
-          setMinimized={(m) => useComposeOverlay.getState().setMinimized(m)}
+          setMinimized={setComposeMinimized}
           onOpenEncryptionSettings={() => openSettings("encryption")}
           onBuyAddress={() => openBuy()}
         />

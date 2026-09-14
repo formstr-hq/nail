@@ -1,22 +1,16 @@
 /**
- * Shared login-modal tuning for the @formstr/signer UI, used by BOTH the client
- * (mail app) and the landing (signup wizard). It's framework-agnostic DOM code
- * (no React), so the apps' React 18 vs 19 split doesn't matter, and it's wired
- * in via a `@signer-ui` path alias rather than a cross-app import (which would
- * break the per-app Docker build contexts). See each app's vite.config /
- * tsconfig `paths`, and the `COPY shared/` in the Dockerfiles.
+ * Shared login-modal tuning for the @formstr/signer UI, used by BOTH the mail
+ * client (`app/components/LoginPage.tsx`) and the landing signup wizard
+ * (`components/SignupWizard.tsx`).
  *
- * Presentation that genuinely differs between the two (client's brand header;
- * landing's relay defaults) stays in each app's own `tuneLoginUi`, which calls
- * the helpers here.
+ * This is framework-agnostic DOM code (no React), living in `web/src/lib/` per
+ * AGENTS rule 8 — the old `shared/` directory was deleted as dead code, and a
+ * cross-app copy-paste is a rejected diff. The presentation that genuinely
+ * differs between the two callers is passed in as options (brand header, relay
+ * list, signer instance).
  */
-import { Capacitor } from '@capacitor/core'
 import type { Signer } from '@formstr/signer'
-
-/** True inside the native Capacitor app (its WebView); false on the web. */
-export function isNativeApp(): boolean {
-  return Capacitor.isNativePlatform()
-}
+import { isNativeApp } from './platform'
 
 export const ICON_SVG_OPEN =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
@@ -83,10 +77,36 @@ export function hardenPasswordInputs(el: HTMLElement): void {
   })
 }
 
-/** Apply TAB_COPY (icon + title + desc) to every method tab, then reorder the
- *  secondary methods under an "Already have a key?" divider. The create tab
- *  becomes the primary card (styled in each app's CSS). */
-export function styleMethodPicker(el: HTMLElement): void {
+export interface TuneLoginUiOptions {
+  /** Relays to prefill the nostrconnect field with. */
+  relays: string[]
+  /**
+   * Optional brand header injected above the modal. `html` is trusted static
+   * markup from the caller (not user input).
+   */
+  brand?: { html: string }
+}
+
+/**
+ * Apply TAB_COPY (icon + title + desc) to every method tab, then reorder the
+ * secondary methods under an "Already have a key?" divider, prefill relays, and
+ * harden the passphrase inputs. The create tab becomes the primary card
+ * (styled in each caller's CSS).
+ */
+export function tuneLoginUi(el: HTMLElement, options: TuneLoginUiOptions): void {
+  const relaysInput = el.querySelector<HTMLInputElement>('.nostr-signer__input--relays')
+  if (relaysInput) relaysInput.value = options.relays.join(', ')
+
+  hardenPasswordInputs(el)
+
+  if (options.brand) {
+    const modal = el.querySelector<HTMLElement>('.nostr-signer__modal')
+    const brand = document.createElement('div')
+    brand.className = 'nostr-signer__brand'
+    brand.innerHTML = options.brand.html
+    modal?.prepend(brand)
+  }
+
   el.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach((tab) => {
     const copy = TAB_COPY[tab.dataset.tab ?? '']
     if (!copy) return
@@ -201,6 +221,7 @@ export function injectAndroidSigners(
     .then((apps) => {
       if (cancelled) return
       genericTab?.remove()
+      // Place the signer rows first among the "already have a key?" options.
       let after: Element | null = tabs.querySelector('.nostr-signer__tabs-label')
       for (const app of apps) {
         const btn = document.createElement('button')
@@ -248,6 +269,8 @@ export function injectAndroidSigners(
       }
     })
     .catch(() => {
+      // No signers, or enumeration failed — drop the option rather than show a
+      // dead row.
       if (!cancelled) genericTab?.remove()
     })
 
@@ -255,3 +278,50 @@ export function injectAndroidSigners(
     cancelled = true
   }
 }
+
+/**
+ * Keep a fixed, vertically-centred login overlay pinned to the *visible*
+ * viewport. Android's WebView has no `interactive-widget=resizes-content`, so
+ * the on-screen keyboard overlays the layout viewport instead of shrinking it:
+ * a `position:fixed; inset:0` overlay stays full-screen and its centred modal —
+ * with the passphrase field and the submit button at the bottom — sits behind
+ * the keyboard. Sizing the overlay to `visualViewport` keeps the button
+ * reachable. A no-op where `visualViewport` is absent or the viewport is not
+ * obscured (desktop, keyboard closed).
+ */
+export function fitOverlayToViewport(el: HTMLElement): () => void {
+  const root = el.querySelector<HTMLElement>('.nostr-signer__root')
+  const vv = window.visualViewport
+  if (!root || !vv) return () => {}
+  const sync = () => {
+    // >120px of hidden height means a keyboard (or similar) is up, not just
+    // browser-chrome jitter.
+    const obscured = window.innerHeight - vv.height > 120
+    root.style.position = 'fixed'
+    root.style.left = `${vv.offsetLeft}px`
+    root.style.top = `${vv.offsetTop}px`
+    root.style.right = 'auto'
+    root.style.bottom = 'auto'
+    root.style.width = `${vv.width}px`
+    root.style.height = `${vv.height}px`
+    root.style.alignItems = obscured ? 'flex-start' : ''
+    root.style.overflowY = obscured ? 'auto' : ''
+  }
+  sync()
+  vv.addEventListener('resize', sync)
+  vv.addEventListener('scroll', sync)
+  return () => {
+    vv.removeEventListener('resize', sync)
+    vv.removeEventListener('scroll', sync)
+  }
+}
+
+/** The mail app's brand glyph header, injected by the client's login UI. */
+export const MAILSTR_GLYPH =
+  '<svg class="nostr-signer__brand-glyph" viewBox="23 15.25 68 68" aria-hidden="true">' +
+  '<rect x="32" y="40" width="44" height="34" rx="6" fill="#E5484D"/>' +
+  '<path d="M38.5,44 L54,59 L69.5,44" fill="none" stroke="#F4F4F3" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+  '<line x1="70" y1="27" x2="70" y2="49" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>' +
+  '<line x1="60.47" y1="32.5" x2="79.53" y2="43.5" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>' +
+  '<line x1="79.53" y1="32.5" x2="60.47" y2="43.5" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>' +
+  '</svg>'

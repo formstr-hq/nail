@@ -41,12 +41,16 @@ export async function syncMailNotifications(pubkey: string | null): Promise<void
   if (!notifier) return
 
   if (!pubkey) {
-    watching = null
     try {
       await notifier.stop()
     } catch (err) {
       console.warn('[notifications] stop failed', err)
     }
+    // Clear the tracked pubkey only once the native watcher actually stopped:
+    // setting it before the await let a rejected stop() leave the poll running
+    // for the logged-out account, and the next start() would then be skipped
+    // as a no-op (audit D13).
+    watching = null
     return
   }
 

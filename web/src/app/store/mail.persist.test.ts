@@ -55,7 +55,9 @@ describe('mail store persistence', () => {
 
     expect(wrapKeys[ID]).toBe('f'.repeat(64))
     expect(mailState[ID]).toMatchObject({ read: true })
-    expect(mailState[ID2].deleted).toBe(true)
+    // The deletion record lives only in the tombstone key, not duplicated in
+    // mailState.
+    expect(mailState[ID2]).toBeUndefined()
     expect(deleted).toEqual([ID2])
   })
 

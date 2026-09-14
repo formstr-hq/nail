@@ -4,6 +4,8 @@ import { useMailStore } from '@/app/store/mail'
 import { getLocalRelay, syncAccountRelays, localRelayBootError } from '@/app/lib/nostr/localRelay'
 import { decodeGiftWrap } from '@/app/lib/mail/receive'
 import { DecodeQueue } from '@/app/lib/mail/decodeQueue'
+import { RelayBootWatchdog } from '@/app/lib/nostr/relayWatchdog'
+import { isCurrentSession, sessionEpoch } from '@/app/store/sessionEpoch'
 import { protocolSigner } from '@/app/lib/nostr/protocol-signer'
 import { KIND_GIFTWRAP, DEFAULT_RELAYS, withHardcodedRelay } from '@/app/lib/nostr/constants'
 import type { Event, Filter } from 'nostr-tools'
@@ -36,40 +38,42 @@ export function useInbox(bridgePubkey: string | null) {
   const [attempt, setAttempt] = useState(0)
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
 
+  // Account identity for the current subscription. When it changes, the
+  // connecting status below is derived from it rather than written by the
+  // effect, so there is no setState-in-effect cascade.
+  const sessionKey = account && active ? `${account.pubkey}:${attempt}` : null
+  const [statusSession, setStatusSession] = useState<string | null>(sessionKey)
+  if (sessionKey !== statusSession) {
+    // Reset the displayed status on account switch / retry during render.
+    setStatusSession(sessionKey)
+    setStatus({ phase: 'connecting', decoding: 0 })
+  }
+
   useEffect(() => {
     if (!account || !active) return
 
     let alive = true
-    setStatus({ phase: 'connecting', decoding: 0 })
+    // The decode completions below write into the mail store; if the account
+    // is switched mid-flight, `resetting` clears the store and this epoch check
+    // keeps a late decode from repopulating the incoming account's inbox.
+    const session = sessionEpoch()
 
     // A dead relay worker fails SILENTLY otherwise: observe() returns a handle
     // either way, no events ever flow, and the user sees an eternally empty
     // "connecting" inbox. Browsers that can't run the worker (Safari < 15 was
     // the reported case — no classic-worker fallback in older iOS) must get a
-    // real error instead. Poll rather than hook: the worker object is created
-    // inside getLocalRelay and workerChannel takes over its message handler.
-    const watchdog = setInterval(() => {
+    // real error instead. Extracted into a testable watchdog service (C2).
+    const watchdog = new RelayBootWatchdog(localRelayBootError, (message) => {
       if (!alive) return
-      const bootError = localRelayBootError()
-      if (!bootError) return
-      clearInterval(watchdog)
-      setStatus({
-        phase: 'error',
-        message:
-          'The mail engine could not start in this browser ' +
-          `(${bootError}). On an older iPhone or iPad, updating iOS may fix this.`,
-        decoding: 0,
-      })
-    }, 1000)
-
-    const relay = getLocalRelay()
-    const signer = protocolSigner(active)
+      setStatus({ phase: 'error', message, decoding: 0 })
+    })
+    watchdog.start()
 
     // The bounded decode pump, extracted into a testable service
     // (lib/mail/decodeQueue.ts). The hook only wires callbacks.
     const queue = new DecodeQueue(MAX_CONCURRENT_DECRYPTS, {
       onEmail: (email, wrapSecret) => {
-        if (!alive) return
+        if (!alive || !isCurrentSession(session)) return
         // Stash the wrap author's key before the email itself: delete-
         // forever needs it on hand, and a crash between the two must not
         // strand the mail as undeletable.
@@ -90,6 +94,12 @@ export function useInbox(bridgePubkey: string | null) {
 
     let cleanup: (() => void) | undefined
     try {
+      // Must be inside the try: on a browser that rejects the worker outright
+      // (Safari < 15) getLocalRelay() throws, and outside the try that escapes
+      // the effect before the friendly error state below can render.
+      const relay = getLocalRelay()
+      const signer = protocolSigner(active)
+
       // Reactively track this account's read (10002) and DM inbox (10050) relays;
       // the worker reopens the kind-1059 stream on the DM relays as they arrive.
       // No brittle one-shot lookup blocking the critical path. The callback
@@ -126,23 +136,34 @@ export function useInbox(bridgePubkey: string | null) {
         relaysHandle.unobserve()
         sub.unobserve()
       }
-      if (alive) {
-        setStatus({ phase: 'live', relays: withHardcodedRelay(DEFAULT_RELAYS), decoding: queue.pending })
-      }
+      // Deferred one microtask so this transition does not run synchronously
+      // in the effect body (React compiler rule); the subscription above is
+      // already wired, so the status is accurate either way.
+      queueMicrotask(() => {
+        if (!alive) return
+        setStatus({
+          phase: 'live',
+          relays: withHardcodedRelay(DEFAULT_RELAYS),
+          decoding: queue.pending,
+        })
+      })
     } catch (err) {
       console.error(err)
-      if (alive) {
+      // Deferred like the live transition above; a constructor throw is rare
+      // and the extra microtask costs nothing.
+      queueMicrotask(() => {
+        if (!alive) return
         setStatus({
           phase: 'error',
           message: err instanceof Error ? err.message : String(err),
           decoding: 0,
         })
-      }
+      })
     }
 
     return () => {
       alive = false
-      clearInterval(watchdog)
+      watchdog.stop()
       queue.stop()
       cleanup?.()
     }

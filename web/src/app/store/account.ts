@@ -1,8 +1,38 @@
 import { create } from 'zustand'
 import type { ActiveSigner, StoredAccount } from '@formstr/signer'
 import { nostrSigner, getSignerPool, withSignerTimeout } from '@/app/lib/nostr/signer'
+import { resetLocalRelay } from '@/app/lib/nostr/localRelay'
+import { clearSessionPassphrases } from '@/app/lib/pgp/session'
 
 import { useMailStore } from '@/app/store/mail'
+import { useSettingsStore } from '@/app/store/settings'
+import { useComposeOverlay } from '@/app/store/composeOverlay'
+import { useBuyOverlay } from '@/app/store/buyOverlay'
+import { bumpSessionEpoch } from '@/app/store/sessionEpoch'
+
+/**
+ * Wipe every account-scoped piece of state synchronously, before any await.
+ *
+ * A switch/logout must not let the outgoing account's mail, settings, PGP
+ * session passphrases, or overlay drafts bleed into the incoming one. The
+ * signer package flips the active pubkey before an unlock completes, so this
+ * has to run up front — not after the (up to ~16 s) bunker warm-up.
+ *
+ * It also bumps the session epoch: in-flight async work from the outgoing
+ * account (a decode finishing, a settings publish resolving) would otherwise
+ * call `set()` after this reset and repopulate the incoming account's stores.
+ * Those writers capture the epoch when they start and drop their result if it
+ * moved (see store/sessionEpoch.ts and store/settings.ts).
+ */
+export function resetAccountScopedState(): void {
+  bumpSessionEpoch()
+  useMailStore.getState().clear()
+  useSettingsStore.getState().reset()
+  useComposeOverlay.getState().close()
+  useBuyOverlay.getState().close()
+  clearSessionPassphrases()
+  resetLocalRelay()
+}
 
 interface AccountState {
   account: StoredAccount | null
@@ -10,6 +40,8 @@ interface AccountState {
   /** Every persisted account, for the in-app user switcher. */
   accounts: StoredAccount[]
   ready: boolean
+  /** Guards `init()` (module-level flag in the old shape — audit B2). */
+  initialized: boolean
   init: () => Promise<void>
   refresh: () => void
   unlockNcryptsec: (passphrase: string) => Promise<void>
@@ -17,8 +49,6 @@ interface AccountState {
   logout: () => Promise<void>
   removeAccount: (pubkey: string) => Promise<void>
 }
-
-let initialized = false
 
 /** Per attempt. Two of these is still far below the 20s app-wide ceiling. */
 const WARMUP_TIMEOUT_MS = 8000
@@ -68,6 +98,7 @@ export const useAccountStore = create<AccountState>()((set, get) => ({
   active: null,
   accounts: [],
   ready: false,
+  initialized: false,
 
   // No global onChange subscription: createAccount() emits 'login' while the
   // ncryptsec backup panel is still on screen, and refreshing then would
@@ -75,8 +106,8 @@ export const useAccountStore = create<AccountState>()((set, get) => ({
   // refreshed explicitly instead — LoginPage's onLogin (fired after the
   // backup ack), unlockNcryptsec, and logout.
   init: async () => {
-    if (initialized) return
-    initialized = true
+    if (get().initialized) return
+    set({ initialized: true })
     let active: ActiveSigner | null = null
     try {
       // Silent resume for extension / NIP-46 sessions. ncryptsec accounts
@@ -145,8 +176,11 @@ export const useAccountStore = create<AccountState>()((set, get) => ({
    */
   switchTo: async (pubkey) => {
     if (pubkey === get().account?.pubkey) return
+    // Clear account-scoped state BEFORE switching: switchAccount makes the new
+    // account active immediately while the unlock below can take seconds, and
+    // the old MailApp/subscriptions stay mounted until the final set().
+    resetAccountScopedState()
     await nostrSigner.switchAccount(pubkey)
-    useMailStore.getState().clear()
 
     let active: ActiveSigner | null = null
     try {
@@ -173,8 +207,8 @@ export const useAccountStore = create<AccountState>()((set, get) => ({
   },
 
   logout: async () => {
+    resetAccountScopedState()
     await nostrSigner.logout()
-    useMailStore.getState().clear()
     get().refresh()
   },
 
@@ -188,8 +222,8 @@ export const useAccountStore = create<AccountState>()((set, get) => ({
    */
   removeAccount: async (pubkey) => {
     const wasActive = pubkey === get().account?.pubkey
+    if (wasActive) resetAccountScopedState()
     await nostrSigner.logout(pubkey)
-    if (wasActive) useMailStore.getState().clear()
     get().refresh()
   },
 }))

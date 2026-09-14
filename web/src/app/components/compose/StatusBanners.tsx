@@ -48,6 +48,22 @@ export function DiscoveryBanner() {
   )
 }
 
+/** The outbound bridge failed to resolve: legacy/external recipients cannot be
+ *  delivered this session. Shown proactively (not only on a failed send) so the
+ *  failure is visible while composing, not after hitting Send (audit D4). */
+export function BridgeUnavailableBanner({ message }: { message: string }) {
+  return (
+    <div className="border-t border-border bg-destructive/10 px-3.5 py-2.5">
+      <div className="flex items-start gap-2">
+        <AlertIcon className="mt-0.5 h-3.5 w-3.5 flex-none text-destructive" />
+        <p className="text-[11.5px] leading-relaxed text-foreground">
+          {message} Recipients on mailstr-hosted addresses still work over Nostr.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 /** Encryption status line: fully encrypted or mixed delivery. */
 export function EncryptedBanner({
   mixed,

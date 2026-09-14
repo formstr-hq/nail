@@ -1,9 +1,15 @@
+import { lazy, Suspense } from "react";
 import { Route, Routes } from "react-router";
 import "./index.css";
 import { config } from "./lib/config";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import Home from "./pages/Home";
-import MailApp from "./app/App";
+
+// The mail client is code-split from the landing: a visitor reading the
+// marketing page (the common case, and the one SEO/cold-start cost matters
+// for) never downloads the mailbox bundle, and vice versa. The chunk includes
+// its own styles (signer CSS) which Vite links on load.
+const MailApp = lazy(() => import("./app/App"));
 
 /**
  * Where the mail client mounts.
@@ -39,7 +45,14 @@ export default function App() {
           </div>
         }
       />
-      <Route path={`${APP_PREFIX}/*`} element={<MailApp />} />
+      <Route
+        path={`${APP_PREFIX}/*`}
+        element={
+          <Suspense fallback={null}>
+            <MailApp />
+          </Suspense>
+        }
+      />
       <Route
         path="/*"
         element={

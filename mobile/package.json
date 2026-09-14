@@ -7,22 +7,22 @@
   "scripts": {
     "build:web": "node scripts/build-web.mjs",
     "sync": "cap sync android",
-    "build": "npm run build:web && npm run sync",
+    "build": "pnpm run build:web && pnpm run sync",
     "open": "cap open android",
     "apk:debug": "cd android && ./gradlew assembleDebug",
     "apk:release": "cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
-    "@capacitor/android": "^7.0.0",
-    "@capacitor/app": "^7.0.0",
-    "@capacitor/core": "^7.0.0",
+    "@capacitor/android": "^7.6.8",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.6.8",
     "@capacitor/filesystem": "^7.1.8",
     "@capacitor/share": "^7.0.4",
-    "@capacitor/status-bar": "^7.0.0",
+    "@capacitor/status-bar": "^7.0.6",
     "nostr-signer-capacitor-plugin": "^0.0.5"
   },
   "devDependencies": {
-    "@capacitor/cli": "^7.0.0",
-    "typescript": "~5.7"
+    "@capacitor/cli": "^7.6.8",
+    "typescript": "~5.9.3"
   }
 }

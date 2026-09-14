@@ -42,16 +42,13 @@ jobs:
       - name: Install SDK packages
         run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      # web/ is built by mobile/scripts/build-web.mjs via pnpm, so its deps
-      # must be present before the combined build runs.
-      - name: Install web app deps
-        run: pnpm --dir web install --no-frozen-lockfile
-
-      - name: Install mobile deps
-        run: npm --prefix mobile ci
+      # One workspace install covers both web and mobile (pnpm-workspace.yaml).
+      # build-web.mjs runs web/'s build, so lockfile drift must fail here.
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile
 
       - name: Build combined web bundle and sync
-        run: npm --prefix mobile run build
+        run: pnpm --filter mailstr-mobile run build
 
       - name: Resolve Gradle task
         id: task

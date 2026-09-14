@@ -10,20 +10,16 @@ const EMPTY: Profile = { name: null, picture: null }
  * fallback first and never block on a lookup that may simply never resolve.
  */
 export function useProfile(pubkey: string | null | undefined): Profile {
-  const [profile, setProfile] = useState<Profile>(EMPTY)
+  // Track which pubkey the fetched profile belongs to, so a key switch can
+  // never render the previous sender's name while the new lookup is in flight.
+  const [loaded, setLoaded] = useState<{ pubkey: string; profile: Profile } | null>(null)
 
   useEffect(() => {
-    if (!pubkey) {
-      setProfile(EMPTY)
-      return
-    }
+    if (!pubkey) return
     let alive = true
-    // Reset first: without this, switching to a key with no profile would keep
-    // showing the previous sender's name and picture.
-    setProfile(EMPTY)
     fetchProfile(pubkey)
       .then((p) => {
-        if (alive) setProfile(p)
+        if (alive) setLoaded({ pubkey, profile: p })
       })
       .catch(() => {
         /* fetchProfile already degrades to empty; nothing to add here. */
@@ -33,5 +29,5 @@ export function useProfile(pubkey: string | null | undefined): Profile {
     }
   }, [pubkey])
 
-  return profile
+  return pubkey && loaded?.pubkey === pubkey ? loaded.profile : EMPTY
 }

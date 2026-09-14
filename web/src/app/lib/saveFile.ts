@@ -120,5 +120,8 @@ export async function saveToDisk(
   document.body.append(anchor)
   anchor.click()
   anchor.remove()
-  URL.revokeObjectURL(url)
+  // Revoke on a later task, not synchronously: WebKit has aborted an in-flight
+  // download when the blob URL is revoked in the same task as the click, and
+  // Safari 14 / iOS 15 is the supported floor (audit D10).
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }

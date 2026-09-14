@@ -15,9 +15,17 @@ import type { ResolveContext } from '@/app/lib/mail/resolve'
  * and the answer changes only when the user's address or bridge override does.
  * `bridgePubkey` stays null until the lookup lands (and if it fails), and
  * callers must treat null as "cannot send to legacy addresses" rather than
- * sending anyway.
+ * sending anyway. A failed lookup is exposed as `bridgeError` so Settings and
+ * the composer can say external delivery is unavailable instead of only
+ * logging it (audit D4).
  */
-export function useResolveContext(): ResolveContext {
+export interface ResolveContextState {
+  ctx: ResolveContext
+  /** Non-null when the bridge lookup failed — legacy outbound is unavailable. */
+  bridgeError: string | null
+}
+
+export function useResolveContext(): ResolveContextState {
   const { account } = useAccountStore()
   const { settings } = useSettingsStore()
 
@@ -31,18 +39,31 @@ export function useResolveContext(): ResolveContext {
     ownDomain: BRIDGE_DOMAIN,
     bridgePubkey: null,
   })
+  const [bridgeError, setBridgeError] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
     buildResolveContext(senderAddress, override)
       .then((resolved) => {
-        if (alive) setCtx(resolved)
+        if (!alive) return
+        setCtx(resolved)
+        // A bridge that resolved to no pubkey is a real failure, not a
+        // transient one: external mail cannot be sent this session.
+        setBridgeError(
+          resolved.bridgePubkey
+            ? null
+            : 'Outbound bridge could not be resolved — external email is unavailable.',
+        )
       })
-      .catch((err) => console.error('[bridge] could not resolve outbound bridge', err))
+      .catch((err: unknown) => {
+        if (!alive) return
+        console.error('[bridge] could not resolve outbound bridge', err)
+        setBridgeError(err instanceof Error ? err.message : String(err))
+      })
     return () => {
       alive = false
     }
   }, [senderAddress, override])
 
-  return ctx
+  return { ctx, bridgeError }
 }

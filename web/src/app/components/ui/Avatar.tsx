@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 /** Two letters that stand in for a face. Never derived from a bare `npub1`. */
 function initials(label: string): string {
@@ -26,11 +26,11 @@ interface AvatarProps {
  * up here. Failing back to initials keeps the row from collapsing.
  */
 export function Avatar({ label, picture, size = 32, className = '' }: AvatarProps) {
-  const [failed, setFailed] = useState(false)
-
-  // A new URL deserves a fresh attempt; without this the component stays in
-  // the failed state when it is reused for the next message.
-  useEffect(() => setFailed(false), [picture])
+  // The picture URL whose load failed. Derived against the current `picture`
+  // instead of resetting via an effect, so a new URL is always treated as a
+  // fresh attempt without a setState round-trip.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
+  const failed = !!picture && failedUrl === picture
 
   const box = {
     width: size,
@@ -48,7 +48,7 @@ export function Avatar({ label, picture, size = 32, className = '' }: AvatarProp
         loading="lazy"
         decoding="async"
         referrerPolicy="no-referrer"
-        onError={() => setFailed(true)}
+        onError={() => setFailedUrl(picture ?? null)}
         style={box}
         className={`flex-none rounded-md bg-muted object-cover ${className}`}
       />

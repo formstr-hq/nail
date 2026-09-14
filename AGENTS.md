@@ -10,10 +10,12 @@ Frontend work happens in the `nail/` repo: `/home/rama/Documents/Projects/formst
 | `web/src/lib/`               | Shared modules: `nip98`, `platform`, `session`, `signer`, `config`    |
 | `web/src/app/`               | The mail client: `components/`, `hooks/`, `store/`, `lib/`            |
 | `nostr-bridge/src/protocol/` | Shared wire protocol — imported via `@protocol`, never copy it        |
+| `mobile/`                    | Capacitor Android shell; consumes `web/`'s built `dist` — no app source of its own |
 | `docs/ARCHITECTURE.md`       | **Read before any non-trivial change.** Design constraints live there |
-| `shared/signer-ui.ts`        | Signer UI helpers shared with the bridge                              |
 
-The client/landing merge is complete: one app, one build, one deploy (see `docs/plans/FRONTEND_MERGE_PLAN.md` — phases 1–4 done; phase 5 is the post-merge refactor pass, separate PRs).
+The client/landing merge is complete: one app, one build, one deploy (see `docs/plans/FRONTEND_MERGE_PLAN.md` — phases 1–5 done). `mobile/` is a pnpm-workspace member (`pnpm-workspace.yaml`) and installs/builds from the repo root; `shared/` was deleted as dead code — shared frontend logic lives in `web/src/lib/`.
+
+All rules, and architecture principles are non negotiable unless specifically stated otherwise. Ask the user if there is a contradiction.
 
 ## Rules
 
@@ -30,6 +32,8 @@ The client/landing merge is complete: one app, one build, one deploy (see `docs/
 11. **Tests before refactor, tests after feature.** `lib/` units in vitest; Playwright e2e for login/compose/settings flows. Never shrink the suite to make a diff green.
 12. **Commits:** imperative subject ≤ 72 chars; reference the issue/task id when one exists. Do not commit `node_modules`, `dist`, or local `.env`.
 13. **Never ssh into any server unless explicitly asked by the developer** Deployments go through the repo's docker-compose/scripts only. If there is a need to ssh then request permissions
+14. Remove dead code unless stated otherwise.
+15. All changes in a session must be logged into "Session-Log.md" in docs. Especially if there is an arch change, then log the ADR. Atleast last 3 logs must be consulted before doing work to gain previous context.
 
 ## Role
 
@@ -51,7 +55,7 @@ These encode the audit findings (`docs/FRONTEND_AUDIT.md`) as hard rules. Violat
 5. **No module-level mutable singletons guarding lifecycle** (`let initialized = false`, module-scope promise caches) — they survive account switches and create cross-account leaks. State that persists belongs in a store with an explicit reset; in-flight dedup belongs inside the store/hook scope.
 6. **Effects orchestrate, services compute.** Schedulers, queues (e.g. the inbox decode pump), and watchdogs are extracted into plain testable modules — not closures inside `useEffect`. Effects with >3 deps or a `setInterval` inside are a smell requiring justification.
 7. **One persistence idiom.** All localStorage persistence goes through `zustand/persist` middleware (or, pre-refactor, the `store/mail.ts` helpers) with namespaced keys and preserved migrations. Hand-rolled `localStorage.getItem` in a component or hook is rejected.
-8. **No new cross-app duplication.** Logic needed by both the landing and the mail client goes into `web/src/lib/` (or `shared/`) in the same change — a copy-paste "for now" is a rejected diff.
+8. **No new cross-app duplication.** Logic needed by both the landing and the mail client goes into `web/src/lib/` in the same change — a copy-paste "for now" is a rejected diff. (`shared/` is gone; the login-UI tuning both surfaces use now lives in `web/src/lib/loginUi.ts`.)
 9. **No hardcoded styling drift.** Colors/spacing come from the Tailwind theme tokens; a class-string pattern repeated 3+ times gets hoisted into a shared helper/component.
 10. **Router owns navigation state.** No new overlay state as bare `useState` booleans in `App.tsx`; overlays get routes or a dedicated overlay store that the back handler reads.
 11. **No unbounded work against relays/signers.** Any new subscription or per-event computation must state its bound (dedup guard, queue limit) in the diff.
@@ -60,36 +64,59 @@ These encode the audit findings (`docs/FRONTEND_AUDIT.md`) as hard rules. Violat
 
 ## Known offenders (legacy anti-patterns on watch)
 
-These exist in the codebase today (audit refs point to `docs/FRONTEND_AUDIT.md`). They are **warnings, not licenses**: don't replicate the pattern, and shrink the offender when you touch it — but don't rewrite one wholesale in a feature diff either; refactors land as their own diffs per the merge plan.
+These are the remaining tracked residuals after the rev-3 audit fix pass
+(`docs/FRONTEND_AUDIT.md`, revision 3). They are **warnings, not licenses**:
+don't replicate the pattern, and shrink the offender when you touch it. Paths
+without a `web/src/` prefix are under `web/src/app/`.
 
 | Offender | Where | Why it's a warning |
 |---|---|---|
-| God components | `web/src/app/components/ComposeModal.tsx` (728 L), `SettingsModal.tsx` (674 L), `PgpSettings.tsx` (698 L), `EmailView.tsx` (461 L) | A1/A4 — split along seams before extending, not after |
-| Hand-rolled persistence | `web/src/app/store/mail.ts` (4 keys + legacy migration), `hooks/useOwnedAddresses.ts`, `store/theme.ts`, `store/dev.ts`, `lib/freshSignup.ts` | B1 — each reinvents serialization/corruption handling; the legacy `mailstr.read` migration must survive any consolidation |
-| Module-level lifecycle singletons | `web/src/app/hooks/useMailActions.ts` (`indexKeyInflight`), `store/account.ts` (`initialized`) | B2 — survive account switches; logout/login races can leak the previous account's state |
-| Optimistic publishes without retry/feedback | `web/src/app/hooks/useMailActions.ts` (`apply` swallows failures) | B3 — a failed kind-34578 publish is silently lost until the next action |
-| Decode queue + watchdog inside an effect | `web/src/app/hooks/useInbox.ts` (5-dep effect, `setInterval`, bounded-3 pump in closure) | C1 — fragile dep array; a re-run replays every wrap through the signer |
-| `useState` seeds + sync-back effects from store | `web/src/app/components/SettingsModal.tsx` (`senderAddress`, `signature`, `relays`) | C2 — manual re-sync, staleness risk on every source change |
-| Store-shape full re-renders | `web/src/app/store/mail.ts` (`emails` map + `seenIds` replaced wholesale on each add; EmailList refilters all) | B4 — fine at hundreds of mails, jank at thousands; don't grow it |
-| Async resolve errors swallowed | `web/src/app/hooks/useResolveContext.ts` (logs only; UI never sees "legacy outbound unavailable") | D4 — new code must surface failure states in UI, not console |
-| Silent cross-device delete | `web/src/app/store/mail.ts` `hydrateFlags` clears `selectedId` with no UX affordance | D1 — don't add more "vanish without explanation" behaviors |
-| Landing redirect race | `web/src/pages/Home.tsx` `checking` spinner has no timeout | D6 — new async gates need timeouts and a fall-through |
-| Duplicate login-UI tuning | `web/src/components/SignupWizard.tsx` ↔ `web/src/app/components/LoginPage.tsx` (~450 lines each: `tuneLoginUi`, TAB_COPY, method list) | A1 — the old client/landing twin; fix in one file, check the other. Named fix: push tuning into `@formstr/signer` |
+| Store-shape full re-renders | `store/mail.ts` (`emails` map replaced wholesale on each add) | B4 — `EmailList` is memoized, so this is a scaling watch item, not a current bug; don't grow it further |
+| `useState` form seed without sync-back | `components/SettingsModal.tsx` (`signature`, `relays`), `hooks/useSenderDraft.ts` | C1 residual — accepted per rule 4: drafts with no sync-back, and saves are patches (B6) so they cannot clobber |
+| Unbounded on-disk history growth | `store/mail.ts` (`mailState`/`wrapKeys` maps never pruned; tombstones accumulate) | D14 residual — deletions are single-stored now; historical read/archive entries still grow |
+| Hook/component test gaps | `hooks/useInbox.ts`, `hooks/useMailMeta.ts` lack direct unit tests | E-4 residual — covered indirectly (e2e + lib tests); add a unit test before extending either |
+| Orphaned stylesheet risk | `web/src/index.css` is the only live global sheet; if you add a new entry, import it (the deleted `app/index.css` is the cautionary tale) | E-6 — verify an import exists before assuming styles ship |
+| Android back edge cases | `lib/androidBack.ts` exits on decline; new overlays must still be added to `App.tsx` `handleBack` | D12 — a missed overlay now exits the app rather than silently no-oping |
 
-Rule of thumb: if a diff adds code that would land in the left column, it needs a reason in writing — or a different shape.
+Everything else from the rev-2 offender list was fixed in the rev-3 pass and is
+covered by tests: account-scoped reset (B1/B2), sync-error surfacing (B3),
+mailIndexKey durability (B5), serialized settings patches (B6), signer-failure
+taxonomy + bounded retries (D3/D5/D11), worker boot errors (D6/D7), recipient
+dedup (D8), PGP discovery (D9), save-file revoke (D10), notifications watcher
+(D13), web CI (E-1), shared bounded queue (E-3), and the oversized
+components/login-UI duplication (A1/A2).
 
-## Command reference (run inside `web/`)
+**Async store writers cross an account reset unless guarded.** If your code
+awaits anything (a signer call, a relay publish, a fetch) and then calls
+`set()`/`addEmail`/`hydrateFlags`, capture `sessionEpoch()` before the await
+and bail when `!isCurrentSession(captured)` — a logout/switch clears the
+stores, and an unguarded late write repopulates the incoming account (ADR-003).
+React's `alive` flag only covers unmount, not account change.
+
+Dead-code sweep note: match on import specifier (`from '@/app/...'`), not
+basename — alias imports hide usages (see audit E-6). Rule of thumb: if a diff
+adds code that would land in the left column, it needs a reason in writing —
+or a different shape.
+
+## Command reference
+
+Workspace root (`pnpm install` installs both apps):
 
 ```sh
-pnpm dev        # dev server (proxies /api; E2E=1 disables watcher)
-pnpm build      # tsc -b && vite build && vite build --ssr && prerender (+ /mails shell)
-pnpm test       # vitest run
-pnpm e2e        # playwright (landing + mail app specs, mock relay)
-pnpm lint       # eslint
+pnpm --filter mailstr-web build     # tsc + vite + SSR + prerender + /mails shell
+pnpm --filter mailstr-web test      # vitest run
+pnpm --filter mailstr-web lint      # eslint
+pnpm --filter mailstr-web e2e       # playwright (landing + mail app specs, mock relay)
+pnpm --filter mailstr-mobile build  # build web/, assemble www/, cap sync android
 ```
+
+Inside `web/` (`pnpm dev`, `pnpm build`, `pnpm test`, `pnpm e2e`, `pnpm lint`
+all work as before); inside `mobile/`, `pnpm build` / `pnpm apk:debug` /
+`pnpm apk:release`.
 
 ## Verification before you claim done
 
-- `pnpm build` + `pnpm test` + `pnpm lint` in the app you touched, at the exact commit you'll cite.
+- `pnpm build` + `pnpm test` + `pnpm lint` in the app you touched, at the exact commit you'll cite. `.github/workflows/web-ci.yml` runs the same gate (lint → test → build → e2e) on pushes/PRs touching `web/` or the protocol, so a green CI run is the strongest evidence.
+- The shared protocol lives in `nostr-bridge/src/protocol/`; if you changed it, also run `pnpm test` in `nostr-bridge/` and `tsc --noEmit` in `nostr-bridge/` and `e2e-nostr/` (both consume it).
 - Any claim about mail delivery behavior needs either a unit test around `lib/mail`/`lib/nostr` or an `e2e-nostr` run — never "should work".
 - UI claims: name the e2e spec that exercises it.

@@ -4,6 +4,7 @@ import type { MailFlags } from '@/app/types/mail'
 import { fetchDmRelays } from './relays'
 import { getLocalRelay } from './localRelay'
 import { withSignerTimeout } from './signer'
+import { isSignerFailure } from '@protocol'
 import { KIND_MAIL_META } from './constants'
 
 /**
@@ -133,6 +134,10 @@ export interface MailMetaEntry {
  * so identity is established by successfully decrypting the content and finding
  * our versioned shape — anything else (another app's metadata, an undecryptable
  * blob) is skipped.
+ *
+ * A *signer* failure (timeout / bunker unreachable) is rethrown rather than
+ * returning null: unlike undecryptable content, the same event may decode on a
+ * retry, and the caller's queue must be able to tell the two apart (audit D11).
  */
 export async function decodeMailMeta(
   event: Event,
@@ -145,7 +150,8 @@ export async function decodeMailMeta(
       active.nip44Decrypt(pubkey, event.content),
     )
     parsed = JSON.parse(plaintext)
-  } catch {
+  } catch (e) {
+    if (isSignerFailure(e)) throw e
     return null
   }
   if (parsed?.v !== CONTENT_VERSION || typeof parsed.ref !== 'string') return null

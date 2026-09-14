@@ -4,7 +4,8 @@ import { useMailActions } from '@/app/hooks/useMailActions'
 import { matchesAlias } from '@/app/lib/mail/aliasFilter'
 import type { Email, EmailFolder } from '@/app/types/mail'
 import type { InboxStatus } from '@/app/hooks/useInbox'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { cx } from '@/app/components/ui/cx'
 import { SenderProofLine } from '@/app/components/ui/SenderProof'
 import { SearchIcon, InboxIcon, AlertIcon, RefreshIcon, LockIcon } from '@/app/components/ui/icons'
 import { Button, IconButton } from '@/app/components/ui/Button'
@@ -56,7 +57,7 @@ function EmailRow({ email, read, selected }: { email: Email; read: boolean; sele
       type="button"
       onClick={handleClick}
       aria-current={selected ? 'true' : undefined}
-      className={[
+      className={cx(
         'w-full border-b border-l-2 border-b-border px-3.5 py-2.5 text-left',
         'transition-colors duration-[120ms]',
         selected
@@ -64,16 +65,16 @@ function EmailRow({ email, read, selected }: { email: Email; read: boolean; sele
           : read
             ? 'border-l-transparent hover:bg-accent/50'
             : 'border-l-primary/40 hover:bg-accent/50',
-      ].join(' ')}
+      )}
     >
       <div className="flex items-baseline justify-between gap-2">
         <span
-          className={[
+          className={cx(
             'truncate text-[12.5px]',
             read ? 'font-medium text-foreground' : 'font-bold text-foreground',
             // An unproved sender is shown by key, so render it as one.
-            email.senderProof === 'none' ? 'font-mono text-[11.5px]' : '',
-          ].join(' ')}
+            email.senderProof === 'none' && 'font-mono text-[11.5px]',
+          )}
         >
           {email.from.name || email.from.address}
         </span>
@@ -83,10 +84,10 @@ function EmailRow({ email, read, selected }: { email: Email; read: boolean; sele
       </div>
 
       <div
-        className={[
+        className={cx(
           'mt-px flex items-center gap-1 truncate text-[12.5px]',
           read ? 'text-muted-foreground' : 'font-semibold text-foreground',
-        ].join(' ')}
+        )}
       >
         {/* An end-to-end encrypted body: a green closed lock before the
             subject. The subject itself travels in the clear (headers are not
@@ -138,7 +139,17 @@ function ListState({
 }
 
 export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: () => void }) {
-  const { emails, mailState, folder, selectedId, query, setQuery, inboxFilter } = useMailStore()
+  const {
+    emails,
+    mailState,
+    folder,
+    selectedId,
+    query,
+    setQuery,
+    inboxFilter,
+    selectionClearedReason,
+    clearSelectionClearedReason,
+  } = useMailStore()
   const myPubkey = useAccountStore((s) => s.account?.pubkey)
   const { deleteForever } = useMailActions()
   // Spin the icon briefly on tap so the refresh reads as "doing something" even
@@ -150,34 +161,39 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
     setTimeout(() => setRefreshing(false), 800)
   }
 
-  const inFolder = Object.values(emails)
-    .filter((e) => {
-      // Scope to the selected alias first, so every folder count and list
-      // reflects the inbox the user picked.
-      if (!matchesAlias(e, inboxFilter)) return false
-      const flags = mailState[e.id]
-      // Trash wins over archive: a mail flagged both (e.g. archived, then
-      // deleted) belongs in Trash, matching how restore clears both.
-      if (folder === 'trash') return !!flags?.trashed
-      if (folder === 'archive') return !!flags?.archived && !flags?.trashed
-      // Spam stays server-side, surfaced via labels — not a client metadata flag.
-      if (folder === 'spam') return e.labels.includes('spam')
-      if (isFiled(flags)) return false
-      // Sent = the self-copy we wrap to ourselves; Inbox = everything else
-      if (folder === 'sent') return e.senderPubkey === myPubkey
-      return e.senderPubkey !== myPubkey
-    })
-    .sort((a, b) => b.timestamp - a.timestamp)
+  const inFolder = useMemo(
+    () =>
+      Object.values(emails)
+        .filter((e) => {
+          // Scope to the selected alias first, so every folder count and list
+          // reflects the inbox the user picked.
+          if (!matchesAlias(e, inboxFilter)) return false
+          const flags = mailState[e.id]
+          // Trash wins over archive: a mail flagged both (e.g. archived, then
+          // deleted) belongs in Trash, matching how restore clears both.
+          if (folder === 'trash') return !!flags?.trashed
+          if (folder === 'archive') return !!flags?.archived && !flags?.trashed
+          // Spam stays server-side, surfaced via labels — not a client metadata flag.
+          if (folder === 'spam') return e.labels.includes('spam')
+          if (isFiled(flags)) return false
+          // Sent = the self-copy we wrap to ourselves; Inbox = everything else
+          if (folder === 'sent') return e.senderPubkey === myPubkey
+          return e.senderPubkey !== myPubkey
+        })
+        .sort((a, b) => b.timestamp - a.timestamp),
+    [emails, mailState, folder, inboxFilter, myPubkey],
+  )
 
-  const needle = query.trim().toLowerCase()
-  const filtered = needle
-    ? inFolder.filter((e) =>
-        [e.subject, e.body, e.from.name ?? '', e.from.address]
-          .join(' ')
-          .toLowerCase()
-          .includes(needle),
-      )
-    : inFolder
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    if (!needle) return inFolder
+    return inFolder.filter((e) =>
+      [e.subject, e.body, e.from.name ?? '', e.from.address]
+        .join(' ')
+        .toLowerCase()
+        .includes(needle),
+    )
+  }, [inFolder, query])
 
   const readOf = (e: Email) => mailState[e.id]?.read ?? e.read
   const unread = inFolder.filter((e) => !readOf(e)).length
@@ -207,7 +223,7 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
               />
             )}
             <IconButton title="Refresh mail" onClick={handleRefresh}>
-              <RefreshIcon className={['h-3.5 w-3.5', refreshing ? 'animate-spin' : ''].join(' ')} />
+              <RefreshIcon className={cx('h-3.5 w-3.5', refreshing && 'animate-spin')} />
             </IconButton>
           </div>
         </div>
@@ -223,6 +239,22 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
           />
         </div>
       </header>
+
+      {selectionClearedReason === 'deleted' && (
+        <div className="flex items-start gap-2 border-b border-border bg-muted/40 px-3.5 py-2">
+          <AlertIcon className="mt-px h-3.5 w-3.5 flex-none text-muted-foreground" />
+          <p className="flex-1 text-[11.5px] leading-relaxed text-muted-foreground">
+            The open message was deleted on another device, so it was removed here too.
+          </p>
+          <button
+            type="button"
+            onClick={clearSelectionClearedReason}
+            className="flex-none text-[11.5px] font-semibold text-primary"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {status.phase === 'error' ? (
         <ListState
@@ -246,7 +278,7 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
             />
           ))}
         </div>
-      ) : needle ? (
+      ) : query.trim() ? (
         <ListState
           icon={<SearchIcon className="h-6 w-6" />}
           title="No matches"

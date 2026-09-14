@@ -35,8 +35,9 @@ async function discoverKey(address: string): Promise<string[] | null> {
  * Care taken:
  *  - only email-shaped, keyless recipients are looked up (npubs and addresses
  *    we already have keys for are skipped);
- *  - each address is looked up at most once per session (`attempted`), so
- *    typing doesn't hammer the keyserver, which rate-limits by-email hard;
+ *  - an address is only marked "attempted" once its lookup SETTLES, so an
+ *    aborted run (recipients changed mid-flight) doesn't permanently skip a
+ *    recipient that was never actually looked up;
  *  - a miss or an error is silent — discovery never blocks or errors the
  *    compose flow, it just leaves that recipient without a key (→ cleartext).
  *
@@ -48,7 +49,8 @@ export function usePgpDiscovery(recipients: string[]): { discovering: boolean } 
   const settings = useSettingsStore((s) => s.settings)
   const save = useSettingsStore((s) => s.save)
   const [discovering, setDiscovering] = useState(false)
-  // Addresses already looked up this session — never retried, hit or miss.
+  // Addresses already looked up this session — never retried, hit or miss. An
+  // address is added only after its lookup resolves (see the loop below).
   const attempted = useRef<Set<string>>(new Set())
 
   const hasOwnKey = hasAnyOwnKey(settings)
@@ -73,8 +75,10 @@ export function usePgpDiscovery(recipients: string[]): { discovering: boolean } 
       let keyring = settings.pgpKeyring
       let found = false
       for (const address of missing) {
-        attempted.current.add(address.toLowerCase())
         const keys = await discoverKey(address)
+        // Mark settled even if this run was aborted, so we never re-hammer a
+        // rate-limited keyserver for a lookup that completed.
+        attempted.current.add(address.toLowerCase())
         if (!alive) return
         if (keys && keys.length) {
           try {
@@ -86,11 +90,10 @@ export function usePgpDiscovery(recipients: string[]): { discovering: boolean } 
         }
       }
       if (alive && found) {
-        // Persist the enriched keyring so the discovered keys sync and the
-        // composer re-gates to "can encrypt". Best-effort — a save failure just
-        // means we rediscover next time.
+        // Persist only the keyring field, so a concurrent signature/sender edit
+        // is not clobbered by this run's older snapshot (audit B6).
         try {
-          await save({ ...settings, pgpKeyring: keyring }, account.pubkey, active)
+          await save({ pgpKeyring: keyring }, account.pubkey, active)
         } catch (e) {
           console.warn('[pgp] failed to persist discovered keys', e)
         }
@@ -100,6 +103,10 @@ export function usePgpDiscovery(recipients: string[]): { discovering: boolean } 
 
     return () => {
       alive = false
+      // Clear on teardown too: the next run may have no `missing` work left
+      // (all attempted), in which case its early return would otherwise leave
+      // the spinner up forever (audit D9).
+      setDiscovering(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recipients.join(','), hasOwnKey, account?.pubkey])

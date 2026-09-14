@@ -30,6 +30,7 @@ beforeEach(() => {
   useMailStore.setState({
     emails: {},
     seenIds: new Set(),
+    seenMetaIds: new Set(),
     mailState: {},
     wrapKeys: {},
     deletedIds: new Set(),
@@ -37,6 +38,8 @@ beforeEach(() => {
     folder: 'inbox',
     query: '',
     inboxFilter: null,
+    selectionClearedReason: null,
+    syncError: null,
   })
 })
 
@@ -55,7 +58,9 @@ describe('delete forever, locally', () => {
     expect(after.emails[ID]).toBeUndefined()
     expect(after.wrapKeys[ID]).toBeUndefined()
     expect(after.deletedIds.has(ID)).toBe(true)
-    expect(after.mailState[ID]?.deleted).toBe(true)
+    // The tombstone set is the single durable record — the flags entry is
+    // deliberately dropped so storage does not grow a second copy per delete.
+    expect(after.mailState[ID]).toBeUndefined()
   })
 
   it('markDeleted closes the reading pane when the open mail is purged', () => {
@@ -116,12 +121,47 @@ describe('delete forever, locally', () => {
       .hydrateFlags([{ ref: ID, flags: { read: true, updatedAt: 1 } }])
 
     const after = useMailStore.getState()
-    expect(after.mailState[ID]?.deleted).toBe(true)
+    // The tombstone survives; a stale pre-delete meta event is also dropped so
+    // a deleted mail keeps no flags record (newest-wins by updatedAt).
     expect(after.deletedIds.has(ID)).toBe(true)
+    expect(after.mailState[ID]).toBeUndefined()
   })
 
   it('saveWrapKey remembers the wrap author key for a later delete', () => {
     useMailStore.getState().saveWrapKey(ID, 'f'.repeat(64))
     expect(useMailStore.getState().wrapKeys[ID]).toBe('f'.repeat(64))
+  })
+
+  it('records why the open message disappeared on a cross-device delete (D1)', () => {
+    const s = useMailStore.getState()
+    s.addEmail(email())
+    s.setSelected(ID)
+    useMailStore
+      .getState()
+      .hydrateFlags([{ ref: ID, flags: { deleted: true, updatedAt: 2_000_000 } }])
+
+    expect(useMailStore.getState().selectionClearedReason).toBe('deleted')
+    useMailStore.getState().clearSelectionClearedReason()
+    expect(useMailStore.getState().selectionClearedReason).toBeNull()
+  })
+
+  it('rejects a stale meta event for a tombstoned mail (D14)', () => {
+    const s = useMailStore.getState()
+    s.addEmail(email())
+    useMailStore.getState().markDeleted(ID)
+
+    // A relay replaying a pre-delete version must not recreate flags state.
+    useMailStore
+      .getState()
+      .hydrateFlags([{ ref: ID, flags: { read: true, updatedAt: 2_000_000 } }])
+    expect(useMailStore.getState().mailState[ID]).toBeUndefined()
+    expect(useMailStore.getState().deletedIds.has(ID)).toBe(true)
+  })
+
+  it('stages and clears the background-sync error (B3)', () => {
+    useMailStore.getState().setSyncError('sync failed')
+    expect(useMailStore.getState().syncError).toBe('sync failed')
+    useMailStore.getState().setSyncError(null)
+    expect(useMailStore.getState().syncError).toBeNull()
   })
 })

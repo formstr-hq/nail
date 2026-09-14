@@ -29,12 +29,16 @@ import {
   DiscoveryBanner,
   EncryptedBanner,
   AliasFix,
+  BridgeUnavailableBanner,
 } from '@/app/components/compose/StatusBanners'
 import { ComposerFooter } from '@/app/components/compose/ComposerFooter'
 
 interface ComposeModalProps {
   onClose: () => void
   ctx: ResolveContext
+  /** Non-null when the outbound bridge failed to resolve — external recipients
+   *  cannot be delivered this session; surfaced instead of only logged (D4). */
+  bridgeError?: string | null
   draft?: Draft
   /** The user's own addresses, so the recipient picker never suggests them. */
   selfAddresses: string[]
@@ -55,6 +59,7 @@ interface ComposeModalProps {
 export function ComposeModal({
   onClose,
   ctx,
+  bridgeError,
   draft,
   selfAddresses,
   ownedAliases,
@@ -77,12 +82,12 @@ export function ComposeModal({
   const [body, setBody] = useState(
     () => `${signatureBlock(settings.signature)}${draft?.body ?? ''}`,
   )
-  // The prefilled baseline the body is measured against for dirtiness. Held in
-  // a ref, not recomputed each render: the signature setting loads async, and
-  // recomputing would let a late-arriving signature shift the baseline out from
-  // under an untouched body — which is what made the composer read as dirty and
-  // sent Close to the discard prompt instead of closing.
+  // The prefilled baseline the body is measured against for dirtiness. The
+  // FIRST value is a ref (a late-arriving signature must not shift it), and the
+  // signature-fold effect below keeps it in lockstep. `baseline` state mirrors
+  // the ref for render-time comparison without accessing the ref in render.
   const initialBodyRef = useRef(body)
+  const [baseline, setBaseline] = useState(body)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
@@ -157,18 +162,26 @@ export function ComposeModal({
     if (nextInitial === initialBodyRef.current) return
     if (body === initialBodyRef.current) setBody(nextInitial)
     initialBodyRef.current = nextInitial
+    setBaseline(nextInitial)
   }, [settings.signature, draft?.body, body])
 
   // Anything the user typed beyond what was prefilled.
   const isDirty =
     to !== (draft?.to ?? '') ||
     subject !== (draft?.subject ?? '') ||
-    body !== initialBodyRef.current
+    body !== baseline
 
   function requestClose() {
     if (isDirty && !sending) setConfirmingDiscard(true)
     else onClose()
   }
+  // Latest values for the window-level Escape/mousedown effects, which must not
+  // re-bind the listeners on every keystroke. Synced in an effect (writing a ref
+  // during render is a React violation).
+  const closeStateRef = useRef({ isDirty, sending, requestClose })
+  useEffect(() => {
+    closeStateRef.current = { isDirty, sending, requestClose }
+  })
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -177,11 +190,11 @@ export function ComposeModal({
       // key that discards a draft.
       if (confirmingDiscard) setConfirmingDiscard(false)
       else if (minimized) setMinimized(false)
-      else requestClose()
+      else closeStateRef.current.requestClose()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  })
+  }, [confirmingDiscard, minimized, setMinimized])
 
   // On desktop the composer is a docked panel that leaves the rest of the app
   // usable, so clicking away should tuck it out of the way rather than nag —
@@ -196,7 +209,7 @@ export function ComposeModal({
     }
     document.addEventListener('mousedown', onPointerDown)
     return () => document.removeEventListener('mousedown', onPointerDown)
-  }, [minimized])
+  }, [minimized, setMinimized])
 
   async function handleSend() {
     // A subject is not required — RFC 2822 allows an empty one, and the reader
@@ -351,6 +364,8 @@ export function ComposeModal({
         )}
 
         {npubBlocked && <NpubGuardBanner fix={<AliasFix alias={ownedAliases[0]} onSwitch={switchToAlias} onBuyAddress={onBuyAddress} />} />}
+
+        {bridgeError && <BridgeUnavailableBanner message={bridgeError} />}
 
         {discovering && !encrypt && <DiscoveryBanner />}
 

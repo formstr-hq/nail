@@ -9,6 +9,7 @@ import { fetchDmRelayList, publishDmRelays } from '@/app/lib/nostr/relays'
 import { Button, IconButton } from '@/app/components/ui/Button'
 import { XIcon, AlertIcon, BackIcon, ChevronRightIcon } from '@/app/components/ui/icons'
 import { SECTIONS, type SectionId } from '@/app/components/settings/sections'
+import { Overlay } from '@/app/components/ui/Overlay'
 
 export type { SectionId } from '@/app/components/settings/sections'
 import { AddressesSection } from '@/app/components/settings/sections/AddressesSection'
@@ -109,7 +110,6 @@ export function SettingsModal({ onClose, initialSection, onBuyAddress }: Setting
       }
       await save(
         {
-          ...settings,
           senderAddress: senderDraft.senderAddress || undefined,
           signature: signature || undefined,
         },
@@ -125,12 +125,7 @@ export function SettingsModal({ onClose, initialSection, onBuyAddress }: Setting
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-foreground/30 p-0 md:items-center md:p-6"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose()
-      }}
-    >
+    <Overlay dismiss={onClose} align="bottom-sheet" safe="bottom">
       <div
         role="dialog"
         aria-modal="true"
@@ -284,6 +279,6 @@ export function SettingsModal({ onClose, initialSection, onBuyAddress }: Setting
           </Button>
         </div>
       </div>
-    </div>
+    </Overlay>
   )
 }

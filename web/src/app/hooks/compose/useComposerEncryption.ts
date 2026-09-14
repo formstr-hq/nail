@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { MailSettings } from '@/app/lib/nostr/settings'
 import { addressesMissingKeys, ownKeypairFor } from '@/app/lib/pgp/keyring'
 import { usePgpDiscovery } from '@/app/hooks/usePgpDiscovery'
@@ -48,12 +48,11 @@ export function useComposerEncryption(input: {
   // choice: once the user sets the toggle, their pick wins until encryption
   // stops being possible.
   const [userOverride, setUserOverride] = useState<boolean | null>(null)
-  const encrypt = canEncrypt && (userOverride ?? true)
-  // Drop a manual override once it's moot (encryption became impossible), so the
-  // default takes back over for the next recipient set.
-  useEffect(() => {
-    if (!canEncrypt && userOverride !== null) setUserOverride(null)
-  }, [canEncrypt, userOverride])
+  // Once encryption becomes impossible a manual override is moot, so the
+  // reactive default can take back over. Derived rather than reset by an
+  // effect: the stale override is simply ignored while canEncrypt is false.
+  const effectiveOverride = canEncrypt ? userOverride : null
+  const encrypt = canEncrypt && (effectiveOverride ?? true)
   // The per-recipient state this message will go out in, for the status line.
   // `null` means everything is encrypted (or encryption is simply off).
   const mixed = encrypt && missingKeys.length > 0

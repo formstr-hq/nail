@@ -69,6 +69,28 @@ describe('buildWraps', () => {
     expect(wraps.some((w) => w.tags.some((t) => t[0] === 'p' && t[1] === ALICE_PK))).toBe(true)
   })
 
+  // A repeated address, or one present in both To and Cc, must not get two
+  // deliveries (audit D8).
+  it('dedupes a Nostr recipient present twice / in both To and Cc', async () => {
+    const bob = nip19.npubEncode(ALICE_PK)
+    const { wraps } = await buildWraps({ ...base, to: [bob], cc: [bob] })
+    // Bob's wrap + the self-copy (same key here), so exactly two; never three.
+    const toBob = wraps.filter((w) => w.tags.some((t) => t[0] === 'p' && t[1] === ALICE_PK))
+    expect(toBob).toHaveLength(2)
+  })
+
+  it('dedupes repeated legacy recipients in one bridge wrap', async () => {
+    const { wraps } = await buildWraps({
+      ...base,
+      to: ['b@example.org', 'B@example.org'],
+      cc: ['b@example.org'],
+    })
+    const result = await unwrapAndVerify(toBridge(wraps)[0], keySigner(BRIDGE_SK))
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(deliverTargets(result.rumor)).toEqual(['b@example.org'])
+  })
+
   // The bridge authorizes against the seal pubkey, so an unsealed or
   // wrongly-sealed wrap would be rejected as unauthorized.
   it('seals with the sender key so the bridge can authorize', async () => {

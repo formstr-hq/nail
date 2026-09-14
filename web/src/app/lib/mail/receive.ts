@@ -22,6 +22,12 @@ export interface DecodeFailure {
   reason: string
   /** True when this is routine — a wrap that simply is not ours to read. */
   routine: boolean
+  /**
+   * True when the failure was transient (the signer timed out / was
+   * unreachable), so the same wrap may decode on a retry. Distinct from
+   * routine: routine is "not ours, never will be", this is "ours, try again".
+   */
+  retryable?: boolean
 }
 
 export type DecodeResult =
@@ -169,7 +175,13 @@ export async function decodeGiftWrap(
   const result = await unwrapAndVerify(event, signer, { maxAgeSeconds: Infinity })
 
   if (!result.ok) {
-    return { failure: { reason: result.reason, routine: result.reason === 'not-for-us' } }
+    return {
+      failure: {
+        reason: result.reason,
+        routine: result.reason === 'not-for-us',
+        retryable: result.reason === 'signer-error',
+      },
+    }
   }
 
   const { seal, rumor, wrapSecret } = result

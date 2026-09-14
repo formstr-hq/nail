@@ -5,9 +5,9 @@
 // key (which may already have a 10050 elsewhere).
 //
 // The landing signup wizard writes the SAME key on the SAME origin (mailstr.app
-// and /mails), so a key created there is recognised here after the redirect.
-// That string literal is intentionally duplicated in
-// landing/src/components/SignupWizard.tsx — the two apps are separate builds.
+// and /mails). It lives in this app at components/SignupWizard.tsx, but the key
+// is a shared contract with it and with the mail client, so the literal is
+// pinned here rather than imported.
 const FRESH_SIGNUP_KEY = 'mailstr.freshSignup'
 
 /** Record that `pubkey` was just created here (or on the landing). */

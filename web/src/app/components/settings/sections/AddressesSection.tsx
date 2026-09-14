@@ -2,10 +2,7 @@ import { BRIDGE_DOMAIN } from '@/app/lib/nostr/constants'
 import { Button } from '@/app/components/ui/Button'
 import { AlertIcon, PlusIcon } from '@/app/components/ui/icons'
 import { Field, inputClass } from '@/app/components/settings/Field'
-
-// Sentinel select value for "type your own address" — kept distinct from any
-// real address string so it can never collide with an owned/bridge option.
-export const CUSTOM_SENDER = '__custom__'
+import { CUSTOM_SENDER } from '@/app/hooks/useSenderDraft'
 
 export interface AddressesSectionProps {
   hasAccount: boolean

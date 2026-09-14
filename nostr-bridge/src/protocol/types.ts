@@ -23,11 +23,15 @@ export interface ProtocolSigner {
 
 /**
  * Why an unwrap failed. `not-for-us` is routine — relays deliver every wrap
- * p-tagged to us, including ones we cannot decrypt. Every other value means
- * something is broken or hostile and MUST be logged and counted (§8).
+ * p-tagged to us, including ones we cannot decrypt. `signer-error` is a
+ * transient failure of the signer itself (timeout, refusal, backend error):
+ * also not "broken mail", but NOT routine either — the same wrap may decode on
+ * a retry, so callers must retry/report rather than drop it. Every other value
+ * means something is broken or hostile and MUST be logged and counted (§8).
  */
 export type UnwrapFailure =
   | "not-for-us"
+  | "signer-error"
   | "malformed-seal"
   | "bad-seal-signature"
   | "wrong-seal-kind"
@@ -51,3 +55,21 @@ export type UnwrapResult =
       wrapSecret?: string;
     }
   | { ok: false; reason: UnwrapFailure };
+
+/**
+ * Marker for a failure of the signer plumbing rather than of the data being
+ * decrypted. The browser signer wrapper attaches this to timeouts/refusals so
+ * the protocol layer can classify a thrown `nip44Decrypt` as `signer-error`
+ * instead of the routine `not-for-us` — otherwise a slow NIP-46 bunker makes
+ * real mail look like someone else's ciphertext and it is dropped silently.
+ */
+export const SIGNER_ERROR_TAG = "mailstr.signer-error";
+
+/** True when `e` was thrown by the signer layer (timeout, refusal, transport). */
+export function isSignerFailure(e: unknown): boolean {
+  return (
+    typeof e === "object" &&
+    e !== null &&
+    (e as { tag?: unknown }).tag === SIGNER_ERROR_TAG
+  );
+}

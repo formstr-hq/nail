@@ -64,7 +64,7 @@ export function PgpSettings() {
     setBusy(true)
     setError('')
     try {
-      await save({ ...settings, ...patch }, account.pubkey, active)
+      await save(patch, account.pubkey, active)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

@@ -20,14 +20,21 @@ A signed-out user opens on the landing page. Buying an address and the
 
 ## Build
 
+`mobile/` is part of the root pnpm workspace (`pnpm-workspace.yaml`), so all
+dependencies install in one place — from the repo root:
+
 ```bash
-npm install              # once
-npm run build            # build the web app, assemble www/, cap sync
-npm run apk:debug        # -> android/app/build/outputs/apk/debug/app-debug.apk
+pnpm install             # once, installs web/ + mobile/
+pnpm --filter mailstr-mobile run build       # build the web app, assemble www/, cap sync
+pnpm --filter mailstr-mobile run apk:debug   # -> android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-`npm run build:web` (invoked by `build`) runs web/'s own build via pnpm, so
-`web/` must have its deps installed (`pnpm install` in it).
+Or from `mobile/`: `pnpm run build`, `pnpm run apk:debug`. `build:web`
+(invoked by `build`) runs web/'s own build, whose deps the workspace install
+already provided.
+
+`cap sync` regenerates `android/capacitor.settings.gradle` with pnpm's
+`.pnpm`-store paths; that file is generated, not hand-edited.
 
 ## Status bar / safe areas
 

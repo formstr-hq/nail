@@ -127,13 +127,43 @@ export async function buildWraps(
   const errors = [...toOut.errors, ...ccOut.errors]
   if (errors.length) return { wraps: [], targets: [], errors }
 
-  const headerList = (o: typeof toOut) => [
-    ...o.nostr.map((r) => ({ address: r.headerAddress })),
-    ...o.legacy.map((address) => ({ address })),
-  ]
+  // Dedup on resolved routing, not input text: the same mailbox can arrive as
+  // an npub and a hex key, and a To+Cc overlap lists the same person twice.
+  // Without this the recipient gets two identical wraps (one delivery each).
+  const seenNostr = new Set<string>()
+  const nostrTargets = [...toOut.nostr, ...ccOut.nostr].filter((r) => {
+    if (seenNostr.has(r.pubkey)) return false
+    seenNostr.add(r.pubkey)
+    return true
+  })
+  const seenLegacy = new Set<string>()
+  const legacy = [...toOut.legacy, ...ccOut.legacy].filter((address) => {
+    const key = address.trim().toLowerCase()
+    if (seenLegacy.has(key)) return false
+    seenLegacy.add(key)
+    return true
+  })
+
+  // Headers must match the deduped routing: a recipient present in both To and
+  // Cc appears once in the wrap, so it must appear once in the document too (To
+  // wins). Otherwise the reader sees a duplicate address with no second copy.
+  const inHeaders = new Set<string>()
+  const headerFor = (address: string) => {
+    const key = address.trim().toLowerCase()
+    if (inHeaders.has(key)) return false
+    inHeaders.add(key)
+    return true
+  }
+  const headerList = (o: typeof toOut) =>
+    [...o.nostr.map((r) => r.headerAddress), ...o.legacy]
+      .filter(headerFor)
+      .map((address) => ({ address }))
 
   const fullTo = headerList(toOut)
-  const fullCc = cc.length ? headerList(ccOut) : undefined
+  const ccHeaders = cc.length ? headerList(ccOut) : []
+  // Undefined rather than empty: a Cc header listing nobody (every address was
+  // already in To) should not be emitted at all.
+  const fullCc = ccHeaders.length ? ccHeaders : undefined
 
   const rfc2822 = buildRfc2822({
     from,
@@ -171,9 +201,8 @@ export async function buildWraps(
     targets.push(recipientPubkey)
   }
 
-  for (const r of [...toOut.nostr, ...ccOut.nostr]) await add(r.pubkey)
+  for (const r of nostrTargets) await add(r.pubkey)
 
-  const legacy = [...toOut.legacy, ...ccOut.legacy]
   if (legacy.length) {
     if (!ctx.bridgePubkey) {
       return {

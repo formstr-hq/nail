@@ -22,9 +22,22 @@ export function signatureBlock(signature: string | undefined): string {
   return trimmed ? `\n\n-- \n${trimmed}` : ''
 }
 
-/** Comma-separated string → trimmed, de-duplicated-at-source recipient list. */
+/** Comma-separated string → trimmed recipient list, duplicate addresses (case-
+ *  insensitive) dropped. Dedup happens here at the source, and again on
+ *  resolved pubkeys in send.ts, so a repeated address or a To+Cc overlap
+ *  cannot produce duplicate delivery. */
 export function parseRecipients(to: string): string[] {
-  return to.split(',').map((s) => s.trim()).filter(Boolean)
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of to.split(',')) {
+    const address = raw.trim()
+    if (!address) continue
+    const key = address.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(address)
+  }
+  return out
 }
 
 /** The user's npub address (`<npub>@<bridge domain>`), or '' when signed out. */

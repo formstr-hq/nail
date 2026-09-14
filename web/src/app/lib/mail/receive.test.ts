@@ -228,3 +228,31 @@ describe('decodeGiftWrap sender proof', () => {
     expect(out.email.from.address).toBe(nip19.npubEncode(BRIDGE))
   })
 })
+
+describe('decodeGiftWrap failure taxonomy', () => {
+  // A signer that times out is NOT "someone else's mail". Misclassifying it as
+  // routine made the decode queue drop real mail with no retry or signal
+  // (audit D3); the tagged signer failure must surface as retryable.
+  it('classifies a signer failure as a retryable, non-routine failure', async () => {
+    const { SignerError } = await import('@/app/lib/nostr/signer')
+    const wrap = await wrapFrom(SENDER_SK, 'alice@example.org')
+    const failingSigner = {
+      ...keySigner(ME_SK),
+      nip44Decrypt: async () => {
+        throw new SignerError('Signer did not respond to "nip44Decrypt" within 20s.')
+      },
+    }
+
+    const out = await decodeGiftWrap(wrap, failingSigner, BRIDGE, ME)
+    expect(out).toEqual({
+      failure: { reason: 'signer-error', routine: false, retryable: true },
+    })
+  })
+
+  it('still treats an undecryptable wrap as routine not-for-us', async () => {
+    const wrap = await wrapFrom(SENDER_SK, 'alice@example.org')
+    const otherSk = generateSecretKey()
+    const out = await decodeGiftWrap(wrap, keySigner(otherSk), BRIDGE, ME)
+    expect(out).toEqual({ failure: { reason: 'not-for-us', routine: true, retryable: false } })
+  })
+})

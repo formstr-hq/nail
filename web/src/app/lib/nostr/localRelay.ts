@@ -20,6 +20,8 @@ import { DEFAULT_RELAYS, KIND_DM_RELAYS, KIND_NIP65_RELAYS, withHardcodedRelay }
  *    streaming, silently losing events.
  */
 let client: LocalRelayClient | null = null
+/** The Worker backing `client`, kept so resetLocalRelay can terminate it. */
+let workerRef: Worker | null = null
 
 /**
  * Why the relay worker never came up, if it didn't. On browsers that reject
@@ -38,28 +40,22 @@ export function getLocalRelay(): LocalRelayClient {
   // prebuilt `/worker` subpath: a bare-specifier worker URL resolves under
   // `vite build` but not `vite dev`, which left the worker never running.
   //
-  // Dev must spawn a MODULE worker (Vite serves sources as ESM). Production
-  // deliberately spawns a CLASSIC one: vite.config.ts sets worker.format to
-  // iife, because Safari before 15 (every iPhone capped at iOS 15) throws on
-  // module workers, and this worker runs the entire mailbox — that throw is
-  // exactly what "the client doesn't work on iOS Safari" looks like.
+  // Dev must spawn a MODULE worker (Vite serves sources as ESM, so a classic
+  // worker can't import the transformed sources). Production deliberately
+  // spawns a CLASSIC one: vite.config.ts bundles the worker as a single IIFE
+  // (`worker.format: "iife"`) because Safari before 15 throws on module
+  // workers, and this worker runs the entire mailbox — that throw is exactly
+  // what "the client doesn't work on iOS Safari" looks like.
+  //
+  // The options must be STATIC literals with a literal `type` — Vite's dev
+  // transform parses `new Worker(url, options)` and throws on anything
+  // dynamic (a ternary here broke the whole dev server) — hence two branches
+  // instead of one call with a computed type.
   let worker: Worker
   try {
-    // Dev must spawn a MODULE worker (Vite serves sources as ESM, so a classic
-    // worker can't import the transformed sources). Production deliberately
-    // spawns a CLASSIC one: vite.config.ts bundles the worker as a single IIFE
-    // (`worker.format: "iife"`) because Safari before 15 throws on module
-    // workers, and this worker runs the entire mailbox — that throw is exactly
-    // what "the client doesn't work on iOS Safari" looks like.
-    //
-    // The options must be STATIC literals with a literal `type` — Vite's dev
-    // transform parses `new Worker(url, options)` and throws on anything
-    // dynamic (a ternary here broke the whole dev server) — hence two branches
-    // instead of one call with a computed type.
-    worker =
-      import.meta.env.DEV
-        ? new Worker(new URL('./relay.worker.ts', import.meta.url), { type: 'module' })
-        : new Worker(new URL('./relay.worker.ts', import.meta.url), { type: 'classic' })
+    worker = import.meta.env.DEV
+      ? new Worker(new URL('./relay.worker.ts', import.meta.url), { type: 'module' })
+      : new Worker(new URL('./relay.worker.ts', import.meta.url), { type: 'classic' })
   } catch (e) {
     workerBootError = e instanceof Error ? e.message : String(e)
     throw e
@@ -67,7 +63,27 @@ export function getLocalRelay(): LocalRelayClient {
   worker.onerror = (e) => {
     workerBootError = e.message || 'mail worker failed to start'
   }
-  client = new LocalRelayClient(workerChannel(worker), {
+  workerRef = worker
+  // The relay client ignores unknown frames, so intercept the worker's
+  // `bootError` report here (a failed `service.start()`, e.g. IndexedDB
+  // unavailable) and stash it for localRelayBootError(). Without this the
+  // worker dies before wiring its handlers and the mailbox hangs on
+  // "connecting" with no explanation — the same silent failure the spawn
+  // try/catch above guards.
+  const rawChannel = workerChannel(worker)
+  const channel = {
+    ...rawChannel,
+    onMessage: (handler: (message: unknown) => void) =>
+      rawChannel.onMessage((message: unknown) => {
+        const frame = message as { kind?: string; message?: string } | null
+        if (frame?.kind === 'bootError') {
+          workerBootError = frame.message || 'mail worker failed to start'
+          return
+        }
+        handler(message)
+      }),
+  }
+  client = new LocalRelayClient(channel, {
     // The worker asks us to sign NIP-42 AUTH challenges. DM relays routinely
     // require AUTH before they will serve kind-1059 gift wraps (it protects the
     // recipient's metadata), so without this the relay refuses and the mailbox
@@ -90,6 +106,28 @@ export function getLocalRelay(): LocalRelayClient {
   // relay.primal.net even before the account's own lists are known.
   client.setUserRelays(withHardcodedRelay(DEFAULT_RELAYS))
   return client
+}
+
+/**
+ * Tear the worker-backed relay down. Called on account switch / logout so the
+ * next account starts from a clean worker: the previous account's standing
+ * interests, AUTH identity, and in-flight NIP-42 signing context must not
+ * survive into a different account's session. The cached public events live in
+ * IndexedDB and are intentionally shared across accounts (see the package's
+ * multi-account note); only the live worker is reset.
+ */
+export function resetLocalRelay(): void {
+  if (!client) return
+  // Terminate the Worker: closes every socket, drops its in-memory store and
+  // standing interests. IndexedDB persists (shared public cache, by design).
+  try {
+    workerRef?.terminate()
+  } catch {
+    // Already gone — nothing to tear down.
+  }
+  client = null
+  workerRef = null
+  workerBootError = null
 }
 
 /**

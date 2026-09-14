@@ -152,15 +152,10 @@ export function useOwnedAddresses() {
   useEffect(() => {
     let alive = true
 
-    // No signed-in session (or signer not ready) — nothing to show, nothing
-    // to fetch. Reset unconditionally so a just-logged-out (or switched-away)
-    // account's addresses don't linger in state.
-    if (!pubkey || !active) {
-      setAddresses([])
-      setError(null)
-      setLoading(false)
-      return
-    }
+    // No signed-in session (or signer not ready) — nothing to fetch. The
+    // returned values below are derived to empty in that case, so no reset
+    // setState is needed here.
+    if (!pubkey || !active) return
 
     // Mount/revalidate — and re-run whenever the shared tick advances (a
     // purchase completed in the buy modal): `reloadTick` is a dependency.
@@ -170,16 +165,23 @@ export function useOwnedAddresses() {
 
     // Nothing in the session cache. Show any persisted result immediately and
     // revalidate silently; only spin when we have nothing at all to show.
+    // Deferred a microtask so these aren't synchronous effect-body setStates.
     const persisted = readPersisted(pubkey)
     const hadSomething = Boolean(persisted)
     if (persisted) {
-      setAddresses(persisted)
-      setError(null)
-      setLoading(false)
+      queueMicrotask(() => {
+        if (!alive) return
+        setAddresses(persisted)
+        setError(null)
+        setLoading(false)
+      })
     } else {
-      setAddresses([])
-      setError(null)
-      setLoading(true)
+      queueMicrotask(() => {
+        if (!alive) return
+        setAddresses([])
+        setError(null)
+        setLoading(true)
+      })
     }
 
     fetchOwnedAddresses(active)
@@ -224,6 +226,13 @@ export function useOwnedAddresses() {
     }
     reloadOwnedAddresses()
   }, [pubkey, loading])
+
+  // No session or signer: derive an empty, non-loading result rather than
+  // writing resets through the effect (which also removes the stale-paint gap
+  // the render-time reset above covers for the switch case).
+  if (!pubkey || !active) {
+    return { addresses: [], loading: false, error: null, reload }
+  }
 
   return { addresses, loading, error, reload }
 }

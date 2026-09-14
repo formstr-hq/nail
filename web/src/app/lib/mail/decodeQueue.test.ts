@@ -72,6 +72,51 @@ describe('DecodeQueue', () => {
     expect(onFailure).toHaveBeenCalledWith(wrapEvent('n'), 'bad seal')
   })
 
+  it('retries a retryable (signer) failure and delivers on a later attempt', async () => {
+    vi.useFakeTimers()
+    try {
+      const onEmail = vi.fn()
+      const onFailure = vi.fn()
+      let attempts = 0
+      const q = new DecodeQueue(1, { onEmail, onFailure, onPendingChange: vi.fn() })
+      q.push(wrapEvent('s'), () => {
+        attempts += 1
+        if (attempts < 2) {
+          return Promise.resolve({
+            failure: { routine: false, retryable: true, reason: 'signer-error' },
+          })
+        }
+        return Promise.resolve({ email: { id: 'm1' } as never })
+      })
+
+      await vi.waitFor(() => expect(attempts).toBe(1))
+      expect(onFailure).not.toHaveBeenCalled()
+      // The retry timer keeps the item counted as outstanding.
+      expect(q.pending).toBe(1)
+      await vi.advanceTimersByTimeAsync(1600)
+      await vi.waitFor(() => expect(onEmail).toHaveBeenCalledWith({ id: 'm1' }, undefined))
+      expect(onFailure).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports a retryable failure once retries are exhausted', async () => {
+    vi.useFakeTimers()
+    try {
+      const onFailure = vi.fn()
+      const q = new DecodeQueue(1, { onEmail: vi.fn(), onFailure, onPendingChange: vi.fn() })
+      q.push(wrapEvent('s'), () =>
+        Promise.resolve({ failure: { routine: false, retryable: true, reason: 'signer-error' } }),
+      )
+      await vi.advanceTimersByTimeAsync(10000)
+      await vi.waitFor(() => expect(onFailure).toHaveBeenCalledTimes(1))
+      expect(onFailure).toHaveBeenCalledWith(wrapEvent('s'), 'signer-error')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('stop() drops queued work and stops delivering results', async () => {
     const onEmail = vi.fn()
     const gate = deferred<DecodeOutcome>()
