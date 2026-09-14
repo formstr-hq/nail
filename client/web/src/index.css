@@ -194,6 +194,19 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Tailwind v4's preflight deliberately dropped v3's `button { cursor: pointer }`
+   ("Buttons use the default cursor", upgrade guide) — the merge ported the mail
+   app from v3 to v4, so every native button (mail rows, composer chrome, the
+   Send button) silently lost its hand cursor. Restore the v3 behavior at the
+   base layer, disabled controls excluded; the signer stylesheet's own
+   `cursor: pointer` rules stay authoritative for its buttons. */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
 body {
   margin: 0;
   background: #f4f4f3;
