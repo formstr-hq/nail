@@ -1,0 +1,16 @@
+# Root build context for client/web/Dockerfile — keep the context minimal so
+# the protocol copy and workspace install stay fast and no secrets enter the
+# image.
+
+# Native shells are not part of the web build.
+client/android
+client/ios
+client/www
+notifier
+docs
+node_modules
+**/node_modules
+**/dist
+**/.env
+**/.env.local
+.git

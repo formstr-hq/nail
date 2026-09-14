@@ -1,27 +1,18 @@
 services:
-  landing-deploy:
-    build:
-      context: landing
-      args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://api.formstr.app}
-        VITE_WS_BASE_URL: ${VITE_WS_BASE_URL:-wss://api.formstr.app}
-        VITE_MAIL_DOMAIN: ${VITE_MAIL_DOMAIN:-mailstr.app}
-        VITE_MAILS_URL: ${VITE_MAILS_URL:-/mails}
-    container_name: mailstr-landing-deploy
-    volumes:
-      - ${LANDING_DIST_PATH:?set LANDING_DIST_PATH in .env}:/output
-    restart: "no"
-
-  client-deploy:
+  web-deploy:
+    # Merged frontend: prerendered landing at /, mail app at /mails — one
+    # image, one dist directory for the external nginx.
     build:
       # Repo root, so the shared nostr-bridge protocol module is in context.
       context: .
-      dockerfile: client/Dockerfile
+      dockerfile: client/web/Dockerfile
       args:
-        CLIENT_BASE_PATH: ${CLIENT_BASE_PATH:-/mails/}
-        VITE_BRIDGE_DOMAIN: ${VITE_BRIDGE_DOMAIN:-mailstr.app}
-    container_name: mailstr-client-deploy
-    env_file: .env
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://api.formstr.app}
+        VITE_WS_BASE_URL: ${VITE_WS_BASE_URL:-wss://api.formstr.app}
+        VITE_API_CANONICAL_BASE_URL: ${VITE_API_CANONICAL_BASE_URL:-}
+        VITE_MAIL_DOMAIN: ${VITE_MAIL_DOMAIN:-mailstr.app}
+        VITE_MAILS_URL: ${VITE_MAILS_URL:-/mails}
+    container_name: mailstr-web-deploy
     volumes:
-      - ${CLIENT_DIST_PATH:?set CLIENT_DIST_PATH in .env}:/output
+      - ${WEB_DIST_PATH:?set WEB_DIST_PATH in .env}:/output
     restart: "no"

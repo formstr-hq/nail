@@ -35,8 +35,7 @@ correspondents structurally impossible.
 
 | Component | Runtime | Role |
 |---|---|---|
-| `client/` | Browser (React, Vite) | Webmail UI. Holds the user's key via `@formstr/signer`. |
-| `landing/` | Browser (React, Vite) | Signup and name registration. Not in the mail path. |
+| `client/web/` | Browser (React, Vite) | The frontend: landing (prerendered at `/`) + webmail UI at `/mails`. Holds the user's key via `@formstr/signer`. |
 | `nostr-bridge/` | Node, sidecar to mailcow | Translates between SMTP and Nostr. The only trusted component. |
 | `e2e-nostr/` | Vitest | End-to-end suite against a mock relay and a real mailcow. |
 | formstr API | External (`api.formstr.app`) | Name purchase and ownership lookup. NIP-98 authed. **Not in the mail path.** |
@@ -53,7 +52,7 @@ correspondents structurally impossible.
 | | `api.formstr.app` | `mailstr.app/.well-known/nostr.json` |
 |---|---|---|
 | Auth | NIP-98 signed requests | none, public |
-| Callers | `client/`, `landing/` — browsers only | `client/`, `landing/`, **`nostr-bridge/`** |
+| Callers | `client/web/` — browsers only | `client/web/`, **`nostr-bridge/`** |
 | Mail path | no | **yes — hard dependency** |
 
 Verified 2026-07-20: these are different hosts.
@@ -441,12 +440,12 @@ before returning, so callers do not each have to warm it.
 
 ## 9. Shared protocol module
 
-Three implementations of this wire format exist today — `client/`,
-`nostr-bridge/`, and `e2e-nostr/src/nostr-helper.ts` — and no two agree. Fixing
-them independently leaves them free to drift again.
+The wire format has one implementation — `nostr-bridge/src/protocol/` —
+imported by the frontend (`client/web/`, via the `@protocol` alias) and the e2e
+suite (which also consumes `@protocol`; its older `nostr-helper.ts` only
+speaks relay WebSocket plumbing, not the wire format).
 
-**One implementation**, owning rumor construction, seal, wrap, unwrap, and
-verification rules 1–5. It takes an abstract signer so the browser backs it with
+It takes an abstract signer so the browser backs it with
 NIP-07/NIP-46 and the bridge with a raw key.
 
 Built inside `nostr-bridge/` first and imported directly by the client;

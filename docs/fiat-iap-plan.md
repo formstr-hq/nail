@@ -1,9 +1,9 @@
 # Implementation Plan: Fiat In-App Purchases (App Store + Play) for Mailstr, with Permanent Mailboxes
 
 > Status: **Approved plan, awaiting implementation.** Everything below was verified against the
-> codebase at planning time (Sep 2026). Repo layout: `formstr-backend` (payment backend, sibling
-> repo at `../formstr-backend`), `landing` (marketing + signup wizard), `client` (mail app),
-> `mobile` (Capacitor wrapper).
+> codebase at planning time (Sep 2026); paths updated after the `client/` restructure. Repo layout:
+> `formstr-backend` (payment backend, sibling repo at `../formstr-backend`), `client/web/` (merged
+> frontend), `client/` (Capacitor native shell around `client/web/`'s build).
 
 ## Goals
 
@@ -32,16 +32,16 @@ Web (lightning):
                                    (+ cron reconcilePendingMails every 15 min as backstop)
 
 Mobile (Android only today):
-  mobile/ = Capacitor wrapper bundling landing at '/' + client at '/mails/'
+  client/ = Capacitor native shell bundling landing at '/' + client at '/mails/'
   (scripts/build-web.mjs assembles www/), CapacitorHttp enabled, no iOS project yet.
   Purchases deep-link from client SettingsModal → landing ?buy=1 → same Lightning wizard.
 ```
 
 Key files:
 - Backend: `src/controllers/paymentController.ts`, `src/handlers/zapReceiptHandler.ts`, `src/services/mailProvisioning.ts`, `src/ws/webSocketManager.ts`, `src/models/{pendingMail,mails,nip05,invoices}.ts`, `src/controllers/utils.ts` (`getExpirationFromNow`), `migrations/`
-- Landing: `src/components/SignupWizard.tsx`, `src/components/InvoiceQR.tsx`, `src/lib/{api,platform,config}.ts`
-- Client: `src/components/SettingsModal.tsx` (buy deep-link + Lightning hint copy)
-- Mobile: `mobile/{package.json,capacitor.config.ts,scripts/build-web.mjs,android/}`
+- Landing: `client/web/src/components/SignupWizard.tsx`, `client/web/src/components/InvoiceQR.tsx`, `client/web/src/lib/{api,platform,config}.ts`
+- Client: `client/web/src/app/components/SettingsModal.tsx` (buy deep-link + Lightning hint copy)
+- Native shell: `client/{package.json,capacitor.config.ts,scripts/build-web.mjs,android/}`
 
 Note: mail `expirationDate` is stored but **never enforced** (no cron deletes expired mails; `getMailboxHandler` ignores it). `cleanupCrons.ts` only expires *forms*. So going permanent is mostly "stop setting it" + a data migration.
 
@@ -117,11 +117,11 @@ Note: mail `expirationDate` is stored but **never enforced** (no cron deletes ex
 
 ## Phase 2 — Landing: IAP branch in the signup wizard
 
-### 2a. Platform detection — `landing/src/lib/platform.ts`
+### 2a. Platform detection — `client/web/src/lib/platform.ts`
 
 - Add `isStoreBuild()`: true when `import.meta.env.VITE_STORE_BUILD === '1'` (a **build-time** flag set by build-web.mjs, so the bundle is also correct in a plain browser for local QA). Deliberately **not** based on `isNativeApp()`: the direct Android APK is native but keeps Lightning — only the store builds flip the flag.
 
-### 2b. IAP wrapper — `landing/src/lib/iap.ts` (new)
+### 2b. IAP wrapper — `client/web/src/lib/iap.ts` (new)
 
 - Thin wrapper over `capacitor-iap` (recommended plugin: npm `capacitor-iap`, Capacitor 7 + StoreKit 2 + Play Billing; **verify current API/docs at implementation time**, fallback: capacitor-community plugin or a minimal native bridge):
   - `fetchProduct(id)` → localized price string
@@ -129,11 +129,11 @@ Note: mail `expirationDate` is stored but **never enforced** (no cron deletes ex
   - `restorePurchases()` → same normalized receipts
   - No-op/stub on web (dynamic `import()` inside `isStoreBuild()` guard so web bundles never load the plugin).
 
-### 2c. API — `landing/src/lib/api.ts`
+### 2c. API — `client/web/src/lib/api.ts`
 
 - Add `verifyStorePurchase(authHeader, body)` → `POST /api/store/verify` (NIP-98 signed, same error handling pattern as `generateMailInvoice`).
 
-### 2d. Wizard — `landing/src/components/SignupWizard.tsx`
+### 2d. Wizard — `client/web/src/components/SignupWizard.tsx`
 
 - Steps `login → name → pay → done` stay identical. Only the **pay step** branches on `isStoreBuild()`:
   - **Store path (new `StorePay.tsx` component):** fetch product from the plugin → show localized store price → "Purchase" button → `requestPurchase` (native payment sheet) → `verifyStorePurchase` with NIP-98 → on `provisioned`/`already_provisioned` → `done`. No invoice, no QR, no WebSocket, no polling.
@@ -144,8 +144,8 @@ Note: mail `expirationDate` is stored but **never enforced** (no cron deletes ex
 
 ### 2e. Copy / compliance
 
-- `landing/src/pages/privacy-policy.md`: update payment wording — Lightning on web and the direct Android APK; App Store / Google Play billing in the store builds; we never receive card/billing details (true for all paths; Lightning zap receipts remain public events, disclosed as today).
-- `client/src/components/SettingsModal.tsx` line ~617 hint ("how Lightning payments work"): make payment-method neutral ("how payments work") — it's shown in the mobile bundle too.
+- `client/web/src/pages/PrivacyPolicy.tsx`: update payment wording — Lightning on web and the direct Android APK; App Store / Google Play billing in the store builds; we never receive card/billing details (true for all paths; Lightning zap receipts remain public events, disclosed as today).
+- `client/web/src/app/components/SettingsModal.tsx` line ~617 hint ("how Lightning payments work"): make payment-method neutral ("how payments work") — it's shown in the native bundle too.
 - Welcome mail template (`formstr-backend/src/mailer/templates/welcome.md`): no expiry mention today — no change.
 
 ---
@@ -154,7 +154,7 @@ Note: mail `expirationDate` is stored but **never enforced** (no cron deletes ex
 
 ### 3a. Android — two Gradle flavors, direct APK has zero Google
 
-- `mobile/package.json`: add `capacitor-iap` (bundled but only dynamically imported in store builds); scripts: `build:web` (Lightning, unchanged) and `build:web:store` (`VITE_STORE_BUILD=1`).
+- `client/package.json`: add `capacitor-iap` (bundled but only dynamically imported in store builds); scripts: `build:web` (Lightning, unchanged) and `build:web:store` (`VITE_STORE_BUILD=1`).
 - **Flavors:** `flavorDimensions "distribution"` in `app/build.gradle` with `direct` and `play` flavors. `scripts/toggle-iap.mjs` (new) runs after every `cap sync` and removes/re-adds the capacitor-iap lines from `capacitor.settings.gradle` + `capacitor.build.gradle`, so the two flavors genuinely differ at the native level.
 - **Direct APK (keeps Lightning, zero Google):** `npm run build:web && npm run sync && node scripts/toggle-iap.mjs --off && ./gradlew assembleDirectRelease` — ships with **no Play Billing library, no Google Play Services, no google-services plugin, no Firebase**. The existing conditional google-services apply stays off (never commit `google-services.json`); the notifier keeps WorkManager polling (no push). Zapstore/sideload distribution otherwise unchanged.
 - **Play AAB (store build, Lightning excluded):** `npm run build:web:store && npm run sync && ./gradlew bundlePlayRelease` — the only flavor containing the IAP plugin. Sequence discipline matters: always rebuild web before each artifact so the Play AAB never carries the Lightning bundle (build script prints which variant it assembled; guard release bundling to fail if `www/` was built without the store flag).
@@ -162,13 +162,13 @@ Note: mail `expirationDate` is stored but **never enforced** (no cron deletes ex
 
 ### 3b. iOS (new)
 
-- `mobile/package.json`: add `@capacitor/ios`; `npx cap add ios` (requires macOS + Xcode; Apple Developer Program account). Set bundle id `com.formstr.mail`, combined `www/` bundle built with `build:web:store` (iOS is store-only — always the IAP bundle).
+- `client/package.json`: add `@capacitor/ios`; `npx cap add ios` (requires macOS + Xcode; Apple Developer Program account). Set bundle id `com.formstr.mail`, combined `www/` bundle built with `build:web:store` (iOS is store-only — always the IAP bundle).
 - StoreKit 2 comes through the plugin — no native code needed; add the `.storekit` configuration file for local Xcode testing, then sandbox-device testing.
 - App Store submission assets: privacy policy URL (landing serves it), support URL, screenshots, privacy "nutrition labels" (data collected = pubkey + purchase record, as per the privacy policy).
 
 ### 3c. Build script
 
-- `mobile/scripts/build-web.mjs`: accept a `--store` flag (or `STORE_BUILD=1` env) that adds `VITE_STORE_BUILD: '1'` to the landing build env; the default build stays Lightning. `package.json` wraps both as `build:web` / `build:web:store`.
+- `client/scripts/build-web.mjs`: accept a `--store` flag (or `STORE_BUILD=1` env) that adds `VITE_STORE_BUILD: '1'` to the landing build env; the default build stays Lightning. `package.json` wraps both as `build:web` / `build:web:store`.
 
 ### 3d. What "store builds exclude Lightning" means concretely
 

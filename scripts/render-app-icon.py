@@ -15,10 +15,10 @@ Why one script:
     - the adaptive foreground vector drawable.
 
 Outputs:
-  mobile/.../res/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher.png
-                                                          ic_launcher_round.png
-  mobile/.../res/drawable-v24/ic_launcher_foreground.xml
-  client/public/favicon-512.png   (512×512, for the web manifest)
+  client/android/.../res/mipmap-{mdpi,hdpi,xhdpi,xxhdpi,xxxhdpi}/ic_launcher.png
+                                                               ic_launcher_round.png
+  client/android/.../res/drawable-v24/ic_launcher_foreground.xml
+  client/web/public/favicon.svg      (in-app mark; nothing else consumes a raster)
 
 Run: python3 scripts/render-app-icon.py
 """
@@ -31,7 +31,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 REPO = Path(__file__).resolve().parent.parent
-RES = REPO / "mobile" / "android" / "app" / "src" / "main" / "res"
+RES = REPO / "client" / "android" / "app" / "src" / "main" / "res"
 
 # --- palette ---------------------------------------------------------------
 INK = "#0B0B0C"     # background — the brand's black "ink"
@@ -178,13 +178,9 @@ def emit_favicon_svg() -> None:
 {star}
 </svg>
 """
-    for out in (
-        REPO / "client" / "public" / "favicon.svg",
-        REPO / "landing" / "public" / "favicon.svg",
-    ):
-        if out.parent.exists():
-            out.write_text(svg)
-            print(f"   favicon            →  {out.relative_to(REPO)}")
+    out = REPO / "client" / "web" / "public" / "favicon.svg"
+    out.write_text(svg)
+    print(f"   favicon            →  {out.relative_to(REPO)}")
 
 
 def emit_foreground_vector() -> None:
@@ -292,11 +288,6 @@ def main() -> None:
         print(f"   splash   {w:>4}×{h:<4}  →  {splash.relative_to(RES)}")
 
     emit_favicon_svg()
-
-    web = REPO / "client" / "public" / "favicon-512.png"
-    web.parent.mkdir(parents=True, exist_ok=True)
-    render(512).save(web)
-    print(f"   web      512×512   →  {web.relative_to(REPO)}")
 
 
 if __name__ == "__main__":
