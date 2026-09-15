@@ -8,6 +8,7 @@
 #   VITE_API_CANONICAL_BASE_URL  origin the mail app signs into NIP-98 `u` tags
 #   VITE_MAIL_DOMAIN    address domain (default mailstr.app)
 #   VITE_MAILS_URL      where the mail UI lives (default /mails)
+#   VITE_BRIDGE_DOMAIN  outbound bridge domain (default mailstr.app)
 
 # Build context is the REPO ROOT, not client/web — the app imports the shared
 # wire protocol from nostr-bridge, which must therefore be inside the context.
@@ -45,11 +46,13 @@ ARG VITE_WS_BASE_URL
 ARG VITE_API_CANONICAL_BASE_URL
 ARG VITE_MAIL_DOMAIN
 ARG VITE_MAILS_URL
+ARG VITE_BRIDGE_DOMAIN
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL} \
     VITE_WS_BASE_URL=${VITE_WS_BASE_URL} \
     VITE_API_CANONICAL_BASE_URL=${VITE_API_CANONICAL_BASE_URL} \
     VITE_MAIL_DOMAIN=${VITE_MAIL_DOMAIN} \
-    VITE_MAILS_URL=${VITE_MAILS_URL}
+    VITE_MAILS_URL=${VITE_MAILS_URL} \
+    VITE_BRIDGE_DOMAIN=${VITE_BRIDGE_DOMAIN}
 
 RUN cd client/web && pnpm run build
 

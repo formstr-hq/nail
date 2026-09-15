@@ -12,6 +12,9 @@ services:
         VITE_API_CANONICAL_BASE_URL: ${VITE_API_CANONICAL_BASE_URL:-}
         VITE_MAIL_DOMAIN: ${VITE_MAIL_DOMAIN:-mailstr.app}
         VITE_MAILS_URL: ${VITE_MAILS_URL:-/mails}
+        # Outbound/verification bridge domain; must match the deployment
+        # (stg.mailstr.app on staging). Unset = the app's mailstr.app default.
+        VITE_BRIDGE_DOMAIN: ${VITE_BRIDGE_DOMAIN:-mailstr.app}
     container_name: mailstr-web-deploy
     volumes:
       - ${WEB_DIST_PATH:?set WEB_DIST_PATH in .env}:/output
