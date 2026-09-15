@@ -29,6 +29,7 @@ import {
   DiscoveryBanner,
   EncryptedBanner,
   AliasFix,
+  BridgeResolvingBanner,
   BridgeUnavailableBanner,
 } from '@/app/components/compose/StatusBanners'
 import { ComposerFooter } from '@/app/components/compose/ComposerFooter'
@@ -36,9 +37,13 @@ import { ComposerFooter } from '@/app/components/compose/ComposerFooter'
 interface ComposeModalProps {
   onClose: () => void
   ctx: ResolveContext
-  /** Non-null when the outbound bridge failed to resolve — external recipients
-   *  cannot be delivered this session; surfaced instead of only logged (D4). */
+  /** Non-null once bridge resolution settled with no usable outbound bridge —
+   *  external recipients cannot be delivered this session; surfaced instead of
+   *  only logged (D4). */
   bridgeError?: string | null
+  /** True while any bridge probe is still in flight — distinct from a failed
+   *  resolution, so the composer doesn't claim unavailability prematurely. */
+  bridgeResolving?: boolean
   draft?: Draft
   /** The user's own addresses, so the recipient picker never suggests them. */
   selfAddresses: string[]
@@ -60,6 +65,7 @@ export function ComposeModal({
   onClose,
   ctx,
   bridgeError,
+  bridgeResolving,
   draft,
   selfAddresses,
   ownedAliases,
@@ -364,6 +370,8 @@ export function ComposeModal({
         )}
 
         {npubBlocked && <NpubGuardBanner fix={<AliasFix alias={ownedAliases[0]} onSwitch={switchToAlias} onBuyAddress={onBuyAddress} />} />}
+
+        {bridgeResolving && !bridgeError && <BridgeResolvingBanner />}
 
         {bridgeError && <BridgeUnavailableBanner message={bridgeError} />}
 

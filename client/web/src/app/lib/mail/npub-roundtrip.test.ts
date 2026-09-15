@@ -34,7 +34,7 @@ describe('npub → npub direct mail', () => {
     const idx = targets.indexOf(RECIP)
     expect(idx).toBeGreaterThanOrEqual(0)
 
-    const out = await decodeGiftWrap(wraps[idx], keySigner(RECIP_SK), null, RECIP)
+    const out = await decodeGiftWrap(wraps[idx], keySigner(RECIP_SK), RECIP)
     expect('email' in out).toBe(true)
     if ('email' in out) {
       expect(out.email.subject).toBe('hello there')
@@ -59,7 +59,7 @@ describe('non-RFC2822 mail content', () => {
       RECIP,
       keySigner(SENDER_SK),
     )
-    const out = await decodeGiftWrap(wrap, keySigner(RECIP_SK), null, RECIP)
+    const out = await decodeGiftWrap(wrap, keySigner(RECIP_SK), RECIP)
     expect('email' in out).toBe(true)
     if ('email' in out) {
       // Every character the sender wrote is present, not dropped as a bogus header.

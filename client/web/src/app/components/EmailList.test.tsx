@@ -19,14 +19,13 @@ const LIVE: InboxStatus = { phase: 'live', relays: ['wss://r'], decoding: 0 }
 function email(over: Partial<Email> = {}): Email {
   return {
     id: 'a'.repeat(64),
-    from: { address: 'sender@example.com', name: 'Ada' },
+    fromHeader: { address: 'sender@example.com', name: 'Ada' },
     to: [{ address: 'me@mailstr.app' }],
     subject: 'Hello there',
     body: 'The body copy.',
     attachments: [],
     timestamp: 1_000_000,
     senderPubkey: 'c'.repeat(64),
-    senderProof: 'nip05',
     read: false,
     labelEventIds: [],
     labels: [],

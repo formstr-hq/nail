@@ -1,69 +1,94 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useAccountStore } from '@/app/store/account'
 import { useSettingsStore } from '@/app/store/settings'
-import { buildResolveContext } from '@/app/lib/nostr/bridge'
+import { useBridgeStore } from '@/app/store/bridge'
+import {
+  bridgeTargets,
+  outboundBridge,
+  resolveBridgeProbes,
+  type BridgeProbe,
+} from '@/app/lib/nostr/bridge'
 import { BRIDGE_DOMAIN } from '@/app/lib/nostr/constants'
 import { pubkeyToNpub } from '@/app/lib/nostr/giftwrap'
 import type { ResolveContext } from '@/app/lib/mail/resolve'
 
 /**
- * The routing context for the signed-in user: which domains are local, which
- * domain their own address lives on, and which bridge relays their outbound
- * legacy mail.
+ * The routing context for the signed-in user plus the live state of every
+ * bridge it depends on.
  *
- * Resolved once here rather than per-send, because it costs a NIP-05 lookup
- * and the answer changes only when the user's address or bridge override does.
- * `bridgePubkey` stays null until the lookup lands (and if it fails), and
+ * Resolution is asynchronous and can have three outcomes per bridge —
+ * in progress, resolved, or failed — and the UI must reflect whichever is
+ * current: mail already on screen re-derives its sender proof when a bridge
+ * lands (see useSenderIdentity), and the composer distinguishes "still
+ * resolving" from "could not resolve" rather than failing immediately.
+ *
+ * `ctx.bridgePubkey` is the bridge OUTBOUND mail goes through (an override
+ * wins, else the default). It stays null until that target resolves, and
  * callers must treat null as "cannot send to legacy addresses" rather than
- * sending anyway. A failed lookup is exposed as `bridgeError` so Settings and
- * the composer can say external delivery is unavailable instead of only
- * logging it (audit D4).
+ * sending anyway.
  */
 export interface ResolveContextState {
   ctx: ResolveContext
-  /** Non-null when the bridge lookup failed — legacy outbound is unavailable. */
+  /** Live per-bridge state, in target order (default first). */
+  probes: BridgeProbe[]
+  /** True while any bridge probe is in flight (or hasn't started yet). */
+  resolving: boolean
+  /** Non-null once resolution settled with no usable outbound bridge. */
   bridgeError: string | null
+  /** Re-run every probe (the manual "reload" path). */
+  retry: () => void
 }
 
 export function useResolveContext(): ResolveContextState {
   const { account } = useAccountStore()
   const { settings } = useSettingsStore()
+  const probes = useBridgeStore((s) => s.probes)
+  const setProbes = useBridgeStore((s) => s.setProbes)
+  const upsertProbe = useBridgeStore((s) => s.upsertProbe)
+  const [attempt, setAttempt] = useState(0)
+  const retry = useCallback(() => setAttempt((n) => n + 1), [])
 
   const senderAddress =
     settings.senderAddress ||
     (account ? `${pubkeyToNpub(account.pubkey)}@${BRIDGE_DOMAIN}` : `@${BRIDGE_DOMAIN}`)
-  const override = settings.bridgeDomains?.[0]
-
-  const [ctx, setCtx] = useState<ResolveContext>({
-    localDomains: [BRIDGE_DOMAIN],
-    ownDomain: BRIDGE_DOMAIN,
-    bridgePubkey: null,
-  })
-  const [bridgeError, setBridgeError] = useState<string | null>(null)
+  const overridesKey = (settings.bridgeDomains ?? []).join(',')
 
   useEffect(() => {
     let alive = true
-    buildResolveContext(senderAddress, override)
-      .then((resolved) => {
-        if (!alive) return
-        setCtx(resolved)
-        // A bridge that resolved to no pubkey is a real failure, not a
-        // transient one: external mail cannot be sent this session.
-        setBridgeError(
-          resolved.bridgePubkey
-            ? null
-            : 'Outbound bridge could not be resolved — external email is unavailable.',
-        )
-      })
-      .catch((err: unknown) => {
-        if (!alive) return
-        console.error('[bridge] could not resolve outbound bridge', err)
-        setBridgeError(err instanceof Error ? err.message : String(err))
-      })
+    const targets = bridgeTargets(senderAddress, settings.bridgeDomains)
+    // Seed every target as resolving so the UI shows progress immediately and
+    // stale probe rows from a previous sender address cannot linger.
+    setProbes(targets.map((t) => ({ ...t, status: 'resolving' })))
+
+    resolveBridgeProbes(targets, (probe) => {
+      if (alive) upsertProbe(probe)
+    })
+
     return () => {
       alive = false
     }
-  }, [senderAddress, override])
+    // overridesKey stands in for the array identity (a fresh array each load).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [senderAddress, overridesKey, attempt, setProbes, upsertProbe])
 
-  return { ctx, bridgeError }
+  const ownDomain = senderAddress.includes('@')
+    ? senderAddress.slice(senderAddress.lastIndexOf('@') + 1)
+    : BRIDGE_DOMAIN
+  const localDomains = Array.from(new Set([BRIDGE_DOMAIN, ownDomain]))
+  const bridgePubkey = outboundBridge(probes)
+  // Before the first pass lands, probes is empty — that is "still resolving",
+  // not "failed", so the composer must not flash an unavailable error.
+  const resolving = probes.length === 0 || probes.some((p) => p.status === 'resolving')
+  const bridgeError =
+    !resolving && bridgePubkey === null
+      ? 'Outbound bridge could not be resolved — external email is unavailable.'
+      : null
+
+  return {
+    ctx: { localDomains, ownDomain, bridgePubkey },
+    probes,
+    resolving,
+    bridgeError,
+    retry,
+  }
 }

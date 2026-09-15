@@ -10,6 +10,7 @@ import { useMailStore } from '@/app/store/mail'
 import { useAccountStore } from '@/app/store/account'
 import { useSettingsStore } from '@/app/store/settings'
 import { useComposeOverlay } from '@/app/store/composeOverlay'
+import { useBridgeStore } from '@/app/store/bridge'
 import type { ResolveContext } from '@/app/lib/mail/resolve'
 
 vi.mock('@/app/lib/mail/send', async (importOriginal) => ({
@@ -32,7 +33,6 @@ const CTX: ResolveContext = {
   bridgePubkey: 'a'.repeat(64),
   localDomains: ['mailstr.app'],
 } as unknown as ResolveContext
-
 const SELF = ['me@mailstr.app', 'npub1' + 'q'.repeat(58) + '@mailstr.app']
 
 const PROPS = {
@@ -65,6 +65,7 @@ beforeEach(() => {
   })
   useSettingsStore.setState({ settings: {}, loaded: true, loading: false })
   useComposeOverlay.setState({ draft: null, minimized: false })
+  useBridgeStore.setState({ probes: [], nip05: {} })
 })
 
 describe('ComposeModal happy path', () => {
@@ -116,20 +117,25 @@ describe('ComposeModal happy path', () => {
       emails: {
         ['a'.repeat(64)]: {
           id: 'a'.repeat(64),
-          from: { address: 'ada@mailstr.app', name: 'Ada' },
+          fromHeader: { address: 'ada@mailstr.app', name: 'Ada' },
           to: [{ address: 'me@mailstr.app' }],
           subject: 'Prior thread',
           body: '',
           attachments: [],
           timestamp: 1,
           senderPubkey: 'c'.repeat(64),
-          senderProof: 'nip05',
           read: true,
           labelEventIds: [],
           labels: [],
         },
       },
       seenIds: new Set(['a'.repeat(64)]),
+    })
+    // A contact suggestion uses the EFFECTIVE sender, so the prior message's
+    // header only becomes one once something backs it. Seed the NIP-05 verdict
+    // the render-time derivation reads (the sealing key owns ada's address).
+    useBridgeStore.setState({
+      nip05: { 'ada@mailstr.app': { status: 'resolved', pubkey: 'c'.repeat(64) } },
     })
 
     render(<ComposeModal {...PROPS} />)

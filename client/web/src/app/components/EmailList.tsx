@@ -1,7 +1,10 @@
 import { useMailStore, isFiled } from '@/app/store/mail'
 import { useAccountStore } from '@/app/store/account'
 import { useMailActions } from '@/app/hooks/useMailActions'
+import { useSenderIdentity } from '@/app/hooks/useSenderIdentity'
+import { useEffectiveSenders } from '@/app/hooks/useEffectiveSenders'
 import { matchesAlias } from '@/app/lib/mail/aliasFilter'
+import { showsSigningKey } from '@/app/lib/mail/senderProof'
 import type { Email, EmailFolder } from '@/app/types/mail'
 import type { InboxStatus } from '@/app/hooks/useInbox'
 import { useMemo, useState } from 'react'
@@ -46,6 +49,10 @@ function formatDate(ts: number): string {
 function EmailRow({ email, read, selected }: { email: Email; read: boolean; selected: boolean }) {
   const setSelected = useMailStore((s) => s.setSelected)
   const { markRead } = useMailActions()
+  // Live sender identity: a bridge/NIP-05 verdict that lands after this row
+  // first painted must update it, so it is derived here per row, not frozen
+  // on the stored email.
+  const { proof, from } = useSenderIdentity(email)
 
   function handleClick() {
     setSelected(email.id)
@@ -72,11 +79,11 @@ function EmailRow({ email, read, selected }: { email: Email; read: boolean; sele
           className={cx(
             'truncate text-[12.5px]',
             read ? 'font-medium text-foreground' : 'font-bold text-foreground',
-            // An unproved sender is shown by key, so render it as one.
-            email.senderProof === 'none' && 'font-mono text-[11.5px]',
+            // A sender shown by key is rendered as one.
+            showsSigningKey(proof) && 'font-mono text-[11.5px]',
           )}
         >
-          {email.from.name || email.from.address}
+          {from.name || from.address}
         </span>
         <span className="flex-none font-mono text-[10px] tabular-nums text-subtle">
           {formatDate(email.timestamp)}
@@ -110,7 +117,7 @@ function EmailRow({ email, read, selected }: { email: Email; read: boolean; sele
       )}
 
       <div className="mt-1.5">
-        <SenderProofLine proof={email.senderProof} />
+        <SenderProofLine proof={proof} />
       </div>
     </button>
   )
@@ -151,6 +158,7 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
     clearSelectionClearedReason,
   } = useMailStore()
   const myPubkey = useAccountStore((s) => s.account?.pubkey)
+  const effectiveFrom = useEffectiveSenders()
   const { deleteForever } = useMailActions()
   // Spin the icon briefly on tap so the refresh reads as "doing something" even
   // when the cache answers instantly and nothing visibly changes.
@@ -167,7 +175,7 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
         .filter((e) => {
           // Scope to the selected alias first, so every folder count and list
           // reflects the inbox the user picked.
-          if (!matchesAlias(e, inboxFilter)) return false
+          if (!matchesAlias(e, inboxFilter, effectiveFrom.get(e.id))) return false
           const flags = mailState[e.id]
           // Trash wins over archive: a mail flagged both (e.g. archived, then
           // deleted) belongs in Trash, matching how restore clears both.
@@ -181,14 +189,17 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
           return e.senderPubkey !== myPubkey
         })
         .sort((a, b) => b.timestamp - a.timestamp),
-    [emails, mailState, folder, inboxFilter, myPubkey],
+    [emails, mailState, folder, inboxFilter, myPubkey, effectiveFrom],
   )
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase()
     if (!needle) return inFolder
+    // Search the raw header text: the derived sender may be the npub for an
+    // unbacked message, and a user searching the name they saw in the list
+    // should still find it. `aliasFilter`/contacts use the effective sender.
     return inFolder.filter((e) =>
-      [e.subject, e.body, e.from.name ?? '', e.from.address]
+      [e.subject, e.body, e.fromHeader.name ?? '', e.fromHeader.address]
         .join(' ')
         .toLowerCase()
         .includes(needle),

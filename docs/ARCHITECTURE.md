@@ -169,7 +169,7 @@ On receipt, in order:
    `pubkey` — else reject as `wrapkey-mismatch` (see §4 above).
 6. RFC 2822 `From:` is authoritative **only where the claim is backed by
    something**. Three cases qualify, and nothing else does:
-   - `seal.pubkey` is the configured bridge — the bridge already refused to
+   - `seal.pubkey` is a configured bridge — the bridge already refused to
      relay a `From` the sending key does not own (§5);
    - `seal.pubkey` is the reader's own key — their own outgoing copy;
    - the address's NIP-05 record resolves to `seal.pubkey` — the same proof
@@ -181,6 +181,31 @@ On receipt, in order:
    anyone may publish `name: "Your Bank"` — so it never replaces the npub,
    only accompanies it. Substituting it outright would make spoofing
    invisible; showing it alongside a key the reader can check does not.
+
+   **This verdict is derived at render time, never stored on the decoded
+   email** (ADR-005). Bridge resolution is an asynchronous NIP-05 lookup, so a
+   message routinely decodes and paints before the bridge key is known; a
+   verdict baked in at decode time would freeze "unverified" permanently, and
+   `seenIds` would never let it be recomputed. The email carries only raw
+   facts (`fromHeader`, `senderPubkey`); `lib/mail/senderProof.ts` maps them
+   plus the live bridge/probe state to one of:
+
+   - `bridge-seal` / `nip05` / `own-seal` — the header is shown, with the
+     check that backs it;
+   - `checking` — a check that could still back the header is in flight; the
+     claimed header is shown with a neutral "checking sender" line, never a
+     Verified badge;
+   - `bridge-unavailable` — every configured bridge failed to resolve, so the
+     bridge check could not be performed at all. Our resolver failed; this is
+     not evidence about the sender, and the UI says so;
+   - `none` — every check settled without a proof; the key is shown.
+
+   A user may configure **multiple bridges** (the default `_smtp@<their own
+   domain>` is always among them). The seal matches if it equals ANY resolved
+   bridge's key; a resolved override still wins for outbound routing, and a
+   failed override never silently falls back to the default. Probes are live
+   state — never persisted, and reset on account switch — so a bridge that
+   resolves late updates every message already on screen.
 
 ### Envelope versus headers
 
@@ -239,7 +264,7 @@ the `From` address.
 **The client is untrusted by the bridge.** The bridge authorizes against
 `seal.pubkey` only.
 
-**The bridge is conditionally trusted by the client**, per verification rule 5.
+**The bridge is conditionally trusted by the client**, per verification rule 6.
 
 ### The client's `From` check is a guard, not a boundary
 
@@ -346,7 +371,7 @@ behaviour, and bounces must say so specifically.
 
 Delivered as a kind-1301 gift wrap sealed by the bridge, addressed to
 `seal.pubkey`, carrying a real RFC 2822 delivery-status message. Because the
-bridge sealed it, verification rule 5 renders it as a genuine bridge notice.
+bridge sealed it, verification rule 6 renders it as a genuine bridge notice.
 
 ### Bridge self-publication
 
@@ -619,7 +644,7 @@ Until 1 and 2 are done, this system is **not proven to deliver mail**.
   not work — see "Reaching the API in development" (§2).
 - **Resumed bunker sessions hung** on their first requests. See §8.
 - **Unverified senders rendered as raw hex pubkeys**, including the user's own
-  outgoing copies, because rule 5 recognised only the bridge. See §4 rule 5.
+  outgoing copies, because rule 6 recognised only the bridge. See §4 rule 6.
 
 ### Live-deployment gap (as of 2026-07-21)
 

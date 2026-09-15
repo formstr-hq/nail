@@ -16,14 +16,14 @@ function PlainBody({ text }: { text: string }) {
   )
 }
 
-export function MessageBody({ email }: { email: Email }) {
+export function MessageBody({ email, senderAddress }: { email: Email; senderAddress: string }) {
   const [allowRemote, setAllowRemote] = useState(false)
   const [passphraseNonce, setPassphraseNonce] = useState(0)
   const preference = useThemeStore((s) => s.preference)
   const dark = resolveTheme(preference) === 'dark'
   const observerRef = useRef<ResizeObserver | null>(null)
 
-  const pgp = usePgpMessage(email, passphraseNonce)
+  const pgp = usePgpMessage(email, senderAddress, passphraseNonce)
 
   // A decrypted PGP/MIME envelope carries its own html part (see
   // usePgpMessage's unwrapMimeEnvelope); that's what actually renders, in

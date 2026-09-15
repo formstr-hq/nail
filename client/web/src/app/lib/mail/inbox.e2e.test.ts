@@ -12,9 +12,8 @@ import { fakeSocketFactory } from '@formstr/local-relay/testkit'
 import { buildMailRumor, sealAndWrap, keySigner } from '@protocol'
 import { decodeGiftWrap } from './receive'
 
-// decodeGiftWrap resolves an unproven sender's display name via a kind-0 lookup,
-// which would spin up the real relay worker. Stub it so this test stays hermetic
-// and exercises only the receive transport + decode.
+// Decode no longer performs any kind-0 lookup — sender display is derived at
+// render time. Stub the profile module so any stray import stays hermetic.
 vi.mock('@/lib/nostr/profile', () => ({
   fetchProfileName: vi.fn(async () => null),
   clearProfileCache: vi.fn(),
@@ -68,14 +67,14 @@ describe('inbox receive over the local relay', () => {
 
     const wrap = await wrapToMe()
 
-    const emails: { from: { address: string }; subject: string }[] = []
+    const emails: { fromHeader: { address: string }; subject: string }[] = []
     const decodes: Promise<void>[] = []
     client.observe(
       [{ kinds: [1059], '#p': [ME] }],
       {
         onEvent: (e: Event) => {
           decodes.push(
-            decodeGiftWrap(e, keySigner(ME_SK), null, ME).then((out) => {
+            decodeGiftWrap(e, keySigner(ME_SK), ME).then((out) => {
               if ('email' in out) emails.push(out.email)
             }),
           )
@@ -95,7 +94,7 @@ describe('inbox receive over the local relay', () => {
     await Promise.all(decodes)
 
     expect(emails).toHaveLength(1)
-    expect(emails[0].from.address).toBe('me@mailstr.app')
+    expect(emails[0].fromHeader.address).toBe('me@mailstr.app')
     expect(emails[0].subject).toBe('e2e')
   })
 
@@ -126,7 +125,7 @@ describe('inbox receive over the local relay', () => {
       {
         onEvent: (e: Event) => {
           decodes.push(
-            decodeGiftWrap(e, keySigner(ME_SK), null, ME).then((out) =>
+            decodeGiftWrap(e, keySigner(ME_SK), ME).then((out) =>
               'email' in out ? out.wrapSecret : undefined,
             ),
           )

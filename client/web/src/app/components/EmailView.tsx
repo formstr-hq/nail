@@ -1,6 +1,7 @@
 import { useMailStore } from '@/app/store/mail'
 import { useMailActions } from '@/app/hooks/useMailActions'
 import { useProfile } from '@/app/hooks/useProfile'
+import { useSenderIdentity } from '@/app/hooks/useSenderIdentity'
 import type { Draft } from '@/app/lib/mail/draft'
 import { replyDraft, replyAllDraft, forwardDraft } from '@/app/lib/mail/draft'
 import { SenderProofTrace } from '@/app/components/ui/SenderProof'
@@ -32,8 +33,12 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
   const { emails, selectedId, mailState, setSelected } = useMailStore()
   const email = selectedId ? emails[selectedId] : null
   const { archive, unarchive, trash, restore, deleteForever } = useMailActions()
-  // Hook order is fixed, so this runs before the early return below; passing
-  // null when nothing is open makes it a no-op.
+  // Live sender identity for the open message. Derived, never read off the
+  // stored email: a bridge resolution landing after decode must repaint this
+  // header, and a spoofed header must never be shown as the sender.
+  const { proof, from } = useSenderIdentity(email)
+  // The profile here labels the sealing KEY (avatar/picture), so it must key
+  // off senderPubkey and not the possibly-spoofed header address.
   const senderProfile = useProfile(email?.senderPubkey ?? null)
 
   // Filing a mail from the reading pane removes it from the folder in view, so
@@ -81,16 +86,16 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
 
         <div className="flex items-center gap-2.5 pt-3">
           <Avatar
-            label={email.from.name || email.from.address}
+            label={from.name || from.address}
             picture={senderProfile.picture}
             size={32}
           />
           <div className="min-w-0 flex-1">
             <div className="truncate text-[13px] font-semibold text-foreground">
-              {email.from.name || email.from.address}
+              {from.name || from.address}
             </div>
-            <div className="truncate font-mono text-[10.5px] text-subtle" title={email.from.address}>
-              {email.from.name ? email.from.address : `to ${email.to.map((a) => a.address).join(', ')}`}
+            <div className="truncate font-mono text-[10.5px] text-subtle" title={from.address}>
+              {from.name ? from.address : `to ${email.to.map((a) => a.address).join(', ')}`}
             </div>
           </div>
           <time
@@ -101,7 +106,7 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
           </time>
         </div>
 
-        {email.from.name && (
+        {from.name && (
           <div className="truncate pt-2 font-mono text-[10.5px] text-subtle">
             to {email.to.map((a) => a.address).join(', ')}
             {email.cc?.length ? ` · cc ${email.cc.map((a) => a.address).join(', ')}` : ''}
@@ -109,13 +114,13 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
         )}
 
         <div className="pt-3">
-          <SenderProofTrace proof={email.senderProof} />
+          <SenderProofTrace proof={proof} />
         </div>
       </header>
 
       <div className="flex-1 overflow-y-auto px-5 py-5 md:px-6">
         <div className="max-w-[68ch]">
-          <MessageBody email={email} />
+          <MessageBody email={email} senderAddress={from.address} />
         </div>
 
         {email.attachments.length > 0 && (
@@ -130,7 +135,7 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
           </div>
         )}
 
-        {email.debug && <DebugPanel email={email} />}
+        {email.debug && <DebugPanel email={email} proof={proof} />}
       </div>
 
       <footer className="flex items-center gap-2 border-t border-border px-5 py-3 md:px-6">

@@ -5,11 +5,8 @@ import {
   parseImetaTags,
   type ProtocolSigner,
 } from '@protocol'
-import { nip19 } from 'nostr-tools'
-import { probeNip05 } from '@/app/lib/nostr/nip05'
-import { fetchProfileName } from '@/app/lib/nostr/profile'
 import { parseRfc2822 } from './rfc2822'
-import type { Attachment, Email, SenderProof } from '@/app/types/mail'
+import type { Attachment, Email } from '@/app/types/mail'
 
 /** The shape postal-mime hands back; imported structurally to avoid a dep. */
 type ParsedAttachment = {
@@ -41,41 +38,6 @@ export type DecodeResult =
       wrapSecret?: string
     }
   | { failure: DecodeFailure }
-
-/**
- * May we display the RFC 2822 `From:` header as the sender, and on what basis?
- *
- * Headers are just text the sender chose, so believing them unconditionally
- * would let anyone gift-wrap a message claiming `From: ceo@company.com`. Each
- * branch below is a case where the claim is actually backed by something:
- *
- *  - the bridge sealed it, and the bridge refuses to relay a `From` the
- *    sending key does not own (that check is the whole point of §5);
- *  - we sealed it ourselves, so it is our own outgoing copy;
- *  - the address's NIP-05 record resolves to the sealing key, which is the
- *    same proof the bridge performs, done here directly.
- *
- * Anything else falls back to the sealing pubkey, which is the only identity
- * we can actually verify.
- *
- * Returns which check succeeded rather than a bare boolean: the mailbox shows
- * the basis to the reader, and "the bridge vouched for this" is a different
- * claim from "this address's NIP-05 resolves to the sealing key".
- */
-async function establishSenderProof(params: {
-  fromAddress: string | undefined
-  sealPubkey: string
-  bridgePubkey: string | null
-  ownPubkey: string | null
-}): Promise<SenderProof> {
-  const { fromAddress, sealPubkey, bridgePubkey, ownPubkey } = params
-  if (!fromAddress) return 'none'
-  if (bridgePubkey !== null && sealPubkey === bridgePubkey) return 'bridge-seal'
-  if (ownPubkey !== null && sealPubkey === ownPubkey) return 'own-seal'
-
-  // Cached and bounded; a miss or a timeout just means we show the pubkey.
-  return (await probeNip05(fromAddress)) === sealPubkey ? 'nip05' : 'none'
-}
 
 /**
  * MIME parts carried in the message body itself.
@@ -157,16 +119,17 @@ function hostedAttachments(tags: string[][]): Attachment[] {
 /**
  * Decode one gift wrap into a displayable email.
  *
- * The trust rule is the important part. RFC 2822 `From:` is only authoritative
- * when the configured bridge sealed the message — the bridge is what verified
- * the sender's identity upstream. For any other sealer the headers are just
- * text the sender chose, so the sender IS the sealing key. Without this,
- * anyone could gift-wrap a message claiming `From: ceo@company.com`.
+ * The wrap is verified here, but the *interpretation* of its RFC 2822 headers
+ * is deliberately not: `From:` is text the sender chose, and whether it may be
+ * shown depends on the configured bridges, which resolve asynchronously and
+ * can change (or fail) at any time. So the email stores the raw header and the
+ * sealing key, and the proof is derived at render time — see
+ * lib/mail/senderProof.ts. Computing it here would freeze a verdict on
+ * whatever was known at decode time and never correct it.
  */
 export async function decodeGiftWrap(
   event: Event,
   signer: ProtocolSigner,
-  bridgePubkey: string | null,
   ownPubkey: string | null = null,
 ): Promise<DecodeResult> {
   // No staleness bound here: unlike the bridge, a mailbox legitimately shows
@@ -212,24 +175,14 @@ export async function decodeGiftWrap(
     // attachments.
     const pgpMime = looksLikeMail ? extractPgpMime(parsed.attachments) : null
 
-    const senderProof = await establishSenderProof({
-      fromAddress: parsed.from?.address,
-      sealPubkey: seal.pubkey,
-      bridgePubkey,
-      ownPubkey,
-    })
-
-    // Unverified senders are identified by their key, not by a header we
-    // cannot check. Show the npub rather than raw hex, and label it with the
-    // kind-0 name if the sender publishes one — self-asserted, so the npub
-    // stays visible next to it rather than being replaced by it.
-    const from =
-      senderProof !== 'none'
-      ? { name: parsed.from?.name, address: parsed.from!.address! }
-      : {
-          name: (await fetchProfileName(seal.pubkey)) ?? undefined,
-          address: nip19.npubEncode(seal.pubkey),
-        }
+    // The claimed `From:` header, kept verbatim. Never display it directly —
+    // use useSenderIdentity / deriveSenderIdentity, which decide whether it is
+    // backed by the sealing key. A header-less message gets an empty address;
+    // the derivation handles that as "no claim".
+    const fromHeader = {
+      name: parsed.from?.name,
+      address: parsed.from?.address || parsed.from?.name || '',
+    }
 
     const toDisplay = (a: { name?: string; address?: string }) => ({
       name: a.address ? a.name : undefined,
@@ -245,7 +198,7 @@ export async function decodeGiftWrap(
         messageId: parsed.messageId,
         inReplyTo: parsed.inReplyTo,
         references: parsed.references?.split(/\s+/).filter(Boolean),
-        from,
+        fromHeader,
         to: (parsed.to ?? []).map(toDisplay),
         cc: ccAddresses.length ? ccAddresses : undefined,
         subject: parsed.subject ?? '(no subject)',
@@ -268,7 +221,6 @@ export async function decodeGiftWrap(
         ],
         timestamp: rumor.created_at,
         senderPubkey: seal.pubkey,
-        senderProof,
         // Our own outgoing copies (the self-wrap that files under Sent) are
         // never "unread" — we wrote them. Marking them read at the source keeps
         // Sent from ever showing bold/unread and out of any unread count,

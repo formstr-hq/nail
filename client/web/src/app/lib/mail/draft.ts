@@ -1,4 +1,4 @@
-import type { Email } from '@/app/types/mail'
+import type { Email, MailAddress } from '@/app/types/mail'
 
 /** A compose window's starting contents. Used verbatim — no further munging. */
 export interface Draft {
@@ -7,6 +7,18 @@ export interface Draft {
   body: string
   inReplyTo?: string
   references?: string[]
+}
+
+/**
+ * The sender a reply/forward should address and quote.
+ *
+ * Callers pass the EFFECTIVE sender (header when backed, sealing key when
+ * not), never `email.fromHeader` directly: a spoofed header must not become
+ * the reply's recipient, and the quoted attribution must name the identity the
+ * reader was actually shown.
+ */
+function senderOf(email: Email, sender?: MailAddress): MailAddress {
+  return sender ?? email.fromHeader
 }
 
 /**
@@ -36,9 +48,9 @@ function threadRefs(email: Email): string[] | undefined {
 }
 
 /** `> ` quoting, with an attribution line above it. */
-function quote(email: Email): string {
+function quote(email: Email, sender: MailAddress): string {
   const when = new Date(email.timestamp * 1000).toLocaleString()
-  const who = email.from.name ? `${email.from.name} <${email.from.address}>` : email.from.address
+  const who = sender.name ? `${sender.name} <${sender.address}>` : sender.address
   const quoted = email.body
     .trimEnd()
     .split('\n')
@@ -47,11 +59,12 @@ function quote(email: Email): string {
   return `\n\nOn ${when}, ${who} wrote:\n${quoted}\n`
 }
 
-export function replyDraft(email: Email): Draft {
+export function replyDraft(email: Email, sender?: MailAddress): Draft {
+  const who = senderOf(email, sender)
   return {
-    to: email.from.address,
+    to: who.address,
     subject: prefixOnce(email.subject, 'Re'),
-    body: quote(email),
+    body: quote(email, who),
     inReplyTo: email.messageId,
     references: threadRefs(email),
   }
@@ -65,19 +78,20 @@ export function replyDraft(email: Email): Draft {
  * the domain part of an address is, and in practice the local part is treated
  * that way by every mail host this bridges to.
  */
-export function replyAllDraft(email: Email, self: string[]): Draft {
+export function replyAllDraft(email: Email, self: string[], sender?: MailAddress): Draft {
+  const who = senderOf(email, sender)
   const mine = new Set(self.map((a) => a.trim().toLowerCase()).filter(Boolean))
   const seen = new Set<string>()
   const recipients: string[] = []
 
-  for (const { address } of [email.from, ...email.to, ...(email.cc ?? [])]) {
+  for (const { address } of [who, ...email.to, ...(email.cc ?? [])]) {
     const key = address.trim().toLowerCase()
     if (!key || mine.has(key) || seen.has(key)) continue
     seen.add(key)
     recipients.push(address)
   }
 
-  return { ...replyDraft(email), to: recipients.join(', ') }
+  return { ...replyDraft(email, who), to: recipients.join(', ') }
 }
 
 /**
@@ -85,10 +99,11 @@ export function replyAllDraft(email: Email, self: string[]): Draft {
  * References — attaching them would splice the forward into the original
  * conversation in the recipient's client.
  */
-export function forwardDraft(email: Email): Draft {
+export function forwardDraft(email: Email, sender?: MailAddress): Draft {
+  const who = senderOf(email, sender)
   const header = [
     '---------- Forwarded message ----------',
-    `From: ${email.from.name ? `${email.from.name} <${email.from.address}>` : email.from.address}`,
+    `From: ${who.name ? `${who.name} <${who.address}>` : who.address}`,
     `Date: ${new Date(email.timestamp * 1000).toLocaleString()}`,
     `Subject: ${email.subject}`,
     `To: ${email.to.map((a) => a.address).join(', ')}`,

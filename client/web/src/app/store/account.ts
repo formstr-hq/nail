@@ -8,6 +8,7 @@ import { useMailStore } from '@/app/store/mail'
 import { useSettingsStore } from '@/app/store/settings'
 import { useComposeOverlay } from '@/app/store/composeOverlay'
 import { useBuyOverlay } from '@/app/store/buyOverlay'
+import { useBridgeStore } from '@/app/store/bridge'
 import { bumpSessionEpoch } from '@/app/store/sessionEpoch'
 
 /**
@@ -30,6 +31,9 @@ export function resetAccountScopedState(): void {
   useSettingsStore.getState().reset()
   useComposeOverlay.getState().close()
   useBuyOverlay.getState().close()
+  // Bridge probes are per sender-address: a verdict for the outgoing account's
+  // domain must never be applied to the incoming account's mail.
+  useBridgeStore.getState().reset()
   clearSessionPassphrases()
   resetLocalRelay()
 }
