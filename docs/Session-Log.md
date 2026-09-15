@@ -465,3 +465,44 @@ asking the question before the answer existed.
   does not yet expose the list. Multi-bridge verification is implemented and
   tested, but the UI for selecting several bridges is not part of this change.
 
+## 2026-09-15 — Deploy fix: `VITE_BRIDGE_DOMAIN` missing from the docker build args
+
+Context consulted: the ADR-005 entry above plus the rev-3/cursor entries, per
+rule 15. Deployment target is the `chhotu` host at `/root/Clients/nail`
+(mailcow sidecar + `stg.mailstr.app`), pulling from the GitHub remote.
+
+### Root cause
+
+The deployed staging bundle had the production bridge domain baked in:
+`const Ge="mailstr.app"` with zero `stg.mailstr.app` occurrences in the mail
+chunk. `docker-compose.yml` passed `VITE_API_BASE_URL`, `VITE_MAIL_DOMAIN`,
+etc. as build args but **not `VITE_BRIDGE_DOMAIN`**, and `client/web/Dockerfile`
+had no `ARG`/`ENV` for it either. `.dockerignore` excludes `.env`, so Vite's
+build inside the image could not read the server's
+`VITE_BRIDGE_DOMAIN=stg.mailstr.app` — `lib/nostr/constants.ts` fell through to
+its `?? 'mailstr.app'` default. Introduced by the phase-4 merge (`5990c39`),
+which folded the old `client-deploy` compose service (which did pass the arg)
+into the single `web-deploy` service.
+
+Effect: bridge verification probed `_smtp@mailstr.app` (the production bridge)
+on staging, and outbound legacy mail routed through the production bridge.
+
+### What changed
+
+- `docker-compose.yml`: `VITE_BRIDGE_DOMAIN: ${VITE_BRIDGE_DOMAIN:-mailstr.app}`
+  build arg on `web-deploy`.
+- `client/web/Dockerfile`: documented, declared (`ARG`) and exported (`ENV`)
+  `VITE_BRIDGE_DOMAIN` alongside the other Vite args.
+
+### Verification (on chhotu)
+
+- Server fetched `0a53104` (pushed to `origin` = GitHub; the local ngit remote
+  is a different identity and the server tracks GitHub).
+- `docker compose up -d --build` — rebuilt and copied dist to
+  `/var/www/stg.mailstr.app`.
+- Served chunk `assets/App-Ba3YzHY5.js` now reads
+  `const Ge="stg.mailstr.app"` (grep count 1; previous chunk had
+  `"mailstr.app"` and 0 staging matches); `https://stg.mailstr.app/mails/`
+  returns 200 and references the new chunk.
+
+
