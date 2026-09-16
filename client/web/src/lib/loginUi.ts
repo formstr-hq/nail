@@ -47,12 +47,25 @@ export const TAB_COPY: Record<string, { title: string; desc: string; icon: strin
     desc: 'Scan with your signer app',
     icon: '<rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/>',
   },
+  nip55web: {
+    title: 'Signer app',
+    desc: 'Amber or another NIP-55 app on this device',
+    icon: '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
+  },
 }
 
 /** Order of the "already have a key?" rows under the create card. `android`
  *  (NIP-55) shows only in the native app and `extension` only on the web —
- *  removeInapplicableMethod drops whichever doesn't apply. */
-export const SECONDARY_TABS = ['android', 'extension', 'ncryptsec', 'bunker', 'nostrconnect']
+ *  removeInapplicableMethod drops whichever doesn't apply. `nip55web` is the
+ *  browser NIP-55 path, shown only on Android web. */
+export const SECONDARY_TABS = [
+  'android',
+  'nip55web',
+  'extension',
+  'ncryptsec',
+  'bunker',
+  'nostrconnect',
+]
 
 /**
  * Turn a raw signer/decryption error into something a person can act on. NIP-49
