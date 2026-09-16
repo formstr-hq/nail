@@ -185,11 +185,11 @@ export default function SignupWizard({
       }
       const el = loginRef.current
       if (!el || cancelled) return
-      // Browser NIP-55 needs an Android browser with clipboard access, and is
-      // suppressed in the native shell (removeInapplicableMethod handles the
-      // Capacitor `android` tab; this drops the browser counterpart there).
+      // Browser NIP-55 is hidden in the native shell (removeInapplicableMethod
+      // handles the Capacitor `android` tab; this drops the browser
+      // counterpart there) and warns on Firefox for Android.
       el.innerHTML = renderLoginHtml({
-        includeNip55Web: signer.supportsNip55Web(),
+        nip55Web: signer.nip55WebSupport(),
       })
       // The wizard card supplies its own heading, so no brand header here.
       tuneLoginUi(el, { relays: NOSTRCONNECT_RELAYS })
