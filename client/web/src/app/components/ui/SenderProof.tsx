@@ -12,6 +12,11 @@ import type { SenderProof } from '@/app/types/mail'
  * ordinary case on Nostr, not an error, so it gets plain neutral text rather
  * than a warning — reserving the colour for the claim that was actually
  * checked is what keeps it meaningful.
+ *
+ * `checking` and `bridge-unavailable` are deliberately badge-less: neither is
+ * a verdict about the sender. One is a check still running, the other is our
+ * own resolver failing, and the copy says exactly which so neither reads as
+ * "verified" or as an accusation.
  */
 const PROOF: Record<
   SenderProof,
@@ -33,6 +38,17 @@ const PROOF: Record<
     trusted: false,
     channel: 'your copy',
     detail: 'Your own copy of this message, signed with your key.',
+  },
+  checking: {
+    trusted: false,
+    channel: 'checking sender',
+    detail: 'Checking whether anything backs this sender’s address. The result will update here.',
+  },
+  'bridge-unavailable': {
+    trusted: false,
+    channel: 'bridge unavailable',
+    detail:
+      'The email bridge could not be reached, so this sender’s address could not be checked. The signing key is shown instead.',
   },
   none: {
     trusted: false,
@@ -70,7 +86,3 @@ export function SenderProofTrace({ proof }: { proof: SenderProof }) {
     </div>
   )
 }
-
-// NOTE: isProven() was removed in the phase-2 merge — nothing consumed it
-// (it wasn't exported to a consumer in client/ either). If a caller needs it,
-// put it in a lib/ module, not beside components (react-refresh rule).

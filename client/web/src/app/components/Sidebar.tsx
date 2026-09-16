@@ -1,5 +1,6 @@
 import { useMailStore, isFiled } from '@/app/store/mail'
 import { useAccountStore } from '@/app/store/account'
+import { useEffectiveSenders } from '@/app/hooks/useEffectiveSenders'
 import { AccountSwitcher } from '@/app/components/AccountSwitcher'
 import { matchesAlias } from '@/app/lib/mail/aliasFilter'
 import type { EmailFolder } from '@/app/types/mail'
@@ -70,6 +71,9 @@ function RelayState({ status }: { status: InboxStatus }) {
 export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onBuyAddress, aliases, status }: SidebarProps) {
   const { folder, setFolder, emails, mailState, inboxFilter, setInboxFilter } = useMailStore()
   const { account } = useAccountStore()
+  // Effective senders, so an unbacked (possibly spoofed) header never files a
+  // message under one of the user's aliases.
+  const effectiveFrom = useEffectiveSenders()
 
   // The badge sits on the Inbox row, so it must count Inbox mail specifically —
   // the same predicate EmailList uses for the inbox folder. A global count also
@@ -83,7 +87,7 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onB
     if (isFiled(flags) || e.labels.includes('spam') || e.senderPubkey === myPubkey || read) {
       return false
     }
-    return matchesAlias(e, inboxFilter)
+    return matchesAlias(e, inboxFilter, effectiveFrom.get(e.id))
   }).length
 
   return (

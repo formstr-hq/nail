@@ -312,3 +312,197 @@ rev-3 audit fix pass + ADR-002/003). The rev-3 work was committed first
     nostr-bridge` the alias resolves to — is fixed as part of this move and
     verified with a real image build.
 
+
+## 2026-09-14 — Restore `cursor: pointer` on buttons (Tailwind v4 preflight regression)
+
+Context consulted: the three entries above (rev-2 workspace merge + ADR-001,
+rev-3 audit + ADR-002/003, flat `client/` layout + ADR-004).
+
+### What changed
+
+1. **Root cause.** The mail client was ported Tailwind 3 → 4 in merge phase 2
+   (`16bf719`). Tailwind v4's preflight intentionally dropped v3's
+   `button, [role="button"] { cursor: pointer }` rule ("Buttons use the
+   default cursor", v4 upgrade guide), so every native `<button>` in the app
+   — mail rows, folder rows, composer chrome, Send — silently regressed to
+   the browser's `default` arrow. The only `cursor: pointer` left was in the
+   `@formstr/signer` stylesheet and three hand-written rules in `index.css`,
+   which is why the login modal still looked right and the mailbox did not.
+2. **Fix.** Added the upgrade guide's documented compat shim to
+   `client/web/src/index.css` under `@layer base`:
+   `button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer }`.
+   The `:not(:disabled)` guard keeps `disabled:cursor-not-allowed`/opacity
+   affordances honest; the signer's own higher-specificity rules are
+   unaffected.
+3. **Regression test.** New `client/web/e2e/app/cursor.spec.ts` asserts the
+   computed cursor on a sidebar folder button and the shared `Button`
+   ("Write") as `pointer`, and the composer's disabled Send as
+   `not-allowed`. Verified it fails on the pre-fix stylesheet (first
+   assertion reads `default`) and passes with the fix.
+
+### Verification (at this working tree)
+
+- `pnpm --filter mailstr-web build` — pass; the compiled CSS contains
+  `button:not(:disabled),[role=button]:not(:disabled){cursor:pointer}`.
+- `pnpm --filter mailstr-web e2e` — 14/14 pass (new spec included); the new
+  spec fails when the `index.css` hunk is stashed (13/14), proving the guard.
+- `pnpm --filter mailstr-web test` — 30 files / 235 tests pass.
+- `pnpm --filter mailstr-web lint` — clean.
+
+### Follow-ups
+
+- Tailwind v4 targets Safari 16.4+ while AGENTS rule 6 pins the browser floor
+  at Safari 14 / iOS 15 (the relay worker still ships IIFE for that reason).
+  This is pre-existing from the phase-2 port, not introduced here; flagging
+  it as an architecture question rather than silently widening the floor.
+
+## 2026-09-15 — Sender proof moves from decode-time to render-time (ADR-005); multi-bridge tri-state resolution
+
+Context consulted: the three entries above (rev-3 audit + ADR-002/003, flat
+`client/` layout + ADR-004, cursor regression), per rule 15.
+
+### Root cause
+
+Users saw legitimate bridge (SMTP-origin) mail rendered as "unverified
+sender" with the mail bridge's kind-0 profile instead of the real `From`,
+intermittently and per-message. `decodeGiftWrap` computed `senderProof` once,
+at decode time, against `ctx.bridgePubkey` — which is `null` until the
+asynchronous `_smtp@<domain>` NIP-05 probe resolves. Any wrap decoded in that
+window fell through to `none`; the result was stored on the `Email`, and
+`seenIds` meant the same wrap was never re-decoded, so the wrong verdict was
+permanent for the session. The check itself was correct — the failure was
+asking the question before the answer existed.
+
+### What changed
+
+1. **`Email` carries raw sender facts only.** `from` + `senderProof` are
+   replaced by `fromHeader` (the claimed RFC 2822 header, verbatim) and the
+   existing `senderPubkey` (the kind-13 seal). `receive.ts` no longer probes
+   NIP-05 or fetches kind-0 at decode — it is one less signer-round-trip-
+   adjacent cost per message and removes the ordering dependency entirely.
+2. **New `lib/mail/senderProof.ts`** derives `SenderProof` from live inputs:
+   `own-seal` → any resolved bridge matching the seal → NIP-05 match →
+   `checking` (a check still running) → `bridge-unavailable` (all bridges
+   failed) → `none`. `SenderProof` gains `checking` and
+   `bridge-unavailable`; `displaySender`/`effectiveSender` return the header
+   when backed and the npub otherwise.
+   Because derivation runs per render, the NIP-05 probe fan-out is now bounded
+   (`MAX_CONCURRENT_PROBES = 4` in `lib/nostr/nip05.ts`, on top of the existing
+   per-address dedup and cache), so a mailbox full of distinct senders cannot
+   issue unbounded lookups at once.
+3. **Multi-bridge tri-state resolution** (`lib/nostr/bridge.ts`):
+   `bridgeTargets()` builds the default `_smtp@<ownDomain>` plus every
+   `settings.bridgeDomains` override, deduped; `BridgeProbe` is
+   `resolving | resolved | failed` per target; `resolveBridgeProbes()` reports
+   each transition as it lands. `outboundBridge()` preserves the old send
+   precedence (a resolved override wins; a configured-but-failed override
+   never silently falls back to the default).
+4. **`store/bridge.ts`** holds the probe list and a shared NIP-05 verdict map,
+   both live and never persisted; `resetAccountScopedState()` clears it.
+   `useResolveContext` drives the probes and exposes `resolving` /
+   `bridgeError` / `retry()` (wired into the app's manual reload).
+5. **`useSenderIdentity` / `useEffectiveSenders`** re-derive per render from
+   the bridge store, the NIP-05 cache (`peekNip05` added for a synchronous
+   cache hit), and kind-0. No verdict is memoized across bridge changes; the
+   list row, reading pane, debug panel, drafts, contacts, and alias filter all
+   consume the derived sender. Side-effecting consumers (contacts, alias
+   filing) treat `checking` as the key — never a header nothing backs.
+6. **UI:** `SenderProofLine`/`SenderProofTrace` gained badge-less `checking`
+   and `bridge-unavailable` rows; the composer shows a neutral "looking up
+   your email bridge" banner while resolving instead of the old immediate
+   error.
+7. **Tests:** new `senderProof.test.ts` (every branch, incl. the
+   `checking → bridge-seal` flip and multi-bridge cases) and `bridge.test.ts`
+   (targets, incremental probes, outbound precedence); `receive.test.ts`
+   rewritten to assert raw facts + derivation; fixtures across
+   draft/contacts/aliasFilter/store/component tests updated.
+   `e2e/app/sender-proof.spec.ts` drives the real app: a real account, a
+   route-stubbed `_smtp` probe, and a genuine bridge-sealed gift wrap
+   published to the mock relay — asserting the claimed `From` and "via email
+   bridge" render.
+
+### Verification (at this working tree)
+
+- `pnpm --filter mailstr-web test` — 33 files / 273 tests pass.
+- `pnpm --filter mailstr-web lint` — clean.
+- `pnpm --filter mailstr-web build` — pass (tsc -b + vite + SSR + prerender).
+- `pnpm --filter mailstr-web e2e` — 15/15 pass (new spec included).
+
+### ADR-005: Sender proof is derived at render time, never stored on the email
+
+- **Status:** accepted (2026-09-15).
+- **Context:** verification rule 6 ("`From:` is authoritative only where the
+  claim is backed") depends on bridge identity, which is resolved by an
+  asynchronous NIP-05 lookup with a multi-second timeout. Computing the rule
+  during decode coupled a permanently-stored display verdict to a transient,
+  ordering-dependent resolution state: mail decoded before the probe landed
+  was mislabelled for the life of the cache, with no re-evaluation path
+  short of clearing local storage. The bug was reported as intermittent
+  because it is a race.
+- **Decision:** decode stores raw facts (`fromHeader`, `senderPubkey`);
+  `lib/mail/senderProof.ts` derives the verdict from the message plus the
+  current bridge/probe/NIP-05 state on every render. Resolution becomes
+  plural (default + overrides) and tri-state (resolving / resolved / failed),
+  with `checking` and `bridge-unavailable` as first-class reader-visible
+  outcomes. No derived UI result is memoized across a state change: when a
+  bridge resolves, every consumer re-derives.
+- **Consequences:**
+  - A message's sender label can change under the reader (checking →
+    bridge-seal, or checking → key); this is intended — it is the honest
+    reflection of when the check completes.
+  - The verdict is no longer persisted, so it cannot go stale or leak across
+    accounts; bridge probes reset on account switch.
+  - `useInbox` no longer depends on `bridgePubkey`, so resolving a bridge
+    late no longer tears down and reopens the kind-1059 subscription.
+  - Derivation touches kind-0 only for senders shown by key (the only case a
+    profile name is rendered), keeping the list render cheap.
+  - Adding a future bridge source (e.g. per-recipient discovery) is a change
+    to `bridgeTargets`, not to the verification rule.
+
+### Follow-ups
+
+- `settings.bridgeDomains[0]` remains the only override path; the Settings UI
+  does not yet expose the list. Multi-bridge verification is implemented and
+  tested, but the UI for selecting several bridges is not part of this change.
+
+## 2026-09-15 — Deploy fix: `VITE_BRIDGE_DOMAIN` missing from the docker build args
+
+Context consulted: the ADR-005 entry above plus the rev-3/cursor entries, per
+rule 15. Deployment target is the `chhotu` host at `/root/Clients/nail`
+(mailcow sidecar + `stg.mailstr.app`), pulling from the GitHub remote.
+
+### Root cause
+
+The deployed staging bundle had the production bridge domain baked in:
+`const Ge="mailstr.app"` with zero `stg.mailstr.app` occurrences in the mail
+chunk. `docker-compose.yml` passed `VITE_API_BASE_URL`, `VITE_MAIL_DOMAIN`,
+etc. as build args but **not `VITE_BRIDGE_DOMAIN`**, and `client/web/Dockerfile`
+had no `ARG`/`ENV` for it either. `.dockerignore` excludes `.env`, so Vite's
+build inside the image could not read the server's
+`VITE_BRIDGE_DOMAIN=stg.mailstr.app` — `lib/nostr/constants.ts` fell through to
+its `?? 'mailstr.app'` default. Introduced by the phase-4 merge (`5990c39`),
+which folded the old `client-deploy` compose service (which did pass the arg)
+into the single `web-deploy` service.
+
+Effect: bridge verification probed `_smtp@mailstr.app` (the production bridge)
+on staging, and outbound legacy mail routed through the production bridge.
+
+### What changed
+
+- `docker-compose.yml`: `VITE_BRIDGE_DOMAIN: ${VITE_BRIDGE_DOMAIN:-mailstr.app}`
+  build arg on `web-deploy`.
+- `client/web/Dockerfile`: documented, declared (`ARG`) and exported (`ENV`)
+  `VITE_BRIDGE_DOMAIN` alongside the other Vite args.
+
+### Verification (on chhotu)
+
+- Server fetched `0a53104` (pushed to `origin` = GitHub; the local ngit remote
+  is a different identity and the server tracks GitHub).
+- `docker compose up -d --build` — rebuilt and copied dist to
+  `/var/www/stg.mailstr.app`.
+- Served chunk `assets/App-Ba3YzHY5.js` now reads
+  `const Ge="stg.mailstr.app"` (grep count 1; previous chunk had
+  `"mailstr.app"` and 0 staging matches); `https://stg.mailstr.app/mails/`
+  returns 200 and references the new chunk.
+
+

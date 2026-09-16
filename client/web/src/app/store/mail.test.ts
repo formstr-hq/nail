@@ -10,14 +10,13 @@ const ID = 'a'.repeat(64)
 function email(id = ID): Email {
   return {
     id,
-    from: { address: 'sender@example.com' },
+    fromHeader: { address: 'sender@example.com' },
     to: [{ address: 'me@mailstr.app' }],
     subject: 'hello',
     body: 'body',
     attachments: [],
     timestamp: 1_000_000,
     senderPubkey: 'c'.repeat(64),
-    senderProof: 'nip05',
     read: false,
     labelEventIds: [],
     labels: [],

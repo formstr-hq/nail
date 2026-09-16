@@ -1,5 +1,17 @@
 import { splitAddress } from '@protocol'
 
+/**
+ * What the sender-proof derivation knows about an address's NIP-05 record.
+ *
+ * `skipped` means there is nothing to look up (no address-shaped claim, or a
+ * `<npub>@…` sender whose ownership is provable from the key itself), so no
+ * check is outstanding and none should be implied.
+ */
+export type Nip05State =
+  | { status: 'skipped' }
+  | { status: 'resolving' }
+  | { status: 'resolved'; pubkey: string | null }
+
 const PROBE_TIMEOUT_MS = 1500
 // The bridge's own `_smtp` record is on the critical send path and, unlike a
 // recipient probe, times out fail-closed (no bridge = cannot send at all). The
@@ -12,6 +24,37 @@ const POSITIVE_TTL_MS = 7 * 24 * 60 * 60_000
 type Entry = { pubkey: string | null; expires: number }
 const cache = new Map<string, Entry>()
 const inFlight = new Map<string, Promise<string | null>>()
+
+/**
+ * How many NIP-05 fetches may be in flight at once.
+ *
+ * Render-time sender-proof derivation probes every distinct address on screen,
+ * and recipient resolution probes every recipient — both can fan out over an
+ * arbitrary number of domains at once. The browser would queue the sockets
+ * anyway; this bounds the work at the source so the load is explicit, and
+ * per-address `inFlight` dedup means repeated callers share one slot.
+ */
+const MAX_CONCURRENT_PROBES = 4
+let activeProbes = 0
+const probeWaiters: Array<() => void> = []
+
+function acquireProbeSlot(): Promise<void> {
+  if (activeProbes < MAX_CONCURRENT_PROBES) {
+    activeProbes += 1
+    return Promise.resolve()
+  }
+  return new Promise<void>((resolve) => probeWaiters.push(resolve))
+}
+
+function releaseProbeSlot(): void {
+  const next = probeWaiters.shift()
+  if (next) {
+    // Hand the slot straight to the next waiter — the count stays the same.
+    next()
+  } else {
+    activeProbes -= 1
+  }
+}
 
 /**
  * Domains known not to serve NIP-05.
@@ -50,7 +93,26 @@ seedNegativeCache()
 export function clearProbeCache(): void {
   cache.clear()
   inFlight.clear()
+  // In-flight fetches keep their slots until they settle (their `finally`
+  // releases them and their now-dropped result is discarded), so the slot
+  // accounting stays consistent and parked waiters drain normally.
   seedNegativeCache()
+}
+
+/**
+ * The cached outcome for `address`, if one is fresh — no fetch, no side
+ * effect. Render-time consumers (sender-proof derivation) use this to answer
+ * synchronously on repeat renders and only kick off `probeNip05` on a miss,
+ * so a cached negative never flashes "checking" again.
+ */
+export function peekNip05(address: string): { pubkey: string | null } | null {
+  const parts = splitAddress(address)
+  if (!parts) return null
+  const domainEntry = cache.get(`__domain__:${parts.domain}`)
+  if (domainEntry && domainEntry.expires > Date.now()) return { pubkey: null }
+  const cached = cache.get(`${parts.localpart}@${parts.domain}`)
+  if (cached && cached.expires > Date.now()) return { pubkey: cached.pubkey }
+  return null
 }
 
 /**
@@ -82,6 +144,7 @@ export async function probeNip05(
   if (pending) return pending
 
   const query = (async (): Promise<string | null> => {
+    await acquireProbeSlot()
     try {
       const res = await fetch(
         `https://${parts.domain}/.well-known/nostr.json?name=${encodeURIComponent(parts.localpart)}`,
@@ -92,6 +155,8 @@ export async function probeNip05(
       return json.names?.[parts.localpart] ?? null
     } catch {
       return null
+    } finally {
+      releaseProbeSlot()
     }
   })()
     .then((pubkey) => {

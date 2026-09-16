@@ -30,7 +30,7 @@ export type InboxStatus =
  *  silently empty. Run a bounded number at a time instead. */
 const MAX_CONCURRENT_DECRYPTS = 3
 
-export function useInbox(bridgePubkey: string | null) {
+export function useInbox() {
   const { account, active } = useAccountStore()
   const addEmail = useMailStore((s) => s.addEmail)
   const [status, setStatus] = useState<InboxStatus>({ phase: 'connecting', decoding: 0 })
@@ -128,7 +128,7 @@ export function useInbox(bridgePubkey: string | null) {
           // local cache included) will keep serving the wrap; the tombstone,
           // not the decode-then-drop path, is what pays no signer round-trip.
           if (useMailStore.getState().deletedIds.has(event.id)) return
-          queue.push(event, (e) => decodeGiftWrap(e, signer, bridgePubkey, account!.pubkey))
+          queue.push(event, (e) => decodeGiftWrap(e, signer, account!.pubkey))
         },
       })
 
@@ -167,7 +167,7 @@ export function useInbox(bridgePubkey: string | null) {
       queue.stop()
       cleanup?.()
     }
-  }, [account, active, addEmail, bridgePubkey, attempt])
+  }, [account, active, addEmail, attempt])
 
   return { status, retry }
 }

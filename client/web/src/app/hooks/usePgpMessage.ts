@@ -44,11 +44,20 @@ export type PgpMessageState =
  * key and the sender's keyring entry (for signature verification), re-running
  * when the open message or the unlocked passphrase changes.
  *
+ * `senderAddress` is the EFFECTIVE sender (header when backed, npub when not),
+ * supplied by the caller: signature verification must look up the key of the
+ * identity the reader was shown, and a spoofed header must not select a
+ * different key.
+ *
  * `passphraseNonce` lets the caller force a retry after the user unlocks — the
  * session passphrase lives outside React state, so bumping this is how the
  * "Unlock" button tells the hook to try again.
  */
-export function usePgpMessage(email: Email | null, passphraseNonce = 0): PgpMessageState {
+export function usePgpMessage(
+  email: Email | null,
+  senderAddress: string,
+  passphraseNonce = 0,
+): PgpMessageState {
   const settings = useSettingsStore((s) => s.settings)
   // State is tagged with the email id it was computed for, so switching
   // messages can never render the previous message's decrypt result while the
@@ -102,7 +111,12 @@ export function usePgpMessage(email: Email | null, passphraseNonce = 0): PgpMess
     void (async () => {
       // Verify the signature against the sender's key if we hold it. `no-key`
       // for verification is fine — the openpgp layer downgrades to unknown-key.
-      const senderKey = keyForAddress(settings, email.from.address)
+      // Key off the SEALING PUBKEY's known address: the header is only trusted
+      // when a proof backs it, and for signature lookup a spoofed address would
+      // let an attacker name a key they want us to verify against. The derived
+      // identity is passed in by the caller instead (see EmailView), keeping
+      // this hook free of the render-time proof machinery.
+      const senderKey = keyForAddress(settings, senderAddress)
       const armored = extractArmoredMessage(body)
 
       // Parse the armor ONCE, before trying any key. A malformed message (bad
@@ -238,6 +252,7 @@ export function usePgpMessage(email: Email | null, passphraseNonce = 0): PgpMess
     email?.id,
     isPgp,
     body,
+    senderAddress,
     settings.pgpKeys,
     settings.pgpKeyring,
     passphraseNonce,

@@ -7,14 +7,13 @@ function email(overrides: Partial<Email> = {}): Email {
     id: 'wrap1',
     messageId: '<m2@mailstr.app>',
     references: ['<m1@mailstr.app>'],
-    from: { name: 'Jack', address: 'jack@example.org' },
+    fromHeader: { name: 'Jack', address: 'jack@example.org' },
     to: [{ address: 'me@mailstr.app' }, { address: 'ada@example.org' }],
     subject: 'Seal timestamps drift',
     body: 'Works on my end.\n\n— Jack',
     attachments: [],
     timestamp: 1_700_000_000,
     senderPubkey: 'a'.repeat(64),
-    senderProof: 'bridge-seal',
     read: true,
     labelEventIds: [],
     labels: [],
@@ -51,6 +50,19 @@ describe('replyDraft', () => {
     expect(d.references).toBeUndefined()
     expect(d.inReplyTo).toBeUndefined()
   })
+
+  // A reply must go to the identity the reader was shown, never a spoofed
+  // header. Callers pass the effective sender; the draft uses it verbatim.
+  it('addresses and quotes the effective sender when one is supplied', () => {
+    const npub = 'npub1' + 'q'.repeat(58)
+    const d = replyDraft(email({ fromHeader: { name: 'Your Bank', address: 'ceo@bank.example' } }), {
+      address: npub,
+    })
+    expect(d.to).toBe(npub)
+    expect(d.body).toContain(`On`)
+    expect(d.body).toContain(npub)
+    expect(d.body).not.toContain('ceo@bank.example')
+  })
 })
 
 describe('replyAllDraft', () => {
@@ -72,6 +84,12 @@ describe('replyAllDraft', () => {
       ['me@mailstr.app'],
     )
     expect(d.to).toBe('jack@example.org, ada@example.org')
+  })
+
+  it('uses the effective sender as the primary recipient', () => {
+    const npub = 'npub1' + 'q'.repeat(58)
+    const d = replyAllDraft(email(), ['me@mailstr.app'], { address: npub })
+    expect(d.to.startsWith(npub)).toBe(true)
   })
 })
 
@@ -99,5 +117,11 @@ describe('forwardDraft', () => {
     expect(forwardDraft(email({ subject: 'FW: Seal timestamps' })).subject).toBe(
       'FW: Seal timestamps',
     )
+  })
+
+  it('attributes the forward to the effective sender', () => {
+    const npub = 'npub1' + 'q'.repeat(58)
+    const d = forwardDraft(email(), { address: npub })
+    expect(d.body).toContain(`From: ${npub}`)
   })
 })

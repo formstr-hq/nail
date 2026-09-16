@@ -5,14 +5,13 @@ import type { Email } from '@/app/types/mail'
 function email(over: Partial<Email>): Email {
   return {
     id: Math.random().toString(36).slice(2),
-    from: { address: 'sender@x.org' },
+    fromHeader: { address: 'sender@x.org' },
     to: [],
     subject: '',
     body: '',
     attachments: [],
     timestamp: 0,
     senderPubkey: '',
-    senderProof: 'none',
     read: false,
     labelEventIds: [],
     labels: [],
@@ -36,13 +35,21 @@ describe('matchesAlias', () => {
     expect(matchesAlias(e, 'alias@x.org')).toBe(true)
   })
 
-  it('matches our own sent copy by its From address', () => {
-    const e = email({ from: { address: 'alias@x.org' }, to: [{ address: 'friend@y.org' }] })
-    expect(matchesAlias(e, 'alias@x.org')).toBe(true)
+  it('matches our own sent copy by its effective From address', () => {
+    const e = email({ fromHeader: { address: 'alias@x.org' }, to: [{ address: 'friend@y.org' }] })
+    expect(matchesAlias(e, 'alias@x.org', { address: 'alias@x.org' })).toBe(true)
   })
 
   it('is case-insensitive (the store lowercases the filter)', () => {
     const e = email({ to: [{ address: 'Alias@X.org' }] })
     expect(matchesAlias(e, 'alias@x.org')).toBe(true)
+  })
+
+  // Security property: a spoofed header must not file a stranger's message
+  // under one of the user's aliases. The effective sender (the npub here) is
+  // what is compared, never the claimed header.
+  it('does not match an alias on an unbacked header claim', () => {
+    const e = email({ fromHeader: { address: 'alias@x.org' }, senderPubkey: 'e'.repeat(64) })
+    expect(matchesAlias(e, 'alias@x.org', { address: 'npub1' + 'q'.repeat(58) })).toBe(false)
   })
 })

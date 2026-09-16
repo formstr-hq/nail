@@ -69,8 +69,8 @@ function MailApp() {
   const { load, settings, loaded: settingsLoaded, eventExists: settingsEventExists } =
     useSettingsStore()
   const { selectedId, setSelected, syncError, setSyncError } = useMailStore()
-  const { ctx, bridgeError } = useResolveContext()
-  const { status, retry } = useInbox(ctx.bridgePubkey)
+  const { ctx, bridgeError, resolving: bridgeResolving, retry: retryBridge } = useResolveContext()
+  const { status, retry } = useInbox()
   // Keep read/archived/trashed state synced across devices via kind-34578 events.
   const { refresh: refreshMeta } = useMailMeta()
   const { addresses } = useOwnedAddresses()
@@ -140,8 +140,9 @@ function MailApp() {
   // app, so this is how a user pulls new mail on demand.
   const refreshMail = useCallback(() => {
     retry()
+    retryBridge()
     refreshMeta()
-  }, [retry, refreshMeta])
+  }, [retry, retryBridge, refreshMeta])
 
   useEffect(() => {
     if (!account || !active) return
@@ -307,6 +308,7 @@ function MailApp() {
           onClose={closeCompose}
           ctx={ctx}
           bridgeError={bridgeError}
+          bridgeResolving={bridgeResolving}
           draft={composeDraft}
           selfAddresses={selfAddresses}
           ownedAliases={addresses}

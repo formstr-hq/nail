@@ -37,6 +37,17 @@ vi.mock('@/app/lib/nostr/settings', async (importOriginal) => ({
   saveSettings: vi.fn().mockResolvedValue(undefined),
 }))
 
+// Sender-proof derivation probes NIP-05 per claimed address. In component
+// tests the network is absent, so a probe would sit for its full timeout and
+// leave rows stuck on "checking". Stub it to a cached negative (and the peek
+// to match), so an unproven sender settles to the key immediately; individual
+// tests seed the bridge store when they need a resolved proof.
+vi.mock('@/app/lib/nostr/nip05', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/app/lib/nostr/nip05')>()),
+  probeNip05: vi.fn().mockResolvedValue(null),
+  peekNip05: vi.fn().mockReturnValue({ pubkey: null }),
+}))
+
 afterEach(() => {
   cleanup()
   storage.clear()

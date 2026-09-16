@@ -1,3 +1,4 @@
+import { nip19 } from 'nostr-tools'
 import type { Email, MailAddress } from '@/app/types/mail'
 
 /** A correspondent derived from the addresses on decoded mail. */
@@ -18,8 +19,19 @@ export interface Contact {
  * Build a deduped, ranked contact list from the `from`/`to`/`cc` fields of every
  * decoded email. Everything is already local — this never touches the network.
  * Your own addresses are excluded so the picker never suggests you to yourself.
+ *
+ * `effectiveFrom` maps a message id to the sender actually displayed for it
+ * (header when backed, sealing key when not). Without it a spoofed header
+ * would be suggested as a contact — and could even impersonate an address the
+ * user already knows. Messages absent from the map fall back to the key, never
+ * the header, so an unresolved proof cannot leak a forged address into the
+ * picker.
  */
-export function deriveContacts(emails: Email[], selfAddresses: string[] = []): Contact[] {
+export function deriveContacts(
+  emails: Email[],
+  selfAddresses: string[] = [],
+  effectiveFrom: Map<string, MailAddress> = new Map(),
+): Contact[] {
   const self = new Set(selfAddresses.map((a) => a.trim().toLowerCase()).filter(Boolean))
   const byKey = new Map<string, Contact>()
 
@@ -42,7 +54,13 @@ export function deriveContacts(emails: Email[], selfAddresses: string[] = []): C
   }
 
   for (const e of emails) {
-    add(e.from, e.timestamp)
+    // A sender with no derived identity yet (or no map supplied) falls back to
+    // the sealing key as an npub — never the header, so an unresolved proof
+    // cannot leak a forged address into the picker.
+    const sender = effectiveFrom.get(e.id) ?? {
+      address: nip19.npubEncode(e.senderPubkey),
+    }
+    add(sender, e.timestamp)
     for (const t of e.to) add(t, e.timestamp)
     for (const c of e.cc ?? []) add(c, e.timestamp)
   }

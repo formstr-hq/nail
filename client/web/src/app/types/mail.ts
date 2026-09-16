@@ -26,15 +26,39 @@ export interface Attachment {
  * because "the bridge vouched for this" and "this address's NIP-05 record
  * resolves to the sealing key" are different claims and the UI says which.
  *
- *  - `bridge-seal` — the configured bridge sealed it. The bridge refuses to
- *    relay a `From` the sending key does not own, so the header is backed.
- *    Also means the message came from the SMTP side rather than peer-to-peer.
- *  - `own-seal`    — we sealed it. Our own outgoing copy.
- *  - `nip05`       — the address's NIP-05 record resolves to the sealing key.
- *  - `none`        — nothing backs the header, so the sealing key is shown
- *                    instead and the header is not displayed as the sender.
+ * This is DERIVED AT RENDER TIME, never stored on the decoded email: bridge
+ * resolution is asynchronous, so a proof computed during decode would freeze
+ * whatever happened to be known then — and a message decoded before the
+ * bridge key landed would show as unverified forever (see lib/mail/
+ * senderProof.ts). The email carries the raw header; the proof is a function
+ * of it, the sealing key, and the current resolution state.
+ *
+ *  - `bridge-seal`         — a configured bridge sealed it. The bridge refuses
+ *                            to relay a `From` the sending key does not own,
+ *                            so the header is backed. Also means the message
+ *                            came from the SMTP side rather than peer-to-peer.
+ *  - `own-seal`            — we sealed it. Our own outgoing copy.
+ *  - `nip05`               — the address's NIP-05 record resolves to the
+ *                            sealing key.
+ *  - `checking`            — a check that could still back the header (a
+ *                            bridge resolution or an in-flight NIP-05 probe)
+ *                            has not finished, so no verdict is available yet.
+ *  - `bridge-unavailable`  — every configured bridge failed to resolve, so the
+ *                            bridge check could not be performed at all. This
+ *                            is distinct from `none`: the header is not shown,
+ *                            but the reason is our own resolver's failure, not
+ *                            evidence about the sender.
+ *  - `none`                — nothing backs the header, so the sealing key is
+ *                            shown instead and the header is not displayed as
+ *                            the sender.
  */
-export type SenderProof = 'bridge-seal' | 'own-seal' | 'nip05' | 'none'
+export type SenderProof =
+  | 'bridge-seal'
+  | 'own-seal'
+  | 'nip05'
+  | 'checking'
+  | 'bridge-unavailable'
+  | 'none'
 
 /**
  * The decoded inner rumor, kept for the reader's debug disclosure. Lets you see
@@ -59,7 +83,12 @@ export interface Email {
   messageId?: string       // RFC 2822 Message-ID header
   inReplyTo?: string       // RFC 2822 In-Reply-To header
   references?: string[]    // RFC 2822 References header
-  from: MailAddress
+  /**
+   * The RFC 2822 `From:` header exactly as it arrived — claimed, not trusted.
+   * Whether it may be shown is decided at render time (lib/mail/senderProof.ts)
+   * from the sealing key plus the current bridge/NIP-05 resolution state.
+   */
+  fromHeader: MailAddress
   to: MailAddress[]
   cc?: MailAddress[]
   subject: string
@@ -68,7 +97,6 @@ export interface Email {
   attachments: Attachment[]
   timestamp: number        // unix seconds
   senderPubkey: string     // hex pubkey of sender
-  senderProof: SenderProof // what backs `from` — see SenderProof
   read: boolean
   labelEventIds: string[]  // Kind 1985 event IDs managing this email's labels
   labels: string[]         // e.g. ['trash', 'flag:starred', 'state:read']

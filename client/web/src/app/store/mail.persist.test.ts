@@ -97,14 +97,13 @@ describe('mail store persistence', () => {
     // addEmail (a relay replay) must refuse it.
     st.addEmail({
       id: ID,
-      from: { address: 'x@y.com' },
+      fromHeader: { address: 'x@y.com' },
       to: [{ address: 'me@mailstr.app' }],
       subject: '',
       body: '',
       attachments: [],
       timestamp: 1,
       senderPubkey: 'c'.repeat(64),
-      senderProof: 'nip05',
       read: false,
       labelEventIds: [],
       labels: [],

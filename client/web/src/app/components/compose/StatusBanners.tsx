@@ -48,6 +48,19 @@ export function DiscoveryBanner() {
   )
 }
 
+/** The outbound bridge is still being resolved: not a failure yet, so it must
+ *  not read as one. External recipients will work as soon as it lands. */
+export function BridgeResolvingBanner() {
+  return (
+    <div className="flex items-start gap-2 border-t border-border bg-background/60 px-3.5 py-2">
+      <span className="mt-[3px] h-1.5 w-1.5 flex-none animate-pulse rounded-full bg-subtle" />
+      <p className="text-[11.5px] leading-relaxed text-subtle">
+        Looking up your email bridge — external recipients can be sent to once it resolves.
+      </p>
+    </div>
+  )
+}
+
 /** The outbound bridge failed to resolve: legacy/external recipients cannot be
  *  delivered this session. Shown proactively (not only on a failed send) so the
  *  failure is visible while composing, not after hitting Send (audit D4). */

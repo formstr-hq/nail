@@ -1,20 +1,24 @@
 import { useState } from 'react'
 import { useDevStore } from '@/app/store/dev'
-import type { Email } from '@/app/types/mail'
+import type { Email, SenderProof } from '@/app/types/mail'
 
 /**
  * A collapsed disclosure showing the raw decoded rumor — the ground truth for
  * "why does this message look like this?". Kind, sealing key, tags and the
  * exact content as it arrived, before any RFC 2822 interpretation. Collapsed by
  * default so it never intrudes on normal reading.
+ *
+ * `proof` is passed in rather than read off the email: it is derived at render
+ * time (useSenderIdentity) and never stored, so the debug view reports the
+ * verdict actually shown to the reader alongside the raw facts.
  */
-export function DebugPanel({ email }: { email: Email }) {
+export function DebugPanel({ email, proof }: { email: Email; proof: SenderProof }) {
   const debugPanel = useDevStore((s) => s.debugPanel)
   const [copied, setCopied] = useState(false)
   if (!debugPanel) return null
   const debug = email.debug!
   const json = JSON.stringify(
-    { ...debug, senderProof: email.senderProof, giftWrapId: email.id },
+    { ...debug, senderProof: proof, giftWrapId: email.id },
     null,
     2,
   )
@@ -35,7 +39,7 @@ export function DebugPanel({ email }: { email: Email }) {
       <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 font-mono text-[10.5px] font-semibold uppercase tracking-[0.12em] text-subtle">
         Debug · rumor event
         <span className="font-sans lowercase tracking-normal text-muted-foreground">
-          kind {debug.rumor.kind} · proof {email.senderProof}
+          kind {debug.rumor.kind} · proof {proof}
         </span>
       </summary>
       <div className="border-t border-border px-3 py-2">
