@@ -7,8 +7,9 @@ import { DecodeQueue } from '@/app/lib/mail/decodeQueue'
 import { RelayBootWatchdog } from '@/app/lib/nostr/relayWatchdog'
 import { isCurrentSession, sessionEpoch } from '@/app/store/sessionEpoch'
 import { protocolSigner } from '@/app/lib/nostr/protocol-signer'
-import { KIND_GIFTWRAP, DEFAULT_RELAYS, withHardcodedRelay } from '@/app/lib/nostr/constants'
-import type { Event, Filter } from 'nostr-tools'
+import { inboxFilters } from '@/app/lib/mail/inboxFilter'
+import { DEFAULT_RELAYS, withHardcodedRelay } from '@/app/lib/nostr/constants'
+import type { Event } from 'nostr-tools'
 
 /**
  * What the mailbox can honestly say about itself right now.
@@ -111,14 +112,14 @@ export function useInbox() {
         setStatus((s) => (s.phase === 'live' ? { ...s, relays } : s))
       })
 
-      const filter: Filter = {
-        kinds: [KIND_GIFTWRAP],
-        '#p': [account.pubkey],
-      } as Filter
+      // The partitioned inbox filters (see inboxFilter.ts): tagged mail, the
+      // pre-tag history, and post-tag untagged mail. The worker opens one
+      // upstream REQ per filter and dedups by event id.
+      const filters = inboxFilters(account.pubkey)
 
       // Cache replays first (persisted wraps, offline-safe), then the worker
       // syncs upstream and streams the live tail through the same callback.
-      const sub = relay.observe([filter], {
+      const sub = relay.observe(filters, {
         onEvent: (event: Event) => {
           if (!alive) return
           // Skip anything already decoded — otherwise every reload pays the
