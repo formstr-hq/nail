@@ -40,7 +40,12 @@ export function SignerLogin({
   useEffect(() => {
     const el = loginRef.current
     if (!el) return
-    el.innerHTML = renderLoginHtml()
+    // Browser NIP-55 is hidden in the native shell (where the Capacitor
+    // `android` tab and injectAndroidSigners take over) and carries a
+    // warning on Firefox for Android, which cannot read the clipboard.
+    el.innerHTML = renderLoginHtml({
+      nip55Web: nostrSigner.nip55WebSupport(),
+    })
     tuneLoginUi(el, {
       relays: DEFAULT_RELAYS,
       brand: {
