@@ -418,6 +418,29 @@ cached — mirroring SMTP, where your outgoing server is your mailbox provider's
 A Settings override exists for self-hosters. The `_smtp` record must be served
 with permissive CORS.
 
+### Outbound ingest: send-wrap API first, relay fallback
+
+The bridge-bound wrap (the one p-tagged to the bridge pubkey) has two possible
+roads to the bridge:
+
+1. **The send-wrap API (preferred).** The client fetches the mail-discovery
+   document — `/.well-known/nostr-mail.json` on the mail domain, falling back to
+   the backend's `/api/mails/discovery` until that proxy is wired — which names
+   the bridge pubkey and the exact `send_wrap_endpoint`. It POSTs the
+   client-sealed wrap there, NIP-98 authed. The backend hands the wrap to the
+   bridge's `/v1/relay` endpoint, which runs it through the *identical*
+   `handleWrap` path as a relay-delivered one. No relay round-trip, so delivery
+   no longer depends on the bridge observing our publish.
+2. **Relay publish (fallback).** Used only when discovery did not answer, named
+   a different bridge than the one we resolved via NIP-05, or the POST failed.
+   This is the original path; the API is an optimization, never a new hard
+   dependency.
+
+Nostr-direct wraps and the self-copy always relay — the bridge is not their
+recipient. The boundary is the wrap's `p` tag, not the recipient list. All of
+this lives in `client/web/src/app/lib/mail/deliver.ts`; discovery and the NIP-98
+call live in `lib/nostr/bridgeSend.ts`.
+
 ## 8. Failure handling
 
 Every failure in the current pipeline is silent, which is why these bugs

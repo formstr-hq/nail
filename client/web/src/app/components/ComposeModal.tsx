@@ -267,6 +267,8 @@ export function ComposeModal({
         references: draft?.references,
         ctx,
         signer: protocolSigner(active),
+        // NIP-98 auth for the bridge send-wrap API (see lib/mail/deliver.ts).
+        active,
         // Let the send path encrypt per-recipient for legacy/bridge recipients
         // (mixed encryption): those with keys get PGP ciphertext, the rest
         // plaintext. Nostr-direct recipients are already gift-wrap encrypted.
