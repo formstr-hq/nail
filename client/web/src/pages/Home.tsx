@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { config } from "@/lib/config";
 import {
+  captureRef,
   hasBuyIntent,
   hasResumableSession,
   redirectReturningOwner,
@@ -99,6 +100,8 @@ export default function Home() {
   const [checking, setChecking] = useState(false);
 
   useIsomorphicLayoutEffect(() => {
+    // Capture any `?ref=` affiliate token before redirects/cleanup strip the URL.
+    captureRef();
     if (hasBuyIntent() || !hasResumableSession()) return;
     setChecking(true);
     void redirectReturningOwner().then((redirected) => {

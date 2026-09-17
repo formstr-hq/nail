@@ -125,7 +125,7 @@ export async function getMailTiers(): Promise<MailTier[]> {
  */
 export async function generateMailInvoice(
   authHeader: string,
-  body: { pubkey: string; nip05: string; tierId: string },
+  body: { pubkey: string; nip05: string; tierId: string; ref?: string },
 ): Promise<MailInvoice> {
   const res = await fetch(`${config.apiBaseUrl}/api/generate-invoice/mail`, {
     method: "POST",

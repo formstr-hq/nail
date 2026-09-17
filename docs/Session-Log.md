@@ -312,3 +312,38 @@ rev-3 audit fix pass + ADR-002/003). The rev-3 work was committed first
     nostr-bridge` the alias resolves to — is fixed as part of this move and
     verified with a real image build.
 
+
+## 2026-09-15 — Affiliate `?ref` capture, ported to the merged `client/web` layout
+
+Context: consults the three most recent entries (audit rev 2/3 and the
+`client/` restructure). Base `main` @ `efb499c` after the frontend merge
+(`landing/` + `client/` → `client/web/`). Backend affiliate work lives in
+`formstr-backend` (PR #35); this repo only captures and forwards the token.
+
+### What changed
+
+1. **`client/web/src/lib/session.ts`:** added `captureRef()` / `getRef()` /
+   `clearRef()` — persist a `?ref=CODE` token under `mailstr.ref` (+
+   `mailstr.refAt`) with a 30-day window, last-touch wins. Same `lib/`
+   storage idiom as `app/lib/freshSignup.ts`.
+2. **`client/web/src/pages/Home.tsx`:** `captureRef()` on mount, before any
+   redirect can strip the URL (the post-merge `Home` replaced the old
+   `landing/src/App.tsx` effect).
+3. **`client/web/src/components/SignupWizard.tsx` + `lib/api.ts`:** thread the
+   captured `ref` into the signed `POST /api/generate-invoice/mail` body so
+   the backend can price the discount and record attribution.
+4. **`client/web/src/lib/nip98.ts`:** hash the NIP-98 payload with
+   nostr-tools' pure-JS `nip98.hashPayload` instead of `crypto.subtle`.
+   `crypto.subtle` is secure-context-only, so the old code threw on plain-HTTP
+   origins (e.g. an IP/Yggdrasil address used for manual testing). The merged
+   app has a single shared helper, so this fixes landing + mail client at once.
+
+### Verification (at this working tree)
+
+- `pnpm install --frozen-lockfile` from the repo root — workspace resolves.
+- `pnpm --filter mailstr-web exec tsc -b` — clean.
+- `pnpm --filter mailstr-web lint` — clean.
+- `pnpm --filter mailstr-web test` — 30 files / 235 tests pass.
+- Manual (Yggdrasil): `?ref` captured, and a signed invoice request returns the
+  discounted amount + the `["ref", …]` attribution tag. Verified against the
+  live `formstr-backend` branch.

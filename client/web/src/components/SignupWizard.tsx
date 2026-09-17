@@ -16,7 +16,7 @@ import {
 } from '@/lib/api'
 import { isValidLocalPart } from '@/lib/nostr'
 import { buildNip98Header } from '@/lib/nip98'
-import { redirectToMails, unlockWithTimeout } from '@/lib/session'
+import { getRef, redirectToMails, unlockWithTimeout } from '@/lib/session'
 import { markFreshSignup } from '@/app/lib/freshSignup'
 import {
   tuneLoginUi,
@@ -291,11 +291,15 @@ export default function SignupWizard({
     setError(null)
     try {
       // tierId is part of the signed body, so the backend prices by the chosen
-      // tier and the NIP-98 payload digest still matches what's sent.
+      // tier and the NIP-98 payload digest still matches what's sent. `ref`
+      // (when present) lets the backend apply the affiliate discount and record
+      // attribution; it is part of the same signed body.
+      const ref = getRef()
       const body = {
         pubkey,
         nip05: `${name}@${config.mailDomain}`,
         tierId: selectedTier.id,
+        ...(ref ? { ref } : {}),
       }
       const url = apiUrl('/api/generate-invoice/mail')
       const header = await buildNip98Header(active, url, 'POST', JSON.stringify(body))

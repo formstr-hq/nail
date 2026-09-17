@@ -49,6 +49,56 @@ export function hasBuyIntent(
   return new URLSearchParams(search).get("buy") === "1";
 }
 
+const REF_KEY = "mailstr.ref";
+const REF_AT_KEY = "mailstr.refAt";
+const REF_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30-day attribution window
+
+/**
+ * Capture a `?ref=CODE` affiliate token on the landing. Stored with a timestamp
+ * so the backend can enforce the attribution window; last-touch wins. Called
+ * once on mount (see Home). No-op when the URL carries no ref.
+ */
+export function captureRef(
+  search = typeof window !== "undefined" ? window.location.search : "",
+): void {
+  const ref = new URLSearchParams(search).get("ref");
+  if (!ref || !ref.trim()) return;
+  try {
+    localStorage.setItem(REF_KEY, ref.trim());
+    localStorage.setItem(REF_AT_KEY, String(Date.now()));
+  } catch {
+    // storage unavailable — referral simply won't attribute
+  }
+}
+
+/**
+ * The referral token to send with a purchase, if one was captured within the
+ * 30-day window. Expired tokens are cleared.
+ */
+export function getRef(): string | null {
+  try {
+    const ref = localStorage.getItem(REF_KEY);
+    if (!ref) return null;
+    const at = Number(localStorage.getItem(REF_AT_KEY) ?? 0);
+    if (!at || Date.now() - at > REF_TTL_MS) {
+      clearRef();
+      return null;
+    }
+    return ref;
+  } catch {
+    return null;
+  }
+}
+
+export function clearRef(): void {
+  try {
+    localStorage.removeItem(REF_KEY);
+    localStorage.removeItem(REF_AT_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Synchronous: is there a persisted account a silent resume could unlock?
  * Only a returning visitor has one. We check this *before paint* to decide
