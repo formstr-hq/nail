@@ -572,3 +572,90 @@ dependency: every failure falls through to the original relay publish.
   backend fallback makes this non-blocking.
 - The bridge must have `/v1/relay` enabled (`SEND_API_KEY` set) for the API
   path to accept wraps; when it 400/502s, delivery falls back to relays.
+
+## 2026-09-17 — NIP-42 AUTH was never implemented (the real "missing desktop mail" bug)
+
+Context consulted: the send-wrap-API entry directly above, the ADR-005
+sender-proof entry, and the rev-3 audit entry, per rule 15. Branch
+`fix/more-bugfixes` (from `b76a125`).
+
+### What actually happened (and a correction)
+
+An earlier entry in this session recorded a `#k:1301` inbox filter as the fix
+for "mail shows on mobile but not desktop". **That diagnosis was wrong and the
+change was reverted**; the entry was removed rather than left to mislead. It is
+recorded here because the reasoning error is instructive: the bridge does stamp
+`["k","1301"]` (`sealAndWrap`), and `notifier/src/relay.rs` does filter on it —
+but on the affected account **0 of 417 kind-1059 wraps on `nos.lol` carried
+`k=1301`** (414 untagged, 3 NIP-17 kinds), because the mail predates the tag and
+a tag cannot be backfilled (the event id commits to it). A `#k`-only filter
+therefore hid the entire mailbox rather than surfacing it.
+
+### Root cause
+
+`@formstr/local-relay` never performed NIP-42 AUTH. `RelayConnection.onMessage`
+switched on `EVENT`/`EOSE`/`CLOSED`/`OK` only — `AUTH` frames were discarded
+(`// NOTICE / AUTH: ignored for now`). The `onAuth` hook named in that file's doc
+comment did not exist on the handlers interface, and `SignerPort.sign()` was
+never called outside tests. `docs/USAGE.md` §12 documented the behaviour as if
+it were implemented.
+
+Consequence: a relay that challenges is silently skipped. The affected account's
+kind-10050 list included such a relay, so its mail there was invisible — while
+non-AUTH relays kept working, which is exactly why the symptom looked
+account-specific and intermittent.
+
+Evidence: `wss://relay.stg.formstr.app` answers a REQ with `AUTH <challenge>` and
+then sends nothing (no EVENT, no EOSE, no CLOSED). The package's own test for the
+auth-required path asserted the *opposite* of correct behaviour — it asserted
+that `CLOSED ... auth-required` causes the subscription to be forgotten.
+
+### What changed
+
+**`common-packages` (`fix/nip42-auth`, merged #30, published `local-relay` 0.6.2):**
+`RelayConnection` now parses `AUTH`, builds the kind-22242 template bound to the
+relay's URL + challenge, signs it through the existing `SignerPort` RPC (plumbed
+via `RelayPool.setOnAuth` from `RelayService`), replies `["AUTH", event]`, and
+replays every active REQ (pre-challenge REQs are not honoured). One sign per
+challenge per socket, never concurrent; cleared on reconnect. Refusal, a throwing
+signer, or a mid-sign socket drop all leave the relay unauthenticated as before.
+
+The merged PR also had to **carry the published 0.6.1 dm-publish work**: 0.6.1
+was cut from `fix/dm-aware-publish-routing`, which was never on `main`, so `main`
+was *behind* npm and its `publish(event)` lacked the `opts: { relays }` that nail
+already calls. Publishing from `main` would have silently regressed gift-wrap
+DM-inbox routing. PR #30 cherry-picked `ec5d52b` onto `main` first, then stacked
+AUTH as 0.6.2. It also added tests for 0.6.1's uncovered branches — the published
+0.6.1 lineage actually **failed the repo's own 99% branch floor** (98.89%).
+
+**`nail` (`fix/more-bugfixes`):**
+- `lib/mail/inboxFilter.ts` — `inboxFilters(pubkey)` returns a three-way
+  partition (one upstream REQ each; the worker dedups by event id):
+  1. `#k:['1301']` whole-history (tagged mail, uncrowdable by DMs);
+  2. `#p` + `until` the tag rollout — the pre-tag history, reachable no other
+     way (no filter negation exists in Nostr);
+  3. `#p` + `since` the rollout — post-tag untagged mail (third-party senders).
+- `useInbox.ts` passes all three filters to `relay.observe`.
+- `package.json` — `@formstr/local-relay` bumped `^0.6.1` → `^0.6.2` (the real
+  registry version; the temporary `file:` tarball pin used for live testing was
+  never committed).
+
+### Verification (exact, at this working tree)
+
+- common-packages (merged `09b0542`): 250 tests, `tsc --noEmit`, coverage gate
+  99.12%. End-to-end test through the real signer RPC against a NIP-42 relay.
+  Manually driven through the built package against a live NIP-42 relay:
+  `REQ authed=false → AUTH valid=true → REQ authed=true → EVENT → EOSE`.
+  Published 0.6.2 verified from the registry tarball (AUTH + `publish(event,
+  opts?)` + `dmPublishTargets` all present).
+- nail: 36 files / 294 tests, lint 0 errors, build ok (`NODE_OPTIONS=
+  --experimental-strip-types`; pre-existing Node 22.17 `prerender.js` issue),
+  15/15 e2e.
+
+### Open items
+
+- **Local-store prune:** the local relay TTLs non-protected kinds at 7 days and
+  1059 is not protected, so cached wraps older than a week are dropped; upstream
+  refetch is the only recovery. A separate policy decision.
+- `relay.stg.formstr.app` closes the socket (1006) even on an idle connection,
+  so it is unusable independent of AUTH — worth its own investigation.

@@ -418,6 +418,47 @@ cached — mirroring SMTP, where your outgoing server is your mailbox provider's
 A Settings override exists for self-hosters. The `_smtp` record must be served
 with permissive CORS.
 
+### Inbox subscription: a three-way filter partition
+
+A mail wrap is kind 1059 (NIP-59) — the same outer kind as a NIP-17 DM — but
+`sealAndWrap` (`nostr-bridge/src/protocol/mail.ts`) stamps the **inner** rumor
+kind on the outer wrap as a `["k","1301"]` tag, so a recipient *can* tell mail
+from other gift-wraps without unwrapping. It cannot rely on that alone: Nostr
+filters have no negation, and the tag cannot be backfilled (an event id commits
+to its tags), so `#k`-only silently drops all pre-tag history. Conversely
+`#p`-only asks for every kind-1059 wrap, so on a DM-heavy account a relay's
+newest-first, capped window pushes real mail out of the result.
+
+`lib/mail/inboxFilter.ts` therefore partitions the mailbox by time across the
+tag rollout (2026-08-18), which is the boundary that separates the two regimes:
+
+1. `#k:['1301']`, whole history — tagged mail, with a path independent of DM
+   volume.
+2. `#p` only, `until` the rollout — the complete pre-tag mailbox; reachable no
+   other way.
+3. `#p` only, `since` the rollout — post-tag untagged mail (a non-conforming
+   third-party sender), in a bounded window.
+
+The worker opens **one upstream REQ per filter** and dedups results by event id
+across them (`RelayService.openSync` → `RelayCore.onReq`), and relay caps are
+per-REQ, so the windows do not compete for one budget. Redundancy between (1)
+and (3) is deliberate: if DMs fill a relay's cap for (3), (1) still returns mail.
+
+A time partition is the workable substitute for the negation Nostr lacks; it
+rests on the tag having a rollout date, not on guessing how far back mail goes.
+
+### NIP-42 AUTH
+
+Some relays answer a REQ with an `AUTH` challenge and then serve nothing until
+the client authenticates — DM relays in particular, since a kind-1059 read
+exposes the recipient's metadata. This is handled in the local relay, not here:
+`RelayConnection` signs the kind-22242 template (URL + challenge) through the
+`SignerPort` RPC and replays active REQs. It shipped in `@formstr/local-relay`
+**0.6.2** (common-packages PR #30); the client only supplies the signer
+(`localRelay.ts` `onSignRequest`). Before 0.6.2 the challenge was silently
+discarded, so an account whose kind-10050 list pointed at an AUTH-gated relay
+saw almost none of its mail with no error anywhere.
+
 ### Outbound ingest: send-wrap API first, relay fallback
 
 The bridge-bound wrap (the one p-tagged to the bridge pubkey) has two possible
