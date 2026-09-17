@@ -52,8 +52,8 @@ importers:
         specifier: ^0.6.2
         version: 0.6.2(typescript@5.9.3)
       '@formstr/signer':
-        specifier: ^0.3.1
-        version: 0.3.1(nostr-signer-capacitor-plugin@0.0.5(@capacitor/core@7.6.9))(typescript@5.9.3)
+        specifier: ^0.3.2
+        version: 0.3.2(nostr-signer-capacitor-plugin@0.0.5(@capacitor/core@7.6.9))(typescript@5.9.3)
       '@tailwindcss/typography':
         specifier: ^0.5.19
         version: 0.5.20(tailwindcss@4.3.3)
@@ -489,8 +489,8 @@ packages:
   '@formstr/local-relay@0.6.2':
     resolution: {integrity: sha512-KEBSLMOAFO52CdBNPTvQ5Zt+ZrFM8aug1dOVdt7mfWPEkpdI+IpQc0XoZ9krhNqNMvEsP69Dk75I51pj5+B4KQ==}
 
-  '@formstr/signer@0.3.1':
-    resolution: {integrity: sha512-eXfZNNcUpRPgcXxgVlkmCe0rjQCZs02/LrW3kEoVCZPGQfD3N7mOaMTg+oH/+5XNYd4rIiZwZxzhHIZf9ZGKDg==}
+  '@formstr/signer@0.3.2':
+    resolution: {integrity: sha512-XtMmJuI2oELoPaqxCSACay78qDiFQLjwFFCTGTLjElaXLHbghBmrF0vxgu2tSWQEzXITi3VLHpG2ndHCGfVy9g==}
     peerDependencies:
       nostr-signer-capacitor-plugin: ^0.0.5
     peerDependenciesMeta:
@@ -2818,7 +2818,7 @@ snapshots:
     transitivePeerDependencies:
       - typescript
 
-  '@formstr/signer@0.3.1(nostr-signer-capacitor-plugin@0.0.5(@capacitor/core@7.6.9))(typescript@5.9.3)':
+  '@formstr/signer@0.3.2(nostr-signer-capacitor-plugin@0.0.5(@capacitor/core@7.6.9))(typescript@5.9.3)':
     dependencies:
       nostr-tools: 2.25.2(typescript@5.9.3)
       qrcode: 1.5.4
