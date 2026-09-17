@@ -506,3 +506,69 @@ on staging, and outbound legacy mail routed through the production bridge.
   returns 200 and references the new chunk.
 
 
+
+## 2026-09-17 — Outbound mail rides the backend send-wrap API (relay fallback)
+
+Context consulted: the 2026-09-15 sender-proof ADR-005 entry, the
+`VITE_BRIDGE_DOMAIN` deploy-fix entry directly above, and the rev-3 audit entry,
+per rule 15. Branch `fix/bugfixes` (from `403db91`, latest `origin/main`).
+
+### What changed
+
+1. **`lib/nostr/bridgeSend.ts` (new).** Discovery + the NIP-98 send-wrap call:
+   - `fetchMailDiscovery(domain)` fetches `/.well-known/nostr-mail.json`, and
+     falls back to the backend's `/api/mails/discovery` when the well-known
+     proxy is not wired yet. Cached (positive 10 min), bounded (4 s), and
+     fail-open — any error/404/malformed body returns null so the caller
+     relays instead.
+   - `sendWrapViaApi({ wrap, discovery, signer })` POSTs `{ wrap }` to the
+     discovered `send_wrap_endpoint`, NIP-98 signed over the canonical URL with
+     the body hashed. Never throws; failures are `{ ok: false, status, reason }`.
+2. **`lib/mail/deliver.ts` (new).** The delivery half, split out of `send.ts`:
+   - Bridge-bound wraps (p-tagged to the resolved bridge) go to the API first.
+     Only the ones it declines fall back to relay publish.
+   - Nostr-direct wraps and the self-copy always relay.
+   - A discovery document naming a *different* bridge than NIP-05 resolved is
+     treated as "API unavailable" (relay fallback), not an error.
+   - Undeliverable *real* recipients throw as before; the self-copy stays
+     best-effort.
+3. **`lib/mail/send.ts`.** `sendMail` now delegates to `deliverWraps`; the old
+   inline relay loop is gone. `buildWraps` takes `BuildWrapsParams` (params
+   minus `active`) so wire-format tests need no signer. `SendMailParams` gains
+   `active` (NIP-98 needs `ActiveSigner.signEvent`, which takes an unsigned
+   template a `ProtocolSigner` cannot sign).
+4. **`ComposeModal.tsx`** passes `active` through.
+5. **Tests:** `bridgeSend.test.ts` (10) and `deliver.test.ts` (7) cover
+   discovery parsing/caching/fallback, the NIP-98 call and its failure modes,
+   and the API-first/relay-fallback routing matrix.
+
+### Verification (exact, at this working tree)
+
+- `pnpm --filter mailstr-web test` — 35 files / 290 tests passed.
+- `pnpm --filter mailstr-web lint` — 0 errors.
+- `pnpm --filter mailstr-web e2e` — 15/15 passed (after installing the
+  Chromium build the local cache was missing).
+- `pnpm --filter mailstr-web build` — ok **with `NODE_OPTIONS=--experimental-strip-types`**;
+  without it, `prerender.js` (imports `src/lib/config.ts`) dies under
+  `ERR_UNKNOWN_FILE_EXTENSION` on Node 22.17. This is **pre-existing** —
+  reproduced with the tree stashed at base `403db91` — and not caused here.
+- Live contract checked: `GET https://api.formstr.app/api/mails/discovery`
+  returns the document; `POST /api/mails/send-wrap` is 401 unauthenticated (so
+  it is deployed and NIP-98-gated). `https://mailstr.app/.well-known/nostr-mail.json`
+  currently 404s — hence the backend fallback candidate.
+
+### Why
+
+The relay path only works if the bridge's Nostr subscription observes the
+client's publish; the HTTP ingress feeds the identical `handleWrap` path with no
+relay round-trip. This is the mechanism the formstr-backend docstring references
+for external email invites. The API is an optimization, never a new hard
+dependency: every failure falls through to the original relay publish.
+
+### Open items
+
+- Wire nginx to proxy `/.well-known/nostr-mail.json` → `/api/mails/discovery`
+  on `mailstr.app` (and staging) so the documented discovery URL is live; the
+  backend fallback makes this non-blocking.
+- The bridge must have `/v1/relay` enabled (`SEND_API_KEY` set) for the API
+  path to accept wraps; when it 400/502s, delivery falls back to relays.

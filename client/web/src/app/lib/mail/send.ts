@@ -1,6 +1,7 @@
 import { nip19 } from 'nostr-tools'
 import { generateSecretKey } from 'nostr-tools/pure'
 import type { Event } from 'nostr-tools'
+import type { ActiveSigner } from '@formstr/signer'
 import {
   buildMailRumor,
   sealAndWrap,
@@ -9,8 +10,8 @@ import {
   splitAddress,
   type ProtocolSigner,
 } from '@protocol'
-import { fetchDmRelays } from '@/app/lib/nostr/relays'
-import { getLocalRelay } from '@/app/lib/nostr/localRelay'
+import { deliverWraps } from './deliver'
+import { BRIDGE_DOMAIN } from '@/app/lib/nostr/constants'
 import { probeNip05 } from '@/app/lib/nostr/nip05'
 import { buildRfc2822 } from './rfc2822'
 import { resolveRecipients, type ResolveContext } from './resolve'
@@ -89,9 +90,22 @@ export interface SendMailParams {
   references?: string[]
   ctx: ResolveContext
   signer: ProtocolSigner
+  /**
+   * The active signer, used to NIP-98 authorize the bridge send-wrap API. A
+   * `ProtocolSigner` cannot stand in: NIP-98 signs an unsigned template (no
+   * pubkey), which `ActiveSigner.signEvent` accepts and `ProtocolSigner` does
+   * not.
+   */
+  active: ActiveSigner
   /** PGP key maps, when the user wants encryption considered for legacy mail. */
   pgp?: PgpSettings
 }
+
+/**
+ * Everything `buildWraps` needs — `SendMailParams` minus the active signer,
+ * which only the delivery half (`deliverWraps`) consumes.
+ */
+export type BuildWrapsParams = Omit<SendMailParams, 'active'>
 
 /**
  * Build every gift wrap this message needs.
@@ -103,7 +117,7 @@ export interface SendMailParams {
  * which becomes the Sent entry.
  */
 export async function buildWraps(
-  params: SendMailParams,
+  params: BuildWrapsParams,
 ): Promise<{ wraps: Event[]; targets: string[]; errors: string[] }> {
   const { from, senderPubkey, to, cc = [], ctx, signer } = params
 
@@ -297,30 +311,16 @@ export async function sendMail(params: SendMailParams): Promise<void> {
   const { wraps, targets, errors } = await buildWraps(params)
   if (errors.length) throw new Error(errors.join('; '))
 
-  const relay = getLocalRelay()
-  const undelivered: string[] = []
-
-  await Promise.all(
-    wraps.map(async (wrap, i) => {
-      const pubkey = targets[i]
-      // Resolve the recipient's NIP-17 DM inbox (kind 10050) and hand it to the
-      // worker as an explicit target — it can't discover an arbitrary pubkey's
-      // inbox on its own. The worker stores the wrap, publishes it, and keeps
-      // re-delivering to any relay that didn't accept (durable outbox), so a
-      // transient relay outage no longer silently drops the message.
-      const relays = await fetchDmRelays(pubkey)
-      const outcomes = await relay.publish(wrap, { relays })
-      const accepted = outcomes.some((o) => o.status === 'accepted')
-      // A failed self-copy costs the Sent entry, not the delivery — don't
-      // report the message as undelivered because of it.
-      if (pubkey !== params.senderPubkey && !accepted) {
-        const reason = outcomes.find((o) => o.message)?.message ?? 'no relay accepted it'
-        undelivered.push(`${pubkey.slice(0, 8)}… (${reason})`)
-      }
-    }),
-  )
-
-  if (undelivered.length) {
-    throw new Error(`Could not deliver to: ${undelivered.join('; ')}`)
-  }
+  // Bridge-bound wraps ride the backend's send-wrap API first (discovered via
+  // the well-known document) and only fall back to the relay publish when that
+  // is unavailable; Nostr-direct wraps and the self-copy always relay. See
+  // deliver.ts for the routing rule and the fallback.
+  await deliverWraps({
+    wraps,
+    targets,
+    senderPubkey: params.senderPubkey,
+    bridgePubkey: params.ctx.bridgePubkey,
+    bridgeDomain: params.ctx.ownDomain || BRIDGE_DOMAIN,
+    active: params.active,
+  })
 }
