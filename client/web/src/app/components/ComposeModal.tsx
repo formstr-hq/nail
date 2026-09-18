@@ -19,7 +19,6 @@ import { useContacts } from '@/app/hooks/useContacts'
 import { useComposerEncryption, noEncryptReason } from '@/app/hooks/compose/useComposerEncryption'
 import { useRecipientAutocomplete } from '@/app/hooks/compose/useRecipientAutocomplete'
 import { ownKeypairFor } from '@/app/lib/pgp/keyring'
-import { encryptBody } from '@/app/lib/pgp/compose'
 import { getSessionPassphrase, setSessionPassphrase } from '@/app/lib/pgp/session'
 import { ComposerMinimized, ComposerHeader, DiscardBanner } from '@/app/components/compose/ComposerChrome'
 import { RecipientField, SubjectField } from '@/app/components/compose/RecipientField'
@@ -226,13 +225,13 @@ export function ComposeModal({
     setError('')
     try {
       // The From alias's own key signs any encrypted body; unlock it if locked.
-      // With mixed encryption (below) this applies to BOTH the inline-encrypted
-      // compose path and send.ts's per-recipient legacy path — each needs the
-      // session passphrase once, after which it's cached for the tab.
+      // Encryption itself happens in send.ts (once — see ADR-006), but the
+      // passphrase prompt belongs here, where the composer knows the From alias
+      // and can surface a blocked send.
       const fromKey = ownKeypairFor(settings, fromAddress)
       let passphrase =
         fromKey?.passphraseProtected ? getSessionPassphrase(fromKey.fingerprint) ?? undefined : undefined
-      if (fromKey?.passphraseProtected && !passphrase) {
+      if (encrypt && fromKey?.passphraseProtected && !passphrase) {
         const entered = window.prompt('Enter your PGP key passphrase to sign this message')
         if (!entered) {
           setError('A passphrase is required to sign and send an encrypted message.')
@@ -243,35 +242,23 @@ export function ComposeModal({
         passphrase = entered
       }
 
-      // Encrypt the body in place when the toggle is on: the inline-PGP block
-      // replaces the plaintext, so every wrap (each recipient plus the Sent
-      // self-copy) carries the armored body.
-      let outgoingBody = body
-      if (encrypt) {
-        outgoingBody = await encryptBody({
-          body,
-          fromAddress,
-          recipients: toList,
-          settings,
-          passphrase,
-        })
-      }
-
       await sendMail({
         from: { address: fromAddress },
         senderPubkey: account.pubkey,
         to: toList,
         subject,
-        body: outgoingBody,
+        body,
         inReplyTo: draft?.inReplyTo,
         references: draft?.references,
         ctx,
         signer: protocolSigner(active),
         // NIP-98 auth for the bridge send-wrap API (see lib/mail/deliver.ts).
         active,
-        // Let the send path encrypt per-recipient for legacy/bridge recipients
-        // (mixed encryption): those with keys get PGP ciphertext, the rest
-        // plaintext. Nostr-direct recipients are already gift-wrap encrypted.
+        // The composer lock state, not the body: send.ts applies PGP exactly
+        // once, per-recipient, to the plaintext body. Passing an armored body
+        // as well (the old shape) nested two layers.
+        encrypt,
+        pgpPassphrase: passphrase,
         pgp: {
           pgpKeys: settings.pgpKeys,
           pgpKeyring: settings.pgpKeyring,
