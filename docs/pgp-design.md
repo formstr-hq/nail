@@ -114,16 +114,25 @@ cleartext; discovery never blocks or errors the send.
 
 **Publish** — on key **generation**, the public half of an our-domain key goes
 to **our own WKD directory only** (`lib/pgp/ownWkd.ts` → backend `/api/wkd`).
-Best-effort and fire-and-forget: a publish failure never undoes the already-saved
-key, and the private key never leaves the encrypted settings blob. This is the
-authoritative path — the backend serves the key at
-`mailstr.app/.well-known/openpgpkey/...`, no email round-trip, because it already
-vouches for the identity via NIP-05. The client sends the binary key (base64)
-over a NIP-98-authed PUT; the backend enforces that the signing key **owns** the
-address before storing it, and serves it CORS-open so any browser PGP client can
-read it. (Backend: `formstr-backend` — migration + `pgp_keys` table +
-`wkdController`; needs the nginx rewrite of `/.well-known/openpgpkey/*` →
-`/api/wkd`, mirroring the existing `nostr.json` mapping.)
+The publish is now **part of installing the key** (ADR-007 amendment 2,
+`lib/pgp/install.ts`): the keypair is saved first, then published, and a
+publish failure rolls the save back — a key the world cannot discover is not
+kept, and a save failure after a successful publish (which would orphan a WKD
+key whose private half was lost) is impossible by construction. The private key
+never leaves the encrypted settings blob. This is the authoritative path — the
+backend serves the key at `mailstr.app/.well-known/openpgpkey/...`, no email
+round-trip, because it already vouches for the identity via NIP-05. The client
+sends the binary key (base64) over a NIP-98-authed PUT; the backend enforces
+that the signing key **owns** the address before storing it, and serves it
+CORS-open so any browser PGP client can read it. (Backend: `formstr-backend` —
+migration + `pgp_keys` table + `wkdController`; needs the nginx rewrite of
+`/.well-known/openpgpkey/*` → `/api/wkd`, mirroring the existing `nostr.json`
+mapping.)
+
+**The npub bridge address (`<npub>@mailstr.app`) cannot hold a PGP key.** It
+has no nip05 row, so the backend's ownership check rejects its WKD publish
+(403) — the Settings row for it is disabled with that reason. PGP keys are
+per-nip05-alias only.
 
 We deliberately do **not** publish to keys.openpgp.org: that would add an email
 verification step and permanently register the address↔key link on a third

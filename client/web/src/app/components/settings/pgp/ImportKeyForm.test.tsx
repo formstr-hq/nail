@@ -23,7 +23,7 @@ beforeAll(async () => {
 describe('ImportKeyForm', () => {
   it('asks for the passphrase of a protected key, then stores the UNLOCKED key', async () => {
     const user = userEvent.setup()
-    const onSet = vi.fn()
+    const onSet = vi.fn().mockResolvedValue(true)
     const onCancel = vi.fn()
     const setError = vi.fn()
 
@@ -60,7 +60,7 @@ describe('ImportKeyForm', () => {
 
   it('surfaces a wrong passphrase and stores nothing', async () => {
     const user = userEvent.setup()
-    const onSet = vi.fn()
+    const onSet = vi.fn().mockResolvedValue(true)
     const setError = vi.fn()
 
     render(
@@ -88,7 +88,7 @@ describe('ImportKeyForm', () => {
 
   it('stores an already-unlocked key in one step', async () => {
     const user = userEvent.setup()
-    const onSet = vi.fn()
+    const onSet = vi.fn().mockResolvedValue(true)
 
     render(
       <ImportKeyForm
@@ -110,9 +110,38 @@ describe('ImportKeyForm', () => {
     expect(screen.queryByPlaceholderText('Key passphrase')).not.toBeInTheDocument()
   })
 
+  it('stays open when the install fails (e.g. the WKD publish)', async () => {
+    const user = userEvent.setup()
+    const onSet = vi.fn().mockResolvedValue(false)
+    const onCancel = vi.fn()
+
+    render(
+      <ImportKeyForm
+        address="alice@mailstr.app"
+        onSet={onSet}
+        onCancel={onCancel}
+        setError={vi.fn()}
+      />,
+    )
+
+    await user.type(
+      screen.getByPlaceholderText('-----BEGIN PGP PRIVATE KEY BLOCK-----'),
+      unlockedPrivateKey,
+    )
+    await user.click(screen.getByRole('button', { name: /import key/i }))
+
+    await vi.waitFor(() => expect(onSet).toHaveBeenCalledTimes(1))
+    // The form must not dismiss: the key is not installed, and the pasted
+    // armor stays so the user can retry.
+    expect(onCancel).not.toHaveBeenCalled()
+    expect(
+      screen.getByPlaceholderText('-----BEGIN PGP PRIVATE KEY BLOCK-----'),
+    ).toBeInTheDocument()
+  })
+
   it('rejects a public key', async () => {
     const user = userEvent.setup()
-    const onSet = vi.fn()
+    const onSet = vi.fn().mockResolvedValue(true)
     const setError = vi.fn()
 
     render(

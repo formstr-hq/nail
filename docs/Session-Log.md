@@ -938,6 +938,57 @@ passphrase rejects; already-unlocked passthrough); `ImportKeyForm.test.tsx` 4/4
 (two-step flow stores an unlocked key, wrong passphrase stores nothing,
 one-step unlocked import, public-key rejection).
 
+### Amendment 2 (same day) — one-click generate, WKD-gated install, npub row disabled
+
+Three changes on top of the above, same day:
+
+**1. Generate is one click again.** The generate panel (explanatory copy +
+Generate/Cancel) is gone; the button generates and installs directly. The
+passphrase field had already been removed in this session, so the panel was
+pure friction. Copy about the passphrase-less policy now lives in the Field
+hint instead.
+
+**2. A key is only kept if WKD accepts it.** New orchestrator
+`lib/pgp/install.ts` (`installAliasKey`), shared by first-time generate,
+import, and rotate. Order: **save → publish**; on publish failure the save is
+**rolled back** (restore `previous`, or remove the entry when the alias had
+none — safe because the publish failed, so WKD never held it). This keeps the
+user's rule ("if the API call fails for WKD, don't save the key") without the
+worse failure mode a naive save-after-publish would have: a save that fails
+after a successful publish would leave WKD advertising a key whose private half
+was lost, making inbound mail to it unreadable. Saving first cannot lose mail;
+the rollback restores the exact prior state. The one case where the key stays
+stored and unpublished is a rollback failure, surfaced explicitly with the
+Republish hint. `rotate.ts`/`rotate.test.ts` are superseded by
+`install.ts`/`install.test.ts` (deleted; the rotate behavior is the same code
+path with a non-null `previous`). `publishOwnKey` (the old fire-and-forget
+publish) is deleted — dead once every path needs the failure.
+
+**3. The npub bridge address row is disabled.** `<npub>@mailstr.app` has no
+nip05 row (`nostr.json?name=npub15g…` returns `{"names":{}}`), so the backend's
+ownership check rejects its WKD publish with 403 every time — under (2) that
+alias could never install a key. The row renders inert with the reason
+("no NIP-05 identity"). A legacy stored key on that row still exposes
+copy/export, but Republish/Rotate are hidden (they can only 403).
+
+Tests: `install.test.ts` 6/6 (save-before-publish order, save failure aborts
+publish, publish failure rolls a fresh key out, publish failure restores the
+rotated key, rollback failure keeps + warns, dual unlocked keypair);
+`ImportKeyForm.test.tsx` 5/5 (adds "install failure keeps the form open");
+`openpgp.test.ts` 21/21.
+
+Verification at this working tree: lint 0 errors; build ok; `pnpm test` 312
+passed / 4 failed — the same pre-existing attachments-WIP failures
+(`api/addresses.test.ts` ×3, `mail/composeFields.test.ts` ×1), not caused by
+this diff.
+
+### WKD publish rollback and the npub address — noted limitation
+
+The 403 on the npub address is a backend policy (the nip05-ownership check in
+`wkdController`), not a client bug. If PGP for the npub bridge address is ever
+wanted, it needs a backend route that accepts a pubkey-owned synthetic
+identity — not a client change.
+
 ## 2026-09-19 — nginx: SPA fallback for the mail client (deep links were 404)
 
 Context consulted per rule 15: the 2026-09-17 deploy-fix entry, the

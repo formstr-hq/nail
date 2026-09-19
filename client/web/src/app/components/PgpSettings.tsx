@@ -5,7 +5,7 @@ import { useOwnedAddresses } from '@/app/hooks/useOwnedAddresses'
 import { BRIDGE_DOMAIN } from '@/app/lib/nostr/constants'
 import type { PgpKeypair } from '@/app/lib/nostr/settings'
 import { keyringKey, addToKeyring, removeFromKeyring, keyringEntries, type KeyringEntry } from '@/app/lib/pgp/keyring'
-import { rotateAliasKey } from '@/app/lib/pgp/rotate'
+import { installAliasKey } from '@/app/lib/pgp/install'
 import { republishOwnKey } from '@/app/components/settings/pgp/wkdPublish'
 import { AlertIcon } from '@/app/components/ui/icons'
 import { Field } from '@/app/components/settings/pgp/Field'
@@ -37,7 +37,10 @@ export function PgpSettings() {
   const [error, setError] = useState('')
 
   // Every address the user can hold a key for: owned NIP-05 names plus the
-  // always-present npub bridge address.
+  // always-present npub bridge address. The npub row is DISABLED for PGP: it
+  // is not a nip05 identity (`nostr.json?name=npub…` has no entry), so the
+  // backend's ownership check rejects its WKD publish with 403 every time —
+  // and by policy (install.ts) a key whose publish fails is not kept.
   const bridgeAddress = account ? `${account.npub}@${BRIDGE_DOMAIN}` : ''
   const aliasList = [...addresses, ...(bridgeAddress ? [bridgeAddress] : [])]
 
@@ -70,41 +73,95 @@ export function PgpSettings() {
     }
   }
 
-  function setAliasKey(address: string, keypair: PgpKeypair) {
-    void persist({ pgpKeys: { ...(settings.pgpKeys ?? {}), [keyringKey(address)]: keypair } })
-  }
-
   /**
-   * Replace an alias's key. The orchestrator saves BEFORE publishing (see
-   * lib/pgp/rotate.ts), and a publish failure is surfaced as an error while
-   * keeping the rotated key — Republish-to-WKD retries it.
+   * Store an alias keypair through the install orchestrator
+   * (lib/pgp/install.ts): save, then publish; a publish failure rolls the save
+   * back, so a WKD failure never leaves a key behind. A rollback failure is
+   * the one case where the key IS stored without a publish — surfaced with the
+   * Republish hint, which retries the key actually in settings.
+   *
+   * Returns whether the key was installed, so a caller (the import form) can
+   * keep itself open on failure. The failure message is set here, once.
    */
-  async function rotateKey(address: string) {
+  async function installKey(address: string, keypair: PgpKeypair): Promise<boolean> {
     if (!account || !active) {
       setError('Your session is locked — sign in again.')
-      return
+      return false
     }
     setBusy(true)
     setError('')
     try {
-      const result = await rotateAliasKey({
+      const result = await installAliasKey({
         address,
+        keypair,
+        // Fresh generate: nothing to restore if the publish fails, so the
+        // rollback removes the entry.
+        previous: undefined,
         // Read the LIVE pgpKeys at save time, not the snapshot from this
         // render: key generation runs for ~a second, and a concurrent change
-        // to another alias's key must not be clobbered by this patch.
-        save: (keypair) => {
-          const live = useSettingsStore.getState().settings.pgpKeys ?? {}
-          return save({ pgpKeys: { ...live, [keyringKey(address)]: keypair } }, account.pubkey, active)
+        // to another alias's key must not be clobbered by this patch. `null`
+        // removes the alias entry (the rollback path).
+        save: (kp) => {
+          const live = { ...(useSettingsStore.getState().settings.pgpKeys ?? {}) }
+          if (kp) live[keyringKey(address)] = kp
+          else delete live[keyringKey(address)]
+          return save({ pgpKeys: live }, account.pubkey, active)
         },
         publish: async (addr, keys) => republishOwnKey(addr, keys),
       })
-      if (!result.published) {
+      if (result.status === 'failed') {
         setError(
-          `Key rotated, but publishing to WKD failed: ${result.publishError}. Use "Republish to WKD" to retry.`,
+          result.saved
+            ? `Key wasn't published: ${result.error}. Use "Republish to WKD" to retry.`
+            : `Key generation failed, nothing was saved: ${result.error}`,
         )
+        return false
       }
+      return true
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * Replace an alias's key, restoring the previous keypair if the publish
+   * fails (so rotation is all-or-nothing and old mail stays readable).
+   */
+  async function rotateKey(address: string, keypair: PgpKeypair): Promise<boolean> {
+    if (!account || !active) {
+      setError('Your session is locked — sign in again.')
+      return false
+    }
+    setBusy(true)
+    setError('')
+    try {
+      const result = await installAliasKey({
+        address,
+        keypair,
+        previous: useSettingsStore.getState().settings.pgpKeys?.[keyringKey(address)],
+        save: (kp) => {
+          const live = { ...(useSettingsStore.getState().settings.pgpKeys ?? {}) }
+          if (kp) live[keyringKey(address)] = kp
+          else delete live[keyringKey(address)]
+          return save({ pgpKeys: live }, account.pubkey, active)
+        },
+        publish: async (addr, keys) => republishOwnKey(addr, keys),
+      })
+      if (result.status === 'failed') {
+        setError(
+          result.saved
+            ? `Key wasn't rotated: ${result.error}. The new key is stored but unpublished — use "Republish to WKD".`
+            : `Key rotation failed, the previous key is still in place: ${result.error}`,
+        )
+        return false
+      }
+      return true
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      return false
     } finally {
       setBusy(false)
     }
@@ -128,9 +185,14 @@ export function PgpSettings() {
               address={address}
               keypair={settings.pgpKeys?.[keyringKey(address)]}
               busy={busy}
-              onSet={(kp) => setAliasKey(address, kp)}
-              onRotate={() => rotateKey(address)}
+              onInstall={(kp) => installKey(address, kp)}
+              onRotate={(kp) => rotateKey(address, kp)}
               setError={setError}
+              disabledReason={
+                bridgeAddress && address === bridgeAddress
+                  ? 'Encryption is unavailable for the npub bridge address — it has no NIP-05 identity, so a public key cannot be published for it.'
+                  : undefined
+              }
             />
           ))}
         </div>

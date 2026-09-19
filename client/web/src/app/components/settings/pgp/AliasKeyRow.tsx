@@ -1,39 +1,76 @@
 import { useState } from 'react'
-import type { KeyHalf, PgpKeypair } from '@/app/lib/nostr/settings'
+import type { PgpKeypair } from '@/app/lib/nostr/settings'
 import { generateKeySet } from '@/app/lib/pgp/openpgp'
+import { keypairFromSet } from '@/app/lib/pgp/install'
 import { ownPublicKeysFor } from '@/app/lib/pgp/keyring'
 import { Button } from '@/app/components/ui/Button'
 import { KeyIcon } from '@/app/components/ui/icons'
 import { formatFingerprint } from '@/app/components/settings/pgp/shared'
-import { publishOwnKey, republishOwnKey } from '@/app/components/settings/pgp/wkdPublish'
+import { republishOwnKey } from '@/app/components/settings/pgp/wkdPublish'
 import { KeyExportDialog } from '@/app/components/settings/pgp/KeyExportDialog'
 import { RotateKeyDialog } from '@/app/components/settings/pgp/RotateKeyDialog'
 import { ImportKeyForm } from '@/app/components/settings/pgp/ImportKeyForm'
 
-/** One alias row: shows its key if it has one, else offers generate/import. */
+/**
+ * One alias row: shows its key if it has one, else offers generate/import.
+ *
+ * `disabledReason` marks an alias that cannot hold a key at all (see
+ * PgpSettings: the npub bridge address has no nip05 row, so WKD publish can
+ * never succeed for it). The whole row is inert in that case.
+ */
 export function AliasKeyRow({
   address,
   keypair,
   busy,
-  onSet,
+  onInstall,
   onRotate,
   setError,
+  disabledReason,
 }: {
   address: string
   keypair: PgpKeypair | undefined
   busy: boolean
-  onSet: (kp: PgpKeypair) => void
-  /** Replace this alias's keypair (generate → save → WKD publish). */
-  onRotate: () => Promise<void>
+  /** Store a fresh keypair for this alias (WKD publish included, or nothing is kept). */
+  onInstall: (keypair: PgpKeypair) => Promise<boolean>
+  /** Replace this alias's keypair (confirmation dialog owns the warning). */
+  onRotate: (keypair: PgpKeypair) => Promise<boolean>
   setError: (m: string) => void
+  disabledReason?: string
 }) {
-  const [mode, setMode] = useState<'idle' | 'generate' | 'import'>('idle')
+  const [mode, setMode] = useState<'idle' | 'import'>('idle')
   const [working, setWorking] = useState(false)
   const [copied, setCopied] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [republishing, setRepublishing] = useState(false)
   const [republished, setRepublished] = useState(false)
   const [confirmingRotate, setConfirmingRotate] = useState(false)
+
+  if (disabledReason && !keypair) {
+    return (
+      <div className="rounded-md border border-dashed border-input p-3 opacity-60">
+        <div className="flex items-center gap-2">
+          <KeyIcon className="h-4 w-4 flex-none text-subtle" />
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">{address}</span>
+        </div>
+        <p className="mt-1 pl-6 text-[10.5px] leading-relaxed text-subtle">{disabledReason}</p>
+      </div>
+    )
+  }
+
+  // Generate runs immediately — no confirm panel. The key is installed
+  // (stored + published) or nothing of it is kept (lib/pgp/install.ts).
+  async function generateNow() {
+    setWorking(true)
+    setError('')
+    try {
+      const gen = await generateKeySet({ email: address })
+      await onInstall(keypairFromSet(gen))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWorking(false)
+    }
+  }
 
   // Has a key — show fingerprint, copy, export, republish, rotate.
   if (keypair) {
@@ -64,33 +101,43 @@ export function AliasKeyRow({
           <Button size="sm" onClick={() => setExporting(true)}>
             Export
           </Button>
-          <Button
-            size="sm"
-            disabled={republishing}
-            onClick={() => {
-              setRepublishing(true)
-              setRepublished(false)
-              setError('')
-              republishOwnKey(address, ownPublicKeysFor(keypair))
-                .then(() => {
-                  setRepublished(true)
-                  setTimeout(() => setRepublished(false), 2500)
-                })
-                .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-                .finally(() => setRepublishing(false))
-            }}
-          >
-            {republishing ? 'Publishing…' : republished ? 'Published' : 'Republish to WKD'}
-          </Button>
-          <Button
-            size="sm"
-            variant="danger"
-            disabled={busy || confirmingRotate}
-            onClick={() => setConfirmingRotate(true)}
-          >
-            Rotate key
-          </Button>
+          {/* A disabled alias (the npub bridge address) can hold a legacy key,
+              but it cannot publish — Republish and Rotate would 403 forever,
+              so they are hidden and only the key-material actions remain. */}
+          {!disabledReason && (
+            <>
+              <Button
+                size="sm"
+                disabled={republishing}
+                onClick={() => {
+                  setRepublishing(true)
+                  setRepublished(false)
+                  setError('')
+                  republishOwnKey(address, ownPublicKeysFor(keypair))
+                    .then(() => {
+                      setRepublished(true)
+                      setTimeout(() => setRepublished(false), 2500)
+                    })
+                    .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+                    .finally(() => setRepublishing(false))
+                }}
+              >
+                {republishing ? 'Publishing…' : republished ? 'Published' : 'Republish to WKD'}
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                disabled={busy || confirmingRotate}
+                onClick={() => setConfirmingRotate(true)}
+              >
+                Rotate key
+              </Button>
+            </>
+          )}
         </div>
+        {disabledReason && (
+          <p className="mt-1.5 pl-6 text-[10.5px] leading-relaxed text-subtle">{disabledReason}</p>
+        )}
         {exporting && (
           <KeyExportDialog address={address} keypair={keypair} onClose={() => setExporting(false)} />
         )}
@@ -99,8 +146,18 @@ export function AliasKeyRow({
             address={address}
             busy={busy}
             onClose={() => setConfirmingRotate(false)}
-            onConfirm={() => {
-              void onRotate().finally(() => setConfirmingRotate(false))
+            onConfirm={async () => {
+              setWorking(true)
+              setError('')
+              try {
+                const gen = await generateKeySet({ email: address })
+                await onRotate(keypairFromSet(gen))
+              } catch (e) {
+                setError(e instanceof Error ? e.message : String(e))
+              } finally {
+                setWorking(false)
+                setConfirmingRotate(false)
+              }
             }}
           />
         )}
@@ -116,71 +173,25 @@ export function AliasKeyRow({
         <span className="min-w-0 flex-1 truncate text-[12.5px] text-muted-foreground">{address}</span>
         {mode === 'idle' && (
           <div className="flex flex-none gap-2">
-            <Button size="sm" onClick={() => setMode('generate')} disabled={busy}>
-              Generate
+            <Button size="sm" onClick={() => void generateNow()} disabled={busy || working}>
+              {working ? 'Generating…' : 'Generate'}
             </Button>
-            <Button size="sm" onClick={() => setMode('import')} disabled={busy}>
+            <Button size="sm" onClick={() => setMode('import')} disabled={busy || working}>
               Import
             </Button>
           </div>
         )}
+        {mode === 'import' && (
+          <Button size="sm" onClick={() => setMode('idle')} disabled={working}>
+            Cancel
+          </Button>
+        )}
       </div>
-
-      {mode === 'generate' && (
-        <div className="mt-2 flex flex-col gap-2 pl-6">
-          <p className="text-[10.5px] leading-relaxed text-subtle">
-            Generates a dual key set — a v4 (GnuPG-compatible) key plus a v6 key — so every
-            mail service can write to you encrypted. The key is stored without a passphrase:
-            Mailstr needs it unlocked to decrypt and sign automatically. Use Export any time
-            to download a passphrase-protected backup copy.
-          </p>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="primary"
-              disabled={working}
-              onClick={async () => {
-                setWorking(true)
-                setError('')
-                try {
-                  const gen = await generateKeySet({ email: address })
-                  const halves: Record<'v4' | 'v6', KeyHalf> = {
-                    v4: { publicKey: gen.v4.publicKey, privateKey: gen.v4.privateKey, fingerprint: gen.v4.fingerprint },
-                    v6: { publicKey: gen.v6.publicKey, privateKey: gen.v6.privateKey, fingerprint: gen.v6.fingerprint },
-                  }
-                  onSet({
-                    publicKey: gen.v4.publicKey,
-                    privateKey: gen.v4.privateKey,
-                    fingerprint: gen.v4.fingerprint,
-                    passphraseProtected: false,
-                    v4: halves.v4,
-                    v6: halves.v6,
-                  })
-                  setMode('idle')
-                  // Publish BOTH public keys so others can discover them and
-                  // encrypt to this address. Best-effort, never blocks
-                  // generation.
-                  publishOwnKey(address, [gen.v4.publicKey, gen.v6.publicKey])
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e))
-                } finally {
-                  setWorking(false)
-                }
-              }}
-            >
-              {working ? 'Generating…' : 'Generate key'}
-            </Button>
-            <Button size="sm" onClick={() => setMode('idle')}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
 
       {mode === 'import' && (
         <ImportKeyForm
           address={address}
-          onSet={onSet}
+          onSet={onInstall}
           onCancel={() => setMode('idle')}
           setError={setError}
         />

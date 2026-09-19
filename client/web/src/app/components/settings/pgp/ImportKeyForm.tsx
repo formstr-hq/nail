@@ -21,7 +21,8 @@ export function ImportKeyForm({
   setError,
 }: {
   address: string
-  onSet: (kp: PgpKeypair) => void
+  /** Install the key (store + WKD publish); resolves true when installed. */
+  onSet: (kp: PgpKeypair) => Promise<boolean>
   onCancel: () => void
   setError: (m: string) => void
 }) {
@@ -32,7 +33,7 @@ export function ImportKeyForm({
 
   async function store(armoredPrivate: string, keyInfo: KeyInfo) {
     const publicKey = await extractPublicKey(armoredPrivate)
-    onSet({
+    return onSet({
       publicKey,
       privateKey: armoredPrivate,
       fingerprint: keyInfo.fingerprint,
@@ -54,8 +55,7 @@ export function ImportKeyForm({
         setInfo(keyInfo)
         return
       }
-      await store(armored, keyInfo)
-      onCancel()
+      if (await store(armored, keyInfo)) onCancel()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -72,8 +72,9 @@ export function ImportKeyForm({
       // Re-read the unlocked armor so the stored fingerprint/identity come from
       // what is actually persisted, not from the locked original.
       const unlockedInfo = await readKeyInfo(unlocked)
-      await store(unlocked, unlockedInfo)
-      onCancel()
+      // Only close when the key was actually installed — an install failure
+      // (e.g. the WKD publish) leaves the form open with the key still pasted.
+      if (await store(unlocked, unlockedInfo)) onCancel()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
