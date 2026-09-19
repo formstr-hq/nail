@@ -54,11 +54,16 @@ all deliberate:
   the user's own Nostr key before it leaves the device);
 - losing the Nostr key loses the PGP keys too — acceptable, they are one identity.
 
-An **optional passphrase** may additionally encrypt a private key at rest
-(OpenPGP.js generate/`encryptKey({ passphrase })`) for users who want a second
-factor even against a compromised Nostr key. Per-alias, so keys can have
-different passphrases; the session cache is keyed by fingerprint. Default off to
-keep first-run frictionless.
+An **optional passphrase** was originally planned here. It was removed by
+ADR-007 (2026-09-19, `docs/Session-Log.md`): decrypt/sign run automatically on
+read and send, so a locked key either prompts constantly or blocks mail, and it
+re-introduced the fail-open failure mode behind the 2026-09-18 double-encryption
+incident. **Mailstr now stores every generated/imported key without a
+passphrase**; a passphrase protects exported copies only. Importing an already
+locked key asks for its passphrase once, unlocks it, and stores the unlocked
+form — the app never persists a locked key. Legacy locked keys keep their
+unlock path, and **Rotate** (Settings › Encryption) replaces them with an
+unlocked key.
 
 Correspondents' **public keys** live in a separate keyring —
 `pgpKeyring: { [emailLowercased]: armoredPublicKey }` — so it also syncs.

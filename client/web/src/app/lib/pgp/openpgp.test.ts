@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import {
   generateKey,
+  encryptPrivateKey,
+  unlockPrivateKey,
   readKeyInfo,
   isPgpMessage,
   encryptMessage,
@@ -20,11 +22,16 @@ let locked: GeneratedKey
 const PASS = 'correct horse battery staple'
 
 beforeAll(async () => {
-  ;[alice, bob, locked] = await Promise.all([
+  ;[alice, bob] = await Promise.all([
     generateKey({ name: 'Alice', email: 'alice@mailstr.app' }),
     generateKey({ name: 'Bob', email: 'bob@gmail.com' }),
-    generateKey({ email: 'carol@mailstr.app', passphrase: PASS }),
   ])
+  // A passphrase-locked fixture for the LEGACY read path. Nothing in the app
+  // generates locked keys any more (Mailstr stores keys unlocked); locking is
+  // only reachable through encryptPrivateKey (the export path), so that is how
+  // the test builds one too.
+  const carol = await generateKey({ email: 'carol@mailstr.app' })
+  locked = { ...carol, privateKey: await encryptPrivateKey(carol.privateKey, PASS) }
 }, 30_000)
 
 describe('generateKey', () => {
@@ -198,6 +205,41 @@ describe('passphrase-protected keys', () => {
     })
     expect(result.text).toBe('signed by carol')
     expect(result.signature.status).toBe('valid')
+  })
+})
+
+describe('unlockPrivateKey (the import path)', () => {
+  it('returns an UNLOCKED armor that still round-trips decryption and signing', async () => {
+    const unlocked = await unlockPrivateKey(locked.privateKey, PASS)
+
+    const info = await readKeyInfo(unlocked)
+    expect(info.isPrivate).toBe(true)
+    expect(info.encrypted).toBe(false)
+    expect(info.fingerprint).toBe(locked.fingerprint)
+
+    // The unlocked armor must be usable for both decrypt and sign without a
+    // passphrase — exactly what an imported key needs to do in the mailbox.
+    const armored = await encryptMessage({
+      text: 'after import',
+      recipientPublicKeys: [locked.publicKey],
+    })
+    const result = await decryptMessage({
+      message: await parsePgpMessage(armored),
+      privateKey: unlocked,
+    })
+    expect(result.text).toBe('after import')
+  })
+
+  it('rejects a wrong passphrase', async () => {
+    await expect(unlockPrivateKey(locked.privateKey, 'wrong')).rejects.toThrow()
+  })
+
+  it('an already-unlocked key passes through untouched when its passphrase is given', async () => {
+    // decryptPrivateKey short-circuits on an unlocked key; the armor is still
+    // re-emitted, so the import path is uniform for both cases.
+    const unlocked = await unlockPrivateKey(alice.privateKey, 'ignored')
+    expect((await readKeyInfo(unlocked)).encrypted).toBe(false)
+    expect((await readKeyInfo(unlocked)).fingerprint).toBe(alice.fingerprint)
   })
 })
 

@@ -76,8 +76,10 @@ export interface MailSettings {
  */
 export interface PgpKeypair {
   publicKey: string        // armored public key — safe to publish
-  privateKey: string       // armored private key — secret; passphrase-encrypted
-                           // here iff passphraseProtected
+  privateKey: string       // armored private key — secret; stored UNLOCKED by
+                           // Mailstr policy, passphrase-locked only on legacy
+                           // entries (passphraseProtected true) and exported
+                           // copies
   fingerprint: string      // this key's fingerprint, for session-passphrase keying
   passphraseProtected?: boolean // true when privateKey is passphrase-locked
   /** The v4-packet (GnuPG-compatible) half of the dual set, when generated. */

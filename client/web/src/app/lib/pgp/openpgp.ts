@@ -13,8 +13,11 @@ import * as openpgp from 'openpgp'
  *    the interoperable wire form and exactly what lands in the encrypted
  *    settings event and the correspondent keyring.
  *  - The user's PRIVATE key never leaves the device in the clear. It rides in
- *    the NIP-44-encrypted settings event like `mailIndexKey`; an optional
- *    passphrase encrypts it a second time at rest here.
+ *    the NIP-44-encrypted settings event like `mailIndexKey`, stored UNLOCKED
+ *    (Mailstr keys have no passphrase — see the rotation policy in
+ *    session.ts); the only passphrase ever applied is on an exported copy
+ *    (`encryptPrivateKey`), so a downloaded file never lands on disk in the
+ *    clear.
  *  - Signature results are reported HONESTLY and granularly (see `SignatureState`)
  *    rather than as a boolean — the reader is told which check actually passed,
  *    mirroring the SenderProof philosophy in types/mail.ts.
@@ -96,11 +99,17 @@ export function isPgpMessage(text: string): boolean {
   return text.includes(ARMOR_MESSAGE)
 }
 
-/** Generate a fresh keypair bound to one identity. */
+/**
+ * Generate a fresh keypair bound to one identity.
+ *
+ * Always passphrase-LESS: Mailstr stores keys unlocked, so mail can be
+ * decrypted and signed without an unlock step (see session.ts and the
+ * rotation policy). `encryptPrivateKey` is the one way to lock a key, used by
+ * the export path for a downloaded copy.
+ */
 export async function generateKey(params: {
   name?: string
   email: string
-  passphrase?: string
   type?: KeyType
 }): Promise<GeneratedKey> {
   const { privateKey, publicKey } = await openpgp.generateKey({
@@ -108,7 +117,6 @@ export async function generateKey(params: {
     // no separate `curve` field. Small, fast, modern, and interoperable.
     type: params.type ?? 'curve25519',
     userIDs: [{ name: params.name, email: params.email }],
-    passphrase: params.passphrase || undefined,
     format: 'armored',
   })
   const key = await openpgp.readKey({ armoredKey: publicKey })
@@ -126,29 +134,26 @@ export async function generateKey(params: {
  *  - `v6` half: Ed25519 (algo 27) + X25519 (algo 25) — openpgp.js's modern
  *    curve IDs, what current-generation clients prefer.
  *
- * Both are bound to the same identity, both locked (or not) with the same
- * passphrase, and BOTH public halves are published concatenated so each
- * consumer picks its supported version. Generation order is fixed.
+ * Both are bound to the same identity and both are passphrase-LESS — Mailstr
+ * stores keys unlocked so encrypt/sign/decrypt never need an unlock step, and
+ * BOTH public halves are published concatenated so each consumer picks its
+ * supported version. Generation order is fixed.
  */
 export async function generateKeySet(params: {
   name?: string
   email: string
-  passphrase?: string
 }): Promise<GeneratedKeySet> {
-  const passphrase = params.passphrase || undefined
   const [v4, v6] = await Promise.all([
     openpgp.generateKey({
       type: 'ecc',
       curve: 'ed25519Legacy',
       userIDs: [{ name: params.name, email: params.email }],
-      passphrase,
       format: 'armored',
       config: { v6Keys: false },
     }),
     openpgp.generateKey({
       type: 'curve25519',
       userIDs: [{ name: params.name, email: params.email }],
-      passphrase,
       format: 'armored',
       config: { v6Keys: false },
     }),
@@ -225,6 +230,20 @@ async function decryptPrivateKey(
 }
 
 /**
+ * Unlock a passphrase-protected private key, returning its UNLOCKED armored
+ * form. This backs the import path: Mailstr's storage policy is
+ * passphrase-less keys (ADR-007), so an imported locked key is stripped of its
+ * passphrase once the user proves they hold it. `encryptPrivateKey` is the
+ * inverse (re-locking an exported copy).
+ *
+ * A wrong passphrase throws — callers surface that as "incorrect passphrase".
+ */
+export async function unlockPrivateKey(armored: string, passphrase: string): Promise<string> {
+  const unlocked = await decryptPrivateKey(armored, passphrase)
+  return unlocked.armor()
+}
+
+/**
  * Re-lock a decrypted private key with a passphrase, returning the armored
  * encrypted form. The inverse of `decryptPrivateKey` — this is what backs the
  * passphrase-protected export (a downloaded key must never land on disk in
@@ -238,10 +257,13 @@ export async function encryptPrivateKey(
     typeof armoredOrKey === 'string'
       ? await openpgp.readPrivateKey({ armoredKey: armoredOrKey })
       : armoredOrKey
-  const unlocked = privateKey.isDecrypted()
-    ? privateKey
-    : (privateKey as openpgp.PrivateKey)
-  const locked = await openpgp.encryptKey({ privateKey: unlocked, passphrase })
+  if (!privateKey.isDecrypted()) {
+    // encryptKey would throw "Key packet is already encrypted"; name the
+    // actual problem instead. An already-locked key is exported AS-IS (see
+    // KeyExportDialog), so this is a programming error, not a user path.
+    throw new Error('Cannot re-encrypt a locked private key; it is already protected.')
+  }
+  const locked = await openpgp.encryptKey({ privateKey, passphrase })
   return typeof locked === 'string' ? locked : locked.armor()
 }
 

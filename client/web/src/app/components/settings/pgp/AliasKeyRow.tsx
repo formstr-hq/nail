@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import type { KeyHalf, PgpKeypair } from '@/app/lib/nostr/settings'
-import { generateKeySet, readKeyInfo } from '@/app/lib/pgp/openpgp'
+import { generateKeySet } from '@/app/lib/pgp/openpgp'
 import { ownPublicKeysFor } from '@/app/lib/pgp/keyring'
 import { Button } from '@/app/components/ui/Button'
 import { KeyIcon } from '@/app/components/ui/icons'
-import { inputClass, areaClass, formatFingerprint, extractPublicKey } from '@/app/components/settings/pgp/shared'
+import { formatFingerprint } from '@/app/components/settings/pgp/shared'
 import { publishOwnKey, republishOwnKey } from '@/app/components/settings/pgp/wkdPublish'
 import { KeyExportDialog } from '@/app/components/settings/pgp/KeyExportDialog'
+import { RotateKeyDialog } from '@/app/components/settings/pgp/RotateKeyDialog'
+import { ImportKeyForm } from '@/app/components/settings/pgp/ImportKeyForm'
 
 /** One alias row: shows its key if it has one, else offers generate/import. */
 export function AliasKeyRow({
@@ -14,24 +16,26 @@ export function AliasKeyRow({
   keypair,
   busy,
   onSet,
+  onRotate,
   setError,
 }: {
   address: string
   keypair: PgpKeypair | undefined
   busy: boolean
   onSet: (kp: PgpKeypair) => void
+  /** Replace this alias's keypair (generate → save → WKD publish). */
+  onRotate: () => Promise<void>
   setError: (m: string) => void
 }) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'import'>('idle')
-  const [passphrase, setPassphrase] = useState('')
-  const [importText, setImportText] = useState('')
   const [working, setWorking] = useState(false)
   const [copied, setCopied] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [republishing, setRepublishing] = useState(false)
   const [republished, setRepublished] = useState(false)
+  const [confirmingRotate, setConfirmingRotate] = useState(false)
 
-  // Has a key — show fingerprint, copy, export.
+  // Has a key — show fingerprint, copy, export, republish, rotate.
   if (keypair) {
     return (
       <div className="rounded-md border border-input bg-muted/40 p-3">
@@ -78,9 +82,27 @@ export function AliasKeyRow({
           >
             {republishing ? 'Publishing…' : republished ? 'Published' : 'Republish to WKD'}
           </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            disabled={busy || confirmingRotate}
+            onClick={() => setConfirmingRotate(true)}
+          >
+            Rotate key
+          </Button>
         </div>
         {exporting && (
           <KeyExportDialog address={address} keypair={keypair} onClose={() => setExporting(false)} />
+        )}
+        {confirmingRotate && (
+          <RotateKeyDialog
+            address={address}
+            busy={busy}
+            onClose={() => setConfirmingRotate(false)}
+            onConfirm={() => {
+              void onRotate().finally(() => setConfirmingRotate(false))
+            }}
+          />
         )}
       </div>
     )
@@ -106,16 +128,11 @@ export function AliasKeyRow({
 
       {mode === 'generate' && (
         <div className="mt-2 flex flex-col gap-2 pl-6">
-          <input
-            type="password"
-            value={passphrase}
-            onChange={(e) => setPassphrase(e.target.value)}
-            placeholder="Optional passphrase (extra protection at rest)"
-            className={inputClass}
-          />
           <p className="text-[10.5px] leading-relaxed text-subtle">
             Generates a dual key set — a v4 (GnuPG-compatible) key plus a v6 key — so every
-            mail service can write to you encrypted.
+            mail service can write to you encrypted. The key is stored without a passphrase:
+            Mailstr needs it unlocked to decrypt and sign automatically. Use Export any time
+            to download a passphrase-protected backup copy.
           </p>
           <div className="flex gap-2">
             <Button
@@ -126,7 +143,7 @@ export function AliasKeyRow({
                 setWorking(true)
                 setError('')
                 try {
-                  const gen = await generateKeySet({ email: address, passphrase: passphrase || undefined })
+                  const gen = await generateKeySet({ email: address })
                   const halves: Record<'v4' | 'v6', KeyHalf> = {
                     v4: { publicKey: gen.v4.publicKey, privateKey: gen.v4.privateKey, fingerprint: gen.v4.fingerprint },
                     v6: { publicKey: gen.v6.publicKey, privateKey: gen.v6.privateKey, fingerprint: gen.v6.fingerprint },
@@ -135,12 +152,11 @@ export function AliasKeyRow({
                     publicKey: gen.v4.publicKey,
                     privateKey: gen.v4.privateKey,
                     fingerprint: gen.v4.fingerprint,
-                    passphraseProtected: !!passphrase,
+                    passphraseProtected: false,
                     v4: halves.v4,
                     v6: halves.v6,
                   })
                   setMode('idle')
-                  setPassphrase('')
                   // Publish BOTH public keys so others can discover them and
                   // encrypt to this address. Best-effort, never blocks
                   // generation.
@@ -162,54 +178,12 @@ export function AliasKeyRow({
       )}
 
       {mode === 'import' && (
-        <div className="mt-2 flex flex-col gap-2 pl-6">
-          <textarea
-            value={importText}
-            onChange={(e) => setImportText(e.target.value)}
-            placeholder="-----BEGIN PGP PRIVATE KEY BLOCK-----"
-            rows={4}
-            className={areaClass}
-          />
-          <p className="text-[11px] leading-relaxed text-subtle">
-            Paste the armored PRIVATE key for this address (e.g. exported from GPG).
-          </p>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="primary"
-              disabled={working || !importText.trim()}
-              onClick={async () => {
-                setWorking(true)
-                setError('')
-                try {
-                  const armoredPrivate = importText.trim()
-                  const info = await readKeyInfo(armoredPrivate)
-                  if (!info.isPrivate) {
-                    throw new Error('That’s a public key — import your PRIVATE key so you can decrypt and sign.')
-                  }
-                  const publicKey = await extractPublicKey(armoredPrivate)
-                  onSet({
-                    publicKey,
-                    privateKey: armoredPrivate,
-                    fingerprint: info.fingerprint,
-                    passphraseProtected: info.encrypted ?? false,
-                  })
-                  setMode('idle')
-                  setImportText('')
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e))
-                } finally {
-                  setWorking(false)
-                }
-              }}
-            >
-              {working ? 'Importing…' : 'Import key'}
-            </Button>
-            <Button size="sm" onClick={() => setMode('idle')}>
-              Cancel
-            </Button>
-          </div>
-        </div>
+        <ImportKeyForm
+          address={address}
+          onSet={onSet}
+          onCancel={() => setMode('idle')}
+          setError={setError}
+        />
       )}
     </div>
   )

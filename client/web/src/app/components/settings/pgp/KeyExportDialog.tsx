@@ -9,21 +9,16 @@ import { inputClass } from '@/app/components/settings/pgp/shared'
 
 /**
  * The export dialog: download the alias's private key half(s) as one armored
- * bundle.
+ * bundle, ALWAYS passphrase-encrypted.
  *
- * A key that's ALREADY passphrase-protected downloads as-is, still locked
- * with its OWN (original) passphrase — no separate export passphrase to set.
- * Re-encrypting with a new one here, as this used to do unconditionally,
- * meant the file was locked with a passphrase that only existed for this one
- * export and had nothing to do with the key's real at-rest passphrase —
- * confusing at best, and actively wrong the moment someone tried to use the
- * exported file's passphrase to unlock the SAME key elsewhere (in this app or
- * any other), since the key stored in settings is still locked with the
- * original, unrelated passphrase.
+ * Mailstr stores keys unlocked (no passphrase), so a downloaded copy is the
+ * only place a passphrase ever protects this key — and it must, or a bare
+ * secret key would land on disk. The user therefore sets an EXPORT passphrase
+ * here; it is independent of the stored key, which stays unlocked.
  *
- * Only an UNPROTECTED key still gates the download behind a passphrase
- * prompt here — that one has no passphrase to preserve, and downloading it
- * plain would put a bare secret key on disk.
+ * A legacy passphrase-protected keypair downloads as-is, still locked with its
+ * own original passphrase: re-encrypting it with a new one here would produce
+ * a file whose passphrase had nothing to do with the key stored in settings.
  */
 export function KeyExportDialog({
   address,
@@ -72,7 +67,7 @@ export function KeyExportDialog({
 
   async function doExportWithNewPassphrase() {
     if (pass.length < 8) {
-      setError('Use at least 8 characters — this passphrase is all that protects the key.')
+      setError('Use at least 8 characters — this passphrase is all that protects the file.')
       return
     }
     if (pass !== pass2) {

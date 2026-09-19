@@ -818,3 +818,183 @@ its failure) before dropping the local key.
   (1), the untracked attachments WIP noted in the previous entry.
 - No dedicated AliasKeyRow/PgpSettings unit tests or e2e specs exist to update
   (grep over `*.test.*` and `e2e/app`).
+
+## 2026-09-19 — Key rotation; passphrase-less key policy (ADR-007)
+
+Context consulted per rule 15: the ADR-006 entry above, the WKD-unpublish entry
+directly above, and the 2026-09-18 send-wrap entry. Work on `main`.
+
+### WKD overwrite verification (asked first, before building rotation)
+
+Republishing DOES replace the served key, no unpublish needed:
+`publishWkdKeyHandler` → `setPgpKey` is an UPDATE on the nip05 row addressed by
+`(nip05, domain)` (`models/nip05.ts:92-97`), recomputing the same `wkd_hash`;
+`getPgpKeyByWkdHash` reads that row; nginx `proxy_pass`es with no cache
+(`nginx/sites-enabled/mailstr.app:37-44`); the live response carries
+`cf-cache-status: DYNAMIC` (Cloudflare bypasses). Verified end-to-end: `PUT
+/api/wkd` unauthenticated → 401 (route exists), serve → 200 with the stored
+bytes.
+
+### Part 1 — passphrase-less keys (ADR-007)
+
+Mailstr stores PGP private keys UNLOCKED, always:
+
+- `generateKeySet`/`generateKey` lost their `passphrase` param — generation is
+  passphrase-less (`openpgp.ts`).
+- Generate UI lost the passphrase field; Import REJECTS a passphrase-protected
+  private key (`readKeyInfo().encrypted`) with instructions to strip it — a
+  locked key cannot sign/decrypt without an unlock step the app no longer
+  prompts for in its normal flow.
+- `encryptPrivateKey` remains, now with exactly one caller: the export dialog.
+  Download is the only passphrase path, so a file never lands on disk in the
+  clear while the stored key stays unlocked.
+
+**Legacy locked keys stay supported on read**: a keypair already stored with
+`passphraseProtected: true` still decrypts via the session-passphrase prompt
+(`usePgpMessage`, `ComposeModal`) and still fails closed on send without its
+passphrase (pinned in `send.test.ts`). Removing that path would brick existing
+users' old mail — see part 2 for the supported escape hatch.
+
+### Part 2 — rotate
+
+- `lib/pgp/rotate.ts` (new): generate → SAVE → publish, in that order. A save
+  failure aborts before publishing (WKD never advertises a key the user cannot
+  use); a publish failure keeps the rotated key and reports it (Republish-to-WKD
+  retries).
+- `components/settings/pgp/RotateKeyDialog.tsx` (new): unmissable
+  "You will not be able to view your previous messages encrypted to <address>"
+  plus an acknowledgement checkbox; portaled to `<body>` like KeyExportDialog
+  (the settings pane clips fixed overlays in the native WebView).
+- `AliasKeyRow` gains Rotate; `PgpSettings.rotateKey` wires it, reading
+  `pgpKeys` LIVE at save time (generation takes ~1s; a stale render snapshot
+  could clobber a concurrent edit to another alias).
+
+### ADR-007: Mailstr-generated PGP keys are always passphrase-less
+
+- **Status:** accepted (2026-09-19).
+- **Context:** the optional at-rest passphrase (design doc) conflicts with the
+  app's actual use: decrypt/sign happen automatically on read and send, so a
+  locked key either prompts constantly (NIP-46 signer round-trips make an
+  unlock step expensive) or blocks mail. It also created the split behavior
+  behind the 2026-09-18 double-encryption incident (prod's locked key silently
+  demoted sends to plaintext).
+- **Decision:** generated and imported keys are stored UNLOCKED. A passphrase
+  exists only on EXPORTED copies (download is forced through
+  `encryptPrivateKey`). Legacy locked keys keep decrypt/unlock support so old
+  mail stays readable, and users can rotate to a new unlocked key (which is
+  why export-before-rotate matters — the old key is only in settings, and
+  rotation replaces it).
+- **Consequences:**
+  - Settings blob confidentiality rests entirely on NIP-44 to self — same as
+    `mailIndexKey`; losing the Nostr key loses the PGP keys (unchanged from the
+    original design).
+  - No unlock friction on read/send for new keys; the session-passphrase cache
+    remains for legacy keys only.
+  - Rotation is the sanctioned way to shed a legacy locked key: export the old
+    one if needed, rotate, and the alias ends up unlocked.
+
+### Verification (exact, at this working tree)
+
+- `pnpm --filter mailstr-web lint` — 0 errors.
+- `pnpm --filter mailstr-web build` — ok (prerender + `/mails` shell).
+- `pnpm --filter mailstr-web test` — 302 passed / 4 failed; the 4 are the
+  pre-existing untracked attachments WIP failures
+  (`api/addresses.test.ts` ×3, `mail/composeFields.test.ts` ×1) recorded in the
+  entry above, unchanged here.
+- New/updated: `lib/pgp/rotate.test.ts` 4/4 (save-before-publish ordering, save
+  failure aborts publish, publish failure keeps key, fresh distinct keypair);
+  `lib/pgp/openpgp.test.ts` 18/18 (locked fixture now built via
+  `encryptPrivateKey` — the only way to lock a key post-policy);
+  `lib/mail/send.test.ts` + `ComposeModal.test.tsx` 30/30 (legacy locked key
+  still fails closed without a passphrase and sends with one).
+- Rotation's WKD overwrite is backend-verified (above); no client e2e spec
+  covers the Settings encryption pane yet (`e2e/app` has no PGP spec) — the
+  unit suite is the pin for the orchestration.
+
+### Amendment (same day) — import accepts a passphrase, then stores unlocked
+
+The first pass of ADR-007 rejected passphrase-protected keys on import. That
+was wrong for the workflow: a key exported from this app or from GPG is
+routinely locked, and telling the user to strip it in GPG first is friction the
+app can absorb.
+
+Now: `unlockPrivateKey(armored, passphrase)` (`openpgp.ts`) decrypts a locked
+key and re-emits its UNLOCKED armor; the new `ImportKeyForm` component
+(extracted from `AliasKeyRow`, which was near the 300-line target) runs a
+two-step flow — paste key → if `readKeyInfo().encrypted`, ask for the
+passphrase → unlock → store the unlocked key with `passphraseProtected: false`.
+The stored artifact is re-read after unlock so the fingerprint/identity come
+from what is actually persisted. A wrong passphrase surfaces and stores
+nothing. Unlocked keys still import in one step; public keys are still
+rejected.
+
+`encryptPrivateKey` now throws a named error on an already-locked key
+(`encryptKey` would throw its own "Key packet is already encrypted"); the
+already-locked branch in `KeyExportDialog` is the only legitimate path for
+such a key.
+
+Tests: `openpgp.test.ts` +3 (unlocked armor round-trips decrypt/sign; wrong
+passphrase rejects; already-unlocked passthrough); `ImportKeyForm.test.tsx` 4/4
+(two-step flow stores an unlocked key, wrong passphrase stores nothing,
+one-step unlocked import, public-key rejection).
+
+## 2026-09-19 — nginx: SPA fallback for the mail client (deep links were 404)
+
+Context consulted per rule 15: the 2026-09-17 deploy-fix entry, the
+FRONTEND_MERGE_PLAN phase-4 entry, and the 2026-09-19 rotation entry. The two
+external nginx configs live outside this repo: `nginx/sites-enabled/mailstr.app`
+(prod) and `nginx-72.61.138.38/sites-enabled/stg.mailstr.app` (staging).
+
+### Root cause
+
+`https://mailstr.app/mails/settings` returned nginx's 404. Both vhosts served
+the site with a bare `location / { root …; index index.html; }` — no
+`try_files`. Client-side routes (`/mails/settings`, `/mails/inbox/thread/…`)
+have no file on disk, so nginx looked for `…/mails/settings` and 404'd.
+`/privacy-policy` was also affected (directory without an index lookup
+fallback). `README.md` (`client/web/README.md` §External nginx) already
+documented the required fallbacks; the deployed configs predate the merge and
+were never switched — commit `2eaa9fe` had even deleted an earlier `/mails/`
+alias block that carried a fallback.
+
+### What changed (2 files, outside the app repo)
+
+Both vhosts gain the config from `client/web/README.md`:
+
+- `location ^~ /mails` → `try_files $uri $uri/ /mails/index.html` (SPA shell;
+  the shell stays `noindex`).
+- `location /` → `try_files $uri $uri/index.html /index.html` (prerendered
+  routes like `/privacy-policy` resolve to their own directory index; unknown
+  paths fall back to the landing shell).
+- The nested asset-cache `location ~*` regex is untouched; `^~ /mails` keeps
+  it from intercepting `/mails*`, and assets are referenced root-absolute
+  (`/assets/...`) so the fallback `location /` still serves them.
+
+### Verification (exact)
+
+- `docker run nginx:alpine` with both edited configs (listen swapped to
+  8080/8081, HTTP→HTTPS redirect stripped, `root` bound to the local
+  `client/web/dist`): `nginx -t` ok.
+- Prod vhost: `/` 200, `/mails` 301 → `/mails/` 200, `/mails/settings` 200,
+  `/mails/inbox/thread/abc` 200, `/privacy-policy` 200,
+  `/privacy-policy/` 200, `/assets/App-C5ntoRNL.js` 200 with
+  `Cache-Control: public, no-transform` / `Expires +1y`, unknown path 200.
+- Staging vhost (8081): `/mails/settings` 200, `/privacy-policy` 200,
+  unknown path 200.
+- Bodies checked: `/mails/settings` carries the shell's
+  `robots: noindex, nofollow`; `/privacy-policy` carries the prerendered
+  `index, follow, max-image-preview:large, max-snippet:-1`.
+- Live pre-fix: `https://mailstr.app/mails/settings` and
+  `https://stg.mailstr.app/mails/settings` both 404; `/privacy-policy` on prod
+  also 404. Live post-deploy check is on the nginx repos' owners: these are
+  server configs, no app build is involved — copy into
+  `/etc/nginx/sites-enabled/` and `nginx -s reload` on each host.
+
+### Open items
+
+- `nginx-72.61.138.38/sites-enabled/stg.mailstr.app` is the config that serves
+  `stg.mailstr.app`; `sites-available/mails.stg.mailstr.app` proxies a separate
+  host (`mails.stg.mailstr.app`) to mailcow's own UI on `:9833`, not this app —
+  out of scope here.
+- Neither nginx repo was committed; the two edits are working-tree changes in
+  `~/Documents/Projects/formstr-hq/nginx` and `…/nginx-72.61.138.38`.

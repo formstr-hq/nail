@@ -5,7 +5,7 @@ import { generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { keySigner, unwrapAndVerify, deliverTargets, messageStringToBytes } from '@protocol'
 import { buildWraps } from './send'
 import { clearProbeCache } from '@/app/lib/nostr/nip05'
-import { generateKeySet, parsePgpMessage, decryptMessage } from '@/app/lib/pgp/openpgp'
+import { generateKeySet, encryptPrivateKey, parsePgpMessage, decryptMessage } from '@/app/lib/pgp/openpgp'
 import { addToKeyring } from '@/app/lib/pgp/keyring'
 
 const BRIDGE_SK = generateSecretKey()
@@ -246,6 +246,21 @@ describe('buildWraps', () => {
       }
     }
 
+    /**
+     * A locked dual set for the fail-closed tests. The app no longer generates
+     * passphrase-protected keys, but a LEGACY locked key in the settings blob
+     * must still refuse a cleartext send — so the fixture locks both halves via
+     * encryptPrivateKey, exactly like a pre-policy key, and the tests pin that
+     * path. (Rotation replaces such a key with an unlocked one.)
+     */
+    async function lockedKeySet() {
+      const gen = await generateKeySet({ email: 'locked@mailstr.app' })
+      return {
+        v4: { ...gen.v4, privateKey: await encryptPrivateKey(gen.v4.privateKey, 'hunter2') },
+        v6: { ...gen.v6, privateKey: await encryptPrivateKey(gen.v6.privateKey, 'hunter2') },
+      }
+    }
+
     it('sends ONE bridge wrap when every legacy recipient is encryptable', async () => {
       const { wraps } = await buildWraps({
         ...base,
@@ -457,7 +472,7 @@ describe('buildWraps', () => {
         'fetch',
         vi.fn(() => new Response(JSON.stringify({ names: { locked: ALICE_PK } }))),
       )
-      const locked = await generateKeySet({ email: 'locked@mailstr.app', passphrase: 'hunter2' })
+      const locked = await lockedKeySet()
       const { wraps, errors } = await buildWraps({
         ...base,
         from: { address: 'locked@mailstr.app' },
@@ -487,7 +502,7 @@ describe('buildWraps', () => {
         'fetch',
         vi.fn(() => new Response(JSON.stringify({ names: { locked: ALICE_PK } }))),
       )
-      const locked = await generateKeySet({ email: 'locked@mailstr.app', passphrase: 'hunter2' })
+      const locked = await lockedKeySet()
       const { wraps, errors } = await buildWraps({
         ...base,
         from: { address: 'locked@mailstr.app' },

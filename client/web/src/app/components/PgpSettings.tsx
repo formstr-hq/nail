@@ -4,13 +4,9 @@ import { useSettingsStore } from '@/app/store/settings'
 import { useOwnedAddresses } from '@/app/hooks/useOwnedAddresses'
 import { BRIDGE_DOMAIN } from '@/app/lib/nostr/constants'
 import type { PgpKeypair } from '@/app/lib/nostr/settings'
-import {
-  keyringKey,
-  addToKeyring,
-  removeFromKeyring,
-  keyringEntries,
-  type KeyringEntry,
-} from '@/app/lib/pgp/keyring'
+import { keyringKey, addToKeyring, removeFromKeyring, keyringEntries, type KeyringEntry } from '@/app/lib/pgp/keyring'
+import { rotateAliasKey } from '@/app/lib/pgp/rotate'
+import { republishOwnKey } from '@/app/components/settings/pgp/wkdPublish'
 import { AlertIcon } from '@/app/components/ui/icons'
 import { Field } from '@/app/components/settings/pgp/Field'
 import { AliasKeyRow } from '@/app/components/settings/pgp/AliasKeyRow'
@@ -56,7 +52,34 @@ export function PgpSettings() {
     }
   }, [settings.pgpKeyring])
 
-  async function persist(patch: Parameters<typeof save>[0]) {
+  async function persist(patch: Parameters<typeof save>[0]): Promise<boolean> {
+    if (!account || !active) {
+      setError('Your session is locked — sign in again.')
+      return false
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await save(patch, account.pubkey, active)
+      return true
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function setAliasKey(address: string, keypair: PgpKeypair) {
+    void persist({ pgpKeys: { ...(settings.pgpKeys ?? {}), [keyringKey(address)]: keypair } })
+  }
+
+  /**
+   * Replace an alias's key. The orchestrator saves BEFORE publishing (see
+   * lib/pgp/rotate.ts), and a publish failure is surfaced as an error while
+   * keeping the rotated key — Republish-to-WKD retries it.
+   */
+  async function rotateKey(address: string) {
     if (!account || !active) {
       setError('Your session is locked — sign in again.')
       return
@@ -64,7 +87,22 @@ export function PgpSettings() {
     setBusy(true)
     setError('')
     try {
-      await save(patch, account.pubkey, active)
+      const result = await rotateAliasKey({
+        address,
+        // Read the LIVE pgpKeys at save time, not the snapshot from this
+        // render: key generation runs for ~a second, and a concurrent change
+        // to another alias's key must not be clobbered by this patch.
+        save: (keypair) => {
+          const live = useSettingsStore.getState().settings.pgpKeys ?? {}
+          return save({ pgpKeys: { ...live, [keyringKey(address)]: keypair } }, account.pubkey, active)
+        },
+        publish: async (addr, keys) => republishOwnKey(addr, keys),
+      })
+      if (!result.published) {
+        setError(
+          `Key rotated, but publishing to WKD failed: ${result.publishError}. Use "Republish to WKD" to retry.`,
+        )
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -72,17 +110,11 @@ export function PgpSettings() {
     }
   }
 
-  function setAliasKey(address: string, keypair: PgpKeypair) {
-    const next = { ...(settings.pgpKeys ?? {}) }
-    next[keyringKey(address)] = keypair
-    void persist({ pgpKeys: next })
-  }
-
   return (
     <div className="flex flex-col gap-6">
       <Field
         label="Your keys"
-        hint="A separate PGP key for each of your addresses — kept distinct so your aliases stay unlinked. Each is used to sign and decrypt mail for that address, and its private half is stored encrypted and synced with your other settings."
+        hint="A separate PGP key for each of your addresses — kept distinct so your aliases stay unlinked. Each is used to sign and decrypt mail for that address, and its private half is stored unlocked (no passphrase) and synced with your other settings. Rotate replaces the key and makes previously encrypted messages unreadable."
       >
         <div className="flex flex-col gap-2">
           {aliasList.length === 0 && (
@@ -97,6 +129,7 @@ export function PgpSettings() {
               keypair={settings.pgpKeys?.[keyringKey(address)]}
               busy={busy}
               onSet={(kp) => setAliasKey(address, kp)}
+              onRotate={() => rotateKey(address)}
               setError={setError}
             />
           ))}
