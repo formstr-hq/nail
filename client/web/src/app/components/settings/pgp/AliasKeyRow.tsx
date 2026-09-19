@@ -19,7 +19,7 @@ export function AliasKeyRow({
   address: string
   keypair: PgpKeypair | undefined
   busy: boolean
-  onSet: (kp: PgpKeypair | null) => void
+  onSet: (kp: PgpKeypair) => void
   setError: (m: string) => void
 }) {
   const [mode, setMode] = useState<'idle' | 'generate' | 'import'>('idle')
@@ -27,12 +27,11 @@ export function AliasKeyRow({
   const [importText, setImportText] = useState('')
   const [working, setWorking] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [confirmRemove, setConfirmRemove] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [republishing, setRepublishing] = useState(false)
   const [republished, setRepublished] = useState(false)
 
-  // Has a key — show fingerprint, copy, export, remove.
+  // Has a key — show fingerprint, copy, export.
   if (keypair) {
     return (
       <div className="rounded-md border border-input bg-muted/40 p-3">
@@ -79,20 +78,6 @@ export function AliasKeyRow({
           >
             {republishing ? 'Publishing…' : republished ? 'Published' : 'Republish to WKD'}
           </Button>
-          {confirmRemove ? (
-            <>
-              <Button size="sm" variant="danger" disabled={busy} onClick={() => onSet(null)}>
-                Remove
-              </Button>
-              <Button size="sm" onClick={() => setConfirmRemove(false)}>
-                Keep
-              </Button>
-            </>
-          ) : (
-            <Button size="sm" variant="danger" onClick={() => setConfirmRemove(true)}>
-              Remove
-            </Button>
-          )}
         </div>
         {exporting && (
           <KeyExportDialog address={address} keypair={keypair} onClose={() => setExporting(false)} />

@@ -768,3 +768,53 @@ with no signal — the send the user asked to protect is the one that leaks.
   mail is future work.
 - The 12 pre-existing test failures and the non-compiling untracked attachments
   work belong to a separate in-flight feature and are untouched here.
+
+## 2026-09-19 — Remove per-alias PGP key deletion (WKD unpublish unsupported)
+
+Context consulted per rule 15: the ADR-006 entry above, the 2026-09-18
+send-wrap entry, and the 2026-09-17 entry. Work on `main`.
+
+### Why
+
+Removing an alias key from Settings deleted only the local `settings.pgpKeys`
+entry. The public half stays served at `mailstr.app/.well-known/openpgpkey/...`
+with no way to revoke it: formstr-backend's WKD API has exactly three routes
+(`wkdRoutes.ts` — GET `/policy`, GET `/hu/:hash`, PUT `/`) and no DELETE, and
+`models/nip05.ts` exposes no clear/delete for `pgp_pubkey_b64`. Live probe
+confirmed: unauthenticated `PUT /api/wkd` → 401 (route exists), `DELETE
+/api/wkd` → 404 (route absent).
+
+A "remove" that leaves the public key discoverable is a false revocation: the
+user believes the key is gone, while every WKD lookup keeps returning it.
+
+### What changed (2 files)
+
+1. **`components/settings/pgp/AliasKeyRow.tsx`** — removed the Remove/Keep
+   confirm UI, its `confirmRemove` state, and the `| null` half of `onSet`.
+   Row keeps copy/export/republish.
+2. **`components/PgpSettings.tsx`** — `setAliasKey` now only sets (no delete
+   branch); signature is `(address, keypair: PgpKeypair)`.
+
+### Deliberately left in place
+
+`removeFromKeyring` / the correspondents-keyring Remove is untouched — that is
+the user's own local cache of *other people's* keys, not a WKD publish, so
+deleting it is correct and has no server-side counterpart.
+
+### Re-add condition
+
+Bring back key deletion only once formstr-backend ships
+`DELETE /api/wkd` (NIP-98, ownership-checked, nulls `pgp_pubkey_b64` +
+`wkd_hash`); the client remove path then must await the unpublish (or surface
+its failure) before dropping the local key.
+
+### Verification (exact, at this working tree)
+
+- `pnpm --filter mailstr-web lint` — 0 errors.
+- `pnpm --filter mailstr-web build` — ok (prerender + `/mails` shell).
+- `pnpm --filter mailstr-web test` — 298 passed / 4 failed; confirmed
+  pre-existing by stashing this diff and re-running (same 4 failed / 298
+  passed at base): `api/addresses.test.ts` (3) + `mail/composeFields.test.ts`
+  (1), the untracked attachments WIP noted in the previous entry.
+- No dedicated AliasKeyRow/PgpSettings unit tests or e2e specs exist to update
+  (grep over `*.test.*` and `e2e/app`).

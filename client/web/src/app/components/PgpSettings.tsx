@@ -72,10 +72,9 @@ export function PgpSettings() {
     }
   }
 
-  function setAliasKey(address: string, keypair: PgpKeypair | null) {
+  function setAliasKey(address: string, keypair: PgpKeypair) {
     const next = { ...(settings.pgpKeys ?? {}) }
-    if (keypair) next[keyringKey(address)] = keypair
-    else delete next[keyringKey(address)]
+    next[keyringKey(address)] = keypair
     void persist({ pgpKeys: next })
   }
 
