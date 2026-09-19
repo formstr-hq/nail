@@ -659,3 +659,50 @@ AUTH as 0.6.2. It also added tests for 0.6.1's uncovered branches — the publis
   refetch is the only recovery. A separate policy decision.
 - `relay.stg.formstr.app` closes the socket (1006) even on an idle connection,
   so it is unusable independent of AUTH — worth its own investigation.
+
+## 2026-09-19 — Add `wss://relay.formstr.app` as a default relay
+
+Context consulted: the NIP-42 AUTH entry, the send-wrap-API entry, and the
+rev-3 audit entry, per rule 15. Branch `feat/add-formstr-default-relay`, base
+`498f3ea` (`origin/main`).
+
+### What changed
+
+Purely additive: our own relay is prepended to the mail stack's default relay
+sets. No relay removed; env overrides still win; user NIP-17/NIP-65 lists still
+take precedence where they already did.
+
+1. **`client/web/src/app/lib/nostr/constants.ts`** — `DEFAULT_RELAYS` fallback
+   now `relay.formstr.app` first, ahead of nos.lol / primal.net / snort.social.
+   `HARDCODED_RELAY` (primal.net) is left as-is: it is the always-on read/write
+   floor, and our relay is already unconditionally present because it now leads
+   `DEFAULT_RELAYS` and `withHardcodedRelay(DEFAULT_RELAYS)` unions it in.
+2. **`client/web/src/lib/signer.ts`** — `NOSTRCONNECT_RELAYS` (NIP-46 bunker
+   pairing) gains `relay.formstr.app` first.
+3. **`nostr-bridge/src/config.ts`** — server-side `bootstrapRelays`,
+   `defaultRelayUrl`, and `bridgeRelays` defaults now name `relay.formstr.app`
+   first (`defaultRelayUrl` is the single fallback target). All remain
+   env-overridable (`BOOTSTRAP_RELAYS`, `DEFAULT_RELAY_URL`, `BRIDGE_RELAYS`).
+4. **`nostr-bridge/scripts/{send-and-listen,send-test-mail}.ts`** — dev script
+   `RELAY_URL` defaults updated to match.
+
+### Verification (exact, at this working tree)
+
+- `client/web`: `vitest run src/app/lib/nostr/relays.test.ts
+  src/app/lib/nostr/bridgeSend.test.ts` — 17 passed (relays.test asserts
+  against the imported `DEFAULT_RELAYS`, so it tracks the new first entry).
+- `client/web`: `tsc --noEmit` — ok. `eslint` on the two touched files — 0
+  errors.
+- `nostr-bridge`: `tsc --noEmit` — ok. Full `vitest run` — 26 failed / 59
+  passed, **all failures pre-existing**: reproduced with this change stashed
+  (`crypto.getRandomValues must be defined`, a Node 22.17 environment issue in
+  `protocol/mail.test.ts` et al.), not caused here.
+- No bridge test asserts relay defaults (only `nostr-listener.test.ts` imports
+  `config`, and it does not read the relay fields).
+
+### Why
+
+We now run `relay.formstr.app`. Preferring it by default keeps mail on our own
+infrastructure for users who have not set their own relay lists, while the
+existing public relays remain as fallbacks so delivery never depends on a
+single relay.

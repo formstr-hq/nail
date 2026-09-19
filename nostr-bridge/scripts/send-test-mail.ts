@@ -32,7 +32,7 @@ const MAIL_KIND = 1301;
 
 // --- config ---
 const BRIDGE_DOMAIN = process.env.BRIDGE_DOMAIN ?? "mailstr.app";
-const RELAY_URL = process.env.RELAY_URL ?? `wss://relay.primal.net`;
+const RELAY_URL = process.env.RELAY_URL ?? `wss://relay.formstr.app`;
 const FROM = process.env.FROM ?? `_test@${BRIDGE_DOMAIN}`;
 const TO = process.env.TO;
 const SUBJECT = process.env.SUBJECT ?? "This has been sent using the bridge";
