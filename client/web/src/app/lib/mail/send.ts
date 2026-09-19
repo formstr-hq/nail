@@ -99,6 +99,14 @@ export interface SendMailParams {
   active: ActiveSigner
   /** PGP key maps, when the user wants encryption considered for legacy mail. */
   pgp?: PgpSettings
+  /**
+   * The composer lock state: true when the user wants this message PGP
+   * encrypted. Encryption itself happens here, not in the composer — see the
+   * single-encryption note in `buildWraps`.
+   */
+  encrypt?: boolean
+  /** Session passphrase for the From alias's key, when it is passphrase-locked. */
+  pgpPassphrase?: string
 }
 
 /**
@@ -215,7 +223,82 @@ export async function buildWraps(
     targets.push(recipientPubkey)
   }
 
-  for (const r of nostrTargets) await add(r.pubkey)
+  // PGP is applied HERE and only here, once, to the PLAINTEXT body. The
+  // composer never hands us an already-armored body — it passes its lock state
+  // (`encrypt`) and the passphrase for the From alias's key. Encrypting in
+  // both places nested two layers (decrypting the outer yielded a second
+  // armored block), which Proton cannot render. See ADR-006.
+  //
+  // Every recipient we hold a key for — Nostr-direct and legacy alike — shares
+  // one encrypted document; recipients without a key get the plaintext one
+  // (mixed delivery). The From alias's own halves are always among the
+  // recipients (encryptBody adds them), so the Sent self-copy stays readable.
+  const pgp = params.encrypt ? params.pgp : undefined
+  const keyed = (address: string) => !!pgp && !!keyForAddress(pgp, address)
+  const pgpTolist = [...nostrTargets.map((r) => r.headerAddress), ...legacy]
+  const pgpRecipients = pgpTolist.filter(keyed)
+  let pgpRfc: string | undefined
+  if (params.encrypt) {
+    // Fail closed when the lock is on but the key state cannot back it: a
+    // missing map or a missing From key is a caller/settings divergence, and
+    // sending plaintext anyway is exactly the silent downgrade this fixes.
+    if (!pgp) {
+      return {
+        wraps: [],
+        targets: [],
+        errors: ['Could not encrypt this message: no PGP settings were provided.'],
+      }
+    }
+    if (!keyed(from.address)) {
+      return {
+        wraps: [],
+        targets: [],
+        errors: [`Could not encrypt this message: no PGP key for ${from.address}.`],
+      }
+    }
+    try {
+      const { encryptBody } = await import('@/app/lib/pgp/compose')
+      const armored = await encryptBody({
+        body: params.body,
+        fromAddress: from.address,
+        recipients: pgpRecipients,
+        settings: pgp,
+        passphrase: params.pgpPassphrase,
+      })
+      // Deliberately no bodyHtml: the HTML part would carry the plaintext the
+      // PGP layer exists to protect.
+      pgpRfc = bytesToMessageString(
+        new TextEncoder().encode(
+          buildRfc2822({
+            from,
+            to: fullTo,
+            cc: fullCc,
+            subject: params.subject,
+            body: armored,
+            inReplyTo: params.inReplyTo,
+            references: params.references,
+          }),
+        ),
+      )
+    } catch (e) {
+      // Fail closed. The user asked for encryption; silently falling back to
+      // plaintext (the old behaviour) is how a locked key turned an encrypted
+      // send into a cleartext one with no signal anywhere (AGENTS rule 10).
+      return {
+        wraps: [],
+        targets: [],
+        errors: [
+          `Could not encrypt this message: ${e instanceof Error ? e.message : String(e)}`,
+        ],
+      }
+    }
+  }
+  const pgpKeyed = new Set(pgpRecipients.map((a) => a.trim().toLowerCase()))
+
+  for (const r of nostrTargets) {
+    const rfc = pgpKeyed.has(r.headerAddress.trim().toLowerCase()) ? pgpRfc : undefined
+    await add(r.pubkey, undefined, rfc)
+  }
 
   if (legacy.length) {
     if (!ctx.bridgePubkey) {
@@ -247,62 +330,24 @@ export async function buildWraps(
       }
     }
 
-    // MIXED encryption for legacy recipients: those we hold a key for get a
-    // PGP-encrypted RFC 2822 document; the rest go out as plaintext. Each mode
-    // rides its own bridge wrap (one wrap per mode, NOT per recipient — the
-    // bridge expands `deliver` tags), and each document carries the FULL
-    // To/Cc header lists so every recipient sees the complete audience,
-    // including those who received it in the other form — the standard
-    // "you were BCC'd by encryption" transparency a mixed send must preserve.
-    const pgp = params.pgp
-    const encryptable = pgp ? legacy.filter((a) => !!keyForAddress(pgp, a)) : []
-    const plaintext = pgp ? legacy.filter((a) => !keyForAddress(pgp, a)) : legacy
-
-    let encryptedRfc: string | undefined
-    if (encryptable.length && params.pgp) {
-      try {
-        const { encryptBody } = await import('@/app/lib/pgp/compose')
-        const armored = await encryptBody({
-          body: params.body,
-          fromAddress: from.address,
-          recipients: encryptable,
-          settings: params.pgp,
-        })
-        encryptedRfc = bytesToMessageString(
-          new TextEncoder().encode(
-            buildRfc2822({
-              from,
-              to: fullTo,
-              cc: fullCc,
-              subject: params.subject,
-              body: armored,
-              inReplyTo: params.inReplyTo,
-              references: params.references,
-            }),
-          ),
-        )
-      } catch {
-        // Encryption failed for an unexpected reason — demote the whole
-        // encryptable set to plaintext rather than dropping the message.
-        // Rare: keys existed, so this is only malformed key material.
-        plaintext.push(...encryptable)
-        encryptable.length = 0
-        encryptedRfc = undefined
-      }
-    }
-
-    // Encrypted document first: its recipients get ciphertext, and the document
-    // lists the full audience. The plaintext wrap (when any) follows with the
-    // same full headers.
-    if (encryptable.length && encryptedRfc) {
-      await add(ctx.bridgePubkey, encryptable, encryptedRfc)
-    }
-    if (plaintext.length) {
-      await add(ctx.bridgePubkey, plaintext)
+    // MIXED encryption for legacy recipients: those we hold a key for ride the
+    // encrypted document; the rest go out as plaintext. Each mode gets its own
+    // bridge wrap (one wrap per mode, NOT per recipient — the bridge expands
+    // `deliver` tags), and each document carries the FULL To/Cc header lists
+    // so every recipient sees the complete audience, including those who
+    // received it in the other form — the standard "you were BCC'd by
+    // encryption" transparency a mixed send must preserve.
+    if (pgpRfc) {
+      const encryptable = legacy.filter((a) => pgpKeyed.has(a.trim().toLowerCase()))
+      const plaintext = legacy.filter((a) => !pgpKeyed.has(a.trim().toLowerCase()))
+      if (encryptable.length) await add(ctx.bridgePubkey, encryptable, pgpRfc)
+      if (plaintext.length) await add(ctx.bridgePubkey, plaintext)
+    } else {
+      await add(ctx.bridgePubkey, legacy)
     }
   }
 
-  await add(senderPubkey)
+  await add(senderPubkey, undefined, pgpRfc)
 
   return { wraps, targets, errors: [] }
 }

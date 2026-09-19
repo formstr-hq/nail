@@ -659,3 +659,112 @@ AUTH as 0.6.2. It also added tests for 0.6.1's uncovered branches — the publis
   refetch is the only recovery. A separate policy decision.
 - `relay.stg.formstr.app` closes the socket (1006) even on an idle connection,
   so it is unusable independent of AUTH — worth its own investigation.
+
+## 2026-09-18 — PGP double-encryption: one owner for encryption (ADR-006)
+
+Context consulted per rule 15: the 2026-09-17 send-wrap-API entry, the NIP-42
+entry directly above, and the ADR-005 sender-proof entry. Work on `main` at
+`498f3ea`, intended for the `pgp/double-encrypt` PR to ngit.
+
+### Symptom and evidence
+
+Mail from stg (`112@stg.mailstr.app`) to a Proton address arrived as a raw
+armored PGP blob; mail from prod (`rama1@mailstr.app`) rendered fine. The raw
+messages were decrypted with the recipient's key:
+
+- stg: decrypting the delivered document yielded **a second armored PGP
+  block**, which decrypted to the body.
+- prod: decrypting the delivered document yielded the body directly.
+
+Two PGP layers, applied by two different code paths. `d1ebb89` (the reported
+prod commit) is an ancestor of `53d3244`/v0.2.0, and the prod bundle contains
+both call sites — prod runs the same code.
+
+### Root cause
+
+`encryptBody` was called **twice per send**:
+
+1. `ComposeModal.handleSend` (line ~251) — replaced `body` with the armored
+   result before calling `sendMail`;
+2. `send.ts buildWraps` — encrypted `params.body` again for each encryptable
+   legacy recipient.
+
+(1) predates (2). `6bd8a35` ("pgp fixes") added mixed per-leg encryption to
+`send.ts` but left the composer call in place, so every send nested two layers.
+The reason prod looked healthy is a second bug: `send.ts` passed **no
+passphrase** to `encryptBody`, so on prod's passphrase-locked
+`rama1@mailstr.app` key the call threw, and the `catch` silently demoted the
+encryptable set to plaintext — leaving only the composer's layer. On stg the
+alias key is unlocked, so the second layer succeeded.
+
+**Fail-open encryption.** The `catch`-to-plaintext branch meant a locked key, a
+wrong passphrase, or malformed key material all produced a *cleartext* send
+with no signal — the send the user asked to protect is the one that leaks.
+
+### What changed (nail `main`, 4 files)
+
+1. **`lib/mail/send.ts` — the single encryption point.**
+   - `SendMailParams` gains `encrypt?: boolean` (the composer's lock state) and
+     `pgpPassphrase?: string`; `pgp` alone no longer implies encryption.
+   - One `encryptBody` call builds one encrypted RFC 2822 document; it covers
+     Nostr-direct recipients we hold a key for, legacy recipients we hold a key
+     for, and always the self-copy. Recipients without a key get the plaintext
+     document (mixed delivery) as before.
+   - The `catch` now **fails closed**: `{ wraps: [], errors: ['Could not encrypt
+     this message: …'] }` — never a silent cleartext send.
+2. **`components/ComposeModal.tsx`** — drops the pre-encryption entirely; passes
+   `encrypt`, `pgpPassphrase`, and the plaintext body. The passphrase prompt now
+   fires only when the lock is on.
+3. **`lib/pgp/compose.ts`** — recipient key resolution now mirrors
+   `keyForAddress` (`allKeysForAddress`, which resolves own aliases *and*
+   keyring entries) instead of keyring-only. Previously a recipient who was
+   another own alias passed send's `keyed()` gate but threw inside
+   `encryptBody`; the silent demote hid it. Also deletes the unused
+   `decryptionHalvesFor` (rule 14).
+4. **`lib/mail/send.test.ts`** — the mixed tests now pass `encrypt: true`; new
+   tests pin: single-layer decryption (regression), lock-off stays plaintext,
+   Nostr-direct encrypted copy, encrypted self-copy, fail-closed on a locked
+   key with no passphrase, and success with the session passphrase.
+
+### Verification (exact, at this working tree)
+
+- `vitest run` (touched files): `send.test.ts` 22/22, `compose.test.ts` 3/3,
+  `keyring.test.ts` 21/21, `openpgp.test.ts` 18/18.
+- Full `pnpm --filter mailstr-web test`: 45 files, 322 passed / 12 failed — the
+  12 are **pre-existing** on base `498f3ea` (untracked in-progress attachments
+  work: `rfc2822`/`attachmentsTxt`/`blossom`/`addresses` tests); confirmed by
+  stashing this diff and re-running (12 failed / 316 passed at base).
+- `pnpm --filter mailstr-web lint` — 0 errors.
+- `pnpm --filter mailstr-web build` — ok with `NODE_OPTIONS=
+  --experimental-strip-types`, once untracked WIP that does not compile is moved
+  aside (moved back after).
+
+### ADR-006: PGP bodies are encrypted exactly once, in the send library
+
+- **Status:** accepted (2026-09-18).
+- **Context:** two encryption implementations existed (composer + send.ts).
+  Having two produced nested ciphertext on any unlocked-key send and,
+  worse, the send-side `catch` silently downgraded to plaintext on any key
+  error. The composer cannot do it correctly anyway: it does not know which
+  recipients are legacy vs Nostr-direct, and it must encrypt the *same*
+  document for all recipients so the audience headers stay consistent.
+- **Decision:** `lib/mail/send.ts` (`buildWraps`) owns PGP encryption. The
+  composer passes intent (`encrypt`), key material (`pgp`), and the session
+  passphrase — never an armored body. Encryption failure aborts the send with
+  an error; there is no plaintext fallback.
+- **Consequences:**
+  - One code path means the mixed-delivery routing and the ciphertext can no
+    longer disagree about who receives what.
+  - Future attachment/HTML work has exactly one place to apply body protection
+    (the encrypted document deliberately drops `bodyHtml` today).
+  - The composer no longer needs PGP imports beyond the keyring lookup it uses
+    for gating; the dynamic import in `send.ts` keeps openpgp out of the main
+    bundle for plaintext sends.
+
+### Open items
+
+- A **send-side HTML body** (`bodyHtml`) is dropped from the encrypted document
+  by design (an HTML part would carry the plaintext); rendering encrypted HTML
+  mail is future work.
+- The 12 pre-existing test failures and the non-compiling untracked attachments
+  work belong to a separate in-flight feature and are untouched here.

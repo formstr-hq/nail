@@ -5,7 +5,7 @@ import { generateSecretKey, getPublicKey } from 'nostr-tools/pure'
 import { keySigner, unwrapAndVerify, deliverTargets, messageStringToBytes } from '@protocol'
 import { buildWraps } from './send'
 import { clearProbeCache } from '@/app/lib/nostr/nip05'
-import { generateKeySet } from '@/app/lib/pgp/openpgp'
+import { generateKeySet, parsePgpMessage, decryptMessage } from '@/app/lib/pgp/openpgp'
 import { addToKeyring } from '@/app/lib/pgp/keyring'
 
 const BRIDGE_SK = generateSecretKey()
@@ -250,6 +250,7 @@ describe('buildWraps', () => {
       const { wraps } = await buildWraps({
         ...base,
         to: ['bob@gmail.com', 'carol@example.net'],
+        encrypt: true,
         pgp: {
           ...(await mixedPgp()),
           pgpKeyring: await addToKeyring(
@@ -266,6 +267,7 @@ describe('buildWraps', () => {
         ...base,
         to: ['bob@gmail.com', 'carol@example.net'],
         body: 'mixed hello',
+        encrypt: true,
         pgp: await mixedPgp(),
       })
 
@@ -316,6 +318,202 @@ describe('buildWraps', () => {
       const decoded = new TextDecoder().decode(messageStringToBytes(result.rumor.content))
       expect(decoded).toContain('mixed hello')
       expect(deliverTargets(result.rumor)).toEqual(['bob@gmail.com', 'carol@example.net'])
+    })
+
+    // The lock is the user's decision: maps alone must not turn encryption on
+    // (it would silently encrypt when the composer showed a red open lock).
+    it('sends plaintext when the lock is off even though pgp maps are present', async () => {
+      const { wraps } = await buildWraps({
+        ...base,
+        to: ['bob@gmail.com'],
+        body: 'lock off',
+        pgp: await mixedPgp(),
+      })
+      const result = await unwrapAndVerify(toBridge(wraps)[0], keySigner(BRIDGE_SK))
+      if (!result.ok) return
+      const decoded = new TextDecoder().decode(messageStringToBytes(result.rumor.content))
+      expect(decoded).toContain('lock off')
+      expect(decoded).not.toContain('-----BEGIN PGP MESSAGE-----')
+    })
+
+    // ADR-006: the body is encrypted exactly ONCE. Decrypting the delivered
+    // outer document must yield the plaintext directly — if it yields another
+    // armored block, the composer and send.ts both encrypted (the stg bug:
+    // Proton rendered the nested armor as a raw blob).
+    it('encrypts exactly once — the delivered document decrypts straight to the body', async () => {
+      const { wraps, errors } = await buildWraps({
+        ...base,
+        to: ['bob@gmail.com'],
+        body: 'single layer',
+        encrypt: true,
+        pgp: await mixedPgp(),
+      })
+      expect(errors).toEqual([])
+
+      const result = await unwrapAndVerify(toBridge(wraps)[0], keySigner(BRIDGE_SK))
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      const doc = new TextDecoder().decode(messageStringToBytes(result.rumor.content))
+      const armored = doc.slice(
+        doc.indexOf('-----BEGIN PGP MESSAGE-----'),
+        doc.indexOf('-----END PGP MESSAGE-----') + '-----END PGP MESSAGE-----'.length,
+      )
+      const decrypted = await decryptMessage({
+        message: await parsePgpMessage(armored),
+        privateKey: bobSet.v4.privateKey,
+      })
+      expect(decrypted.text).toBe('single layer')
+      expect(decrypted.text).not.toContain('-----BEGIN PGP MESSAGE-----')
+    })
+
+    // A Nostr-direct recipient we hold a key for gets the encrypted document
+    // too (the composer used to own this; send.ts must not drop it).
+    it('encrypts the Nostr-direct recipient copy when a key is held', async () => {
+      const bobSk = generateSecretKey()
+      const bobPk = getPublicKey(bobSk)
+      const { wraps, errors } = await buildWraps({
+        ...base,
+        to: [bobPk],
+        body: 'nostr layer',
+        encrypt: true,
+        pgp: {
+          ...(await mixedPgp()),
+          pgpKeyring: await addToKeyring(
+            await addToKeyring({}, bobSet.v4.publicKey),
+            bobSet.v4.publicKey,
+            `${nip19.npubEncode(bobPk)}@mailstr.app`,
+          ),
+        },
+      })
+      expect(errors).toEqual([])
+      const toBob = wraps.find((w) => w.tags.some((t) => t[0] === 'p' && t[1] === bobPk))
+      expect(toBob).toBeDefined()
+      const result = await unwrapAndVerify(toBob!, keySigner(bobSk))
+      if (!result.ok) return
+      const doc = new TextDecoder().decode(messageStringToBytes(result.rumor.content))
+      expect(doc).toContain('-----BEGIN PGP MESSAGE-----')
+      expect(doc).not.toContain('nostr layer')
+    })
+
+    // The Sent self-copy always carries the encrypted document, whether or not
+    // the From alias was in the recipient list.
+    it('encrypts the self-copy so Sent stays readable only by the alias key', async () => {
+      const { wraps } = await buildWraps({
+        ...base,
+        to: ['bob@gmail.com'],
+        body: 'self layer',
+        encrypt: true,
+        pgp: await mixedPgp(),
+      })
+      const self = wraps.find((w) => w.tags.some((t) => t[0] === 'p' && t[1] === ALICE_PK))
+      expect(self).toBeDefined()
+      const result = await unwrapAndVerify(self!, keySigner(ALICE_SK))
+      if (!result.ok) return
+      const doc = new TextDecoder().decode(messageStringToBytes(result.rumor.content))
+      const armored = doc.slice(
+        doc.indexOf('-----BEGIN PGP MESSAGE-----'),
+        doc.indexOf('-----END PGP MESSAGE-----') + '-----END PGP MESSAGE-----'.length,
+      )
+      const decrypted = await decryptMessage({
+        message: await parsePgpMessage(armored),
+        privateKey: aliceSet.v4.privateKey,
+      })
+      expect(decrypted.text).toBe('self layer')
+    })
+
+    // Fail closed: a locked key without a passphrase must error, never quietly
+    // deliver cleartext (the old catch demoted; prod shipped unencrypted mail
+    // whenever the alias key was locked).
+    it('refuses the send when the lock is on but no PGP settings are provided', async () => {
+      const { wraps, errors } = await buildWraps({
+        ...base,
+        to: ['bob@gmail.com'],
+        body: 'must not leak',
+        encrypt: true,
+      })
+      expect(wraps).toEqual([])
+      expect(errors[0]).toMatch(/Could not encrypt/)
+    })
+
+    it('refuses the send when the lock is on but the From alias has no key', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => new Response(JSON.stringify({ names: { alice2: ALICE_PK } }))),
+      )
+      const { wraps, errors } = await buildWraps({
+        ...base,
+        from: { address: 'alice2@mailstr.app' },
+        to: ['bob@gmail.com'],
+        body: 'must not leak',
+        encrypt: true,
+        pgp: await mixedPgp(),
+      })
+      expect(wraps).toEqual([])
+      expect(errors[0]).toMatch(/Could not encrypt/)
+    })
+
+    it('refuses the send when the From key is locked and no passphrase is given', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => new Response(JSON.stringify({ names: { locked: ALICE_PK } }))),
+      )
+      const locked = await generateKeySet({ email: 'locked@mailstr.app', passphrase: 'hunter2' })
+      const { wraps, errors } = await buildWraps({
+        ...base,
+        from: { address: 'locked@mailstr.app' },
+        to: ['bob@gmail.com'],
+        body: 'must not leak',
+        encrypt: true,
+        pgp: {
+          pgpKeys: {
+            'locked@mailstr.app': {
+              publicKey: locked.v4.publicKey,
+              privateKey: locked.v4.privateKey,
+              fingerprint: locked.v4.fingerprint,
+              passphraseProtected: true,
+              v4: locked.v4,
+              v6: locked.v6,
+            },
+          },
+          pgpKeyring: await addToKeyring({}, bobSet.v4.publicKey),
+        },
+      })
+      expect(wraps).toEqual([])
+      expect(errors[0]).toMatch(/Could not encrypt/)
+    })
+
+    it('sends when the locked From key is unlocked by the session passphrase', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => new Response(JSON.stringify({ names: { locked: ALICE_PK } }))),
+      )
+      const locked = await generateKeySet({ email: 'locked@mailstr.app', passphrase: 'hunter2' })
+      const { wraps, errors } = await buildWraps({
+        ...base,
+        from: { address: 'locked@mailstr.app' },
+        to: ['bob@gmail.com'],
+        body: 'unlocked secret',
+        encrypt: true,
+        pgpPassphrase: 'hunter2',
+        pgp: {
+          pgpKeys: {
+            'locked@mailstr.app': {
+              publicKey: locked.v4.publicKey,
+              privateKey: locked.v4.privateKey,
+              fingerprint: locked.v4.fingerprint,
+              passphraseProtected: true,
+              v4: locked.v4,
+              v6: locked.v6,
+            },
+          },
+          pgpKeyring: await addToKeyring({}, bobSet.v4.publicKey),
+        },
+      })
+      expect(errors).toEqual([])
+      const doc = (await unwrapAndVerify(toBridge(wraps)[0], keySigner(BRIDGE_SK)))
+      if (!doc.ok) return
+      const decoded = new TextDecoder().decode(messageStringToBytes(doc.rumor.content))
+      expect(decoded).not.toContain('unlocked secret')
     })
   })
 })

@@ -1,6 +1,6 @@
 import type { MailSettings } from '@/app/lib/nostr/settings'
 import { encryptMessage } from './openpgp'
-import { allKeysForAddress, keysInEntry, ownKeypairFor, ownPrivateKeysFor } from './keyring'
+import { allKeysForAddress, ownKeypairFor } from './keyring'
 
 /**
  * Encrypt and sign a plaintext body to every recipient plus the sender, using
@@ -33,12 +33,16 @@ export async function encryptBody(params: {
     throw new Error(`No PGP key for ${fromAddress} — generate one in Settings to encrypt.`)
   }
 
-  // Encrypt to every key we hold for every recipient (keyring entries may be
-  // multi-key), plus both of our own halves — de-duped so a key shared between
-  // sender and recipient isn't listed twice.
+  // Encrypt to every key we hold for every recipient, plus every own alias
+  // key — de-duped so a key shared between sender and recipient isn't listed
+  // twice. `allKeysForAddress` deliberately resolves BOTH own aliases (so a
+  // recipient that is another of the user's addresses is encrypted to that
+  // alias's own key) and keyring entries (multi-key WKD merges), matching
+  // `keyForAddress` exactly — the gate the caller uses to decide who is
+  // encryptable.
   const recipientKeys = new Set<string>()
   for (const address of recipients) {
-    const keys = keysInEntry(settings.pgpKeyring?.[address.trim().toLowerCase()])
+    const keys = allKeysForAddress(settings, address)
     if (!keys.length && address.trim().toLowerCase() !== fromAddress.trim().toLowerCase()) {
       throw new Error(`No PGP key for ${address}.`)
     }
@@ -62,18 +66,4 @@ export async function encryptBody(params: {
     signingPrivateKey: signingKey.privateKey,
     signingPassphrase: own.passphraseProtected ? passphrase : undefined,
   })
-}
-
-/**
- * The private key halves the From alias can decrypt with, for the read path —
- * exported so usePgpMessage tries both dual halves in turn.
- */
-export function decryptionHalvesFor(
-  settings: Pick<MailSettings, 'pgpKeys'>,
-): Array<ReturnType<typeof ownPrivateKeysFor>[number]> {
-  const out = []
-  for (const keypair of Object.values(settings.pgpKeys ?? {})) {
-    out.push(...ownPrivateKeysFor(keypair))
-  }
-  return out
 }
