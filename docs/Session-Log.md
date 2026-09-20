@@ -1049,3 +1049,129 @@ Both vhosts gain the config from `client/web/README.md`:
   out of scope here.
 - Neither nginx repo was committed; the two edits are working-tree changes in
   `~/Documents/Projects/formstr-hq/nginx` and `…/nginx-72.61.138.38`.
+
+## 2026-09-21 — Mail links: plaintext autolink + native open path
+
+Context consulted per rule 15: the 2026-09-19 nginx SPA-fallback entry, the
+2026-09-19 key-rotation entry, and the 2026-09-18 ADR-006 send-ownership entry.
+Work on branch `fix/mail-link-opening`, base `main` (`38a71e6`).
+
+### Root cause
+
+Two distinct defects behind "links in a mail are not clickable":
+
+1. **Plaintext mail had no links at all.** `MessageBody`'s `PlainBody` renders
+   the body in a `<pre>`; URLs were inert text. Verified by e2e before the fix:
+   `anchor count: 0`, `iframe count: 0`.
+2. **Native HTML links were dead.** The frame relies on
+   `<base target="_blank">` + sandbox `allow-popups`, which works in a real
+   browser (verified in Chromium: click → popup). Inside the Capacitor Android
+   WebView it cannot: Capacitor never calls
+   `WebSettings.setSupportMultipleWindows(true)` nor implements
+   `WebChromeClient.onCreateWindow` (checked in `@capacitor/android` 7.6.9
+   source; `BridgeWebChromeClient` has no `onCreateWindow`). A `_blank`
+   navigation is therefore a silent no-op — the user-visible bug.
+
+### What changed (6 files + tests)
+
+1. **`lib/mail/plainLinks.ts` (new):** `splitPlainLinks(text)` finds URLs with
+   `linkifyjs` (MIT; rule 13 — no hand-rolled URL parsing) and returns
+   text/link segments. `find(text, 'url')` only, deliberately: `mailto:` links
+   would launch a foreign app from the reader, and the address is already
+   actionable via Reply. Bare `www.` hosts get `http://` inferred by the
+   library.
+2. **`lib/openLink.ts` (new):** `isSafeExternalUrl(href)` (absolute
+   `http`/`https` only — `tel:`, `intent:`, `mailto:` are rejected before any
+   plugin call) and `openExternal(href)`. On native it reaches
+   `window.Capacitor.Plugins.Browser` through the runtime global — the
+   `saveFile.ts`/`notifications.ts` pattern that keeps the web build
+   Capacitor-free — and returns true so the caller can `preventDefault()`. On
+   web it returns false and the browser opens its own tab (fighting the popup
+   blocker would be worse).
+3. **`MessageBody.tsx`:**
+   - `PlainBody` maps segments: URLs render as `<a target="_blank">` with the
+     app's link treatment, routed through `openExternal` on click.
+   - `fitToContent` installs a parent-side capture listener on the iframe
+     document (same-origin is already required for auto-height, and the frame
+     runs no scripts, so the listener cannot live inside it) that intercepts
+     anchors and routes them through `openExternal`. On web the listener
+     declines and the anchor opens normally — the existing e2e proves both.
+4. **`client/package.json`:** `@capacitor/browser@^7.0.5` (7.x — 8.x requires
+   Capacitor core 8, this app is on 7.6.9). `cap sync android` registered the
+   plugin in `capacitor.plugins.json`/`capacitor.build.gradle`/
+   `capacitor.settings.gradle` (the two Gradle files are tracked; the JSON is
+   gitignored, per the existing contract).
+5. **`client/web/package.json`:** `linkifyjs@^4.3.3`.
+
+### Tests
+
+- `plainLinks.test.ts` 6/6: prose preserved around the split, multiple URLs
+  across lines/blank lines, `www.` scheme inference, email deliberately not
+  linked, and no text lost or reordered.
+- `openLink.test.ts` 6/6: scheme allowlist (`intent:`/`tel:`/`mailto:`/
+  relative rejected), native `Browser.open` called with the URL, web declines,
+  missing plugin declines.
+- `e2e/app/mail-links.spec.ts` 3/3 (new, permanent): a real account receives
+  a bridge-sealed HTML message and a plaintext one through the mock relay;
+  both links are asserted visible and the click is asserted to produce a
+  popup with the right URL. The third spec fakes the Capacitor global and
+  asserts the click reaches `Browser.open` with **no** popup — the exact
+  native behavior the Android WebView cannot provide itself. This is the
+  regression pin for both defects.
+
+### Verification (exact, at this working tree)
+
+- `pnpm --filter mailstr-web lint` — 0 errors.
+- `pnpm --filter mailstr-web build` — ok (prerender + `/mails` shell).
+- `pnpm --filter mailstr-web test` — 324 passed / 4 failed; the 4 are the
+  pre-existing environment failures recorded on 2026-09-19
+  (`api/addresses.test.ts` ×3, `mail/composeFields.test.ts` ×1 — stg bridge
+  domain defaults), confirmed unchanged on `main` by stash + re-run.
+- `pnpm e2e` — mail-links 3/3; the full run is 17 passed / 1 failed, where the
+  failure (`buy-address.spec.ts` "sidebar buy row opens the wizard in place")
+  also fails on `main` at the same commit, so it is pre-existing and
+  unrelated.
+- `pnpm --filter mailstr-client run apk:debug` — BUILD SUCCESSFUL, with
+  `@capacitor/browser` in the plugin list (`cap sync` reported 6 plugins).
+- The native click routing is pinned by the fake-Capacitor e2e above (calls
+  `Browser.open`, opens no popup). The plugin's own on-device behavior
+  (Custom Tab launch) was not exercised on a real device: the sandbox's
+  emulator is resource-starved (the AVD stalls in `BOOTING`/`RUNNING_LOCKED`
+  and the package never resolves), so the APK build + plugin registration +
+  the routing e2e are the evidence. An on-device click check is the remaining
+  gap before shipping the APK.
+
+### Deliberately not changed
+
+- HTML mail's sandbox stays as-is: no `allow-scripts`, same CSP, remote images
+  still opt-in. The click listener is parent-side and the scheme allowlist
+  gates every navigation, so the security boundary (AGENTS rule 12) is
+  unchanged.
+- No `mailto:` linkification: Reply/Reply-all is the intended path, and a
+  tapped `mailto:` would leave the app for an OS handler.
+- `target="_blank"` on plaintext anchors is kept for web parity with HTML
+  mail; native never sees it because `openExternal` claims the click first.
+
+### Test build for on-device review (same session)
+
+A debug APK for the on-device link check was built and served on the LAN, so
+the remaining gap above can be closed by a phone on the same network:
+
+- `debug { applicationIdSuffix ".debug" }` in
+  `client/android/app/build.gradle` plus
+  `client/android/app/src/debug/res/values/strings.xml` ("Mail by Form*
+  (debug)") so the debug build installs **alongside** the production app
+  (distinct applicationId = distinct app; Java package unchanged). This is
+  committed as the permanent debug-variant setup, not a one-off.
+- Served from `/tmp/opencode/apk-host/` at
+  `http://192.168.178.46:8000/mailstr-debug-0.2.1.apk` (plain
+  `python3 -m http.server 8000 --bind 0.0.0.0`, host LAN IP 192.168.178.46,
+  `wlp2s0`). Verified locally: `200`, `Content-Length 15401701`,
+  `application/vnd.android.package-archive`, sha256
+  `a3c49827bf19c6412d31b5a8691b300b5622bcb42d482a7d1313cdf89449e7c4`.
+- Built with `cap sync` (6 plugins, `@capacitor/browser` included) and
+  `assembleDebug`; `aapt2 dump badging` confirms package
+  `com.formstr.mail.debug`, versionName `0.2.1`, launch label
+  "Mail by Form* (debug)".
+- The server is a plain static host serving only the APKs; it is not a repo
+  artifact. No auth — LAN only; stop the process when done.

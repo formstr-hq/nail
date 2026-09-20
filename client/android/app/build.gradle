@@ -26,6 +26,13 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // Debug builds install alongside the production app instead of
+            // replacing it: a distinct applicationId is a distinct app to
+            // Android. The Java namespace stays com.formstr.mail, so
+            // MainActivity and the notifier bindings are untouched.
+            applicationIdSuffix ".debug"
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'

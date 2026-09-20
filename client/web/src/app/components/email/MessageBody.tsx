@@ -4,14 +4,40 @@ import { usePgpMessage } from '@/app/hooks/usePgpMessage'
 import { setSessionPassphrase } from '@/app/lib/pgp/session'
 import type { Email } from '@/app/types/mail'
 import { buildEmailFrame, hasRemoteContent } from '@/app/lib/mail/emailFrame'
+import { splitPlainLinks } from '@/app/lib/mail/plainLinks'
+import { openExternal } from '@/app/lib/openLink'
 import { Button } from '@/app/components/ui/Button'
 import { PgpSignatureBadge } from './PgpSignatureBadge'
 
-/** Plaintext render used for non-HTML bodies and decrypted PGP text. */
+/**
+ * Plaintext render used for non-HTML bodies and decrypted PGP text.
+ *
+ * URLs become real anchors — plaintext never went through the HTML frame, so
+ * without this a link in a text-only message was inert. They carry
+ * `target="_blank"` to match HTML mail's behavior, and on native the popup is
+ * a no-op, so `openExternal` routes the click to the system browser instead.
+ */
 function PlainBody({ text }: { text: string }) {
   return (
     <pre className="whitespace-pre-wrap break-words font-sans text-[13.5px] leading-relaxed text-foreground">
-      {text}
+      {splitPlainLinks(text).map((segment, i) =>
+        segment.href ? (
+          <a
+            key={i}
+            href={segment.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline underline-offset-2"
+            onClick={(e) => {
+              if (openExternal(segment.href!)) e.preventDefault()
+            }}
+          >
+            {segment.text}
+          </a>
+        ) : (
+          segment.text
+        ),
+      )}
     </pre>
   )
 }
@@ -54,6 +80,17 @@ export function MessageBody({ email, senderAddress }: { email: Email; senderAddr
     const iframe = e.currentTarget
     const doc = iframe.contentDocument
     if (!doc) return
+
+    // Native has no popup support (see openLink.ts), so `<base target="_blank">`
+    // is a silent no-op there and HTML links would be dead. The frame runs no
+    // scripts (`allow-scripts` is off), so the click listener has to come from
+    // the parent side — same-origin access is already relied on below. On the
+    // web openExternal declines and the anchor opens its normal tab.
+    doc.addEventListener('click', (event) => {
+      const anchor = (event.target as Element | null)?.closest?.('a[href]')
+      if (anchor && openExternal(anchor.getAttribute('href') ?? '')) event.preventDefault()
+    })
+
     const fit = () => {
       iframe.style.height = `${doc.documentElement.scrollHeight}px`
     }
