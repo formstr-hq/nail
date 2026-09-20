@@ -7,10 +7,21 @@
  * the reader asks for it. This is a `<meta>` policy inside the frame rather
  * than a sandbox flag because sandboxing cannot express "no network, but do
  * render the markup".
+ *
+ * With remote content allowed the policy gains `upgrade-insecure-requests`.
+ * Mail bodies from arbitrary senders routinely still carry `http://` images,
+ * and on a secure origin — the deployed site, and the Capacitor app which
+ * serves from `https://localhost` — the WebView blocks those as mixed content
+ * *before* the CSP is consulted, so "Load images" looked like it did nothing.
+ * The directive rewrites insecure subresources to `https` (the standard
+ * mechanism, verified against the app's real WebView), while leaving link
+ * `href`s alone: a link may legitimately be http and opens in a real browser
+ * where no mixed-content rule applies.
  */
 export function buildEmailFrame(html: string, allowRemote: boolean, dark: boolean): string {
   const imgSrc = allowRemote ? "img-src data: https: http:" : "img-src data:"
-  const policy = `default-src 'none'; ${imgSrc}; style-src 'unsafe-inline'; font-src data:`
+  const upgrade = allowRemote ? '; upgrade-insecure-requests' : ''
+  const policy = `default-src 'none'; ${imgSrc}; style-src 'unsafe-inline'; font-src data:${upgrade}`
   // Follow the app's theme. Background stays transparent so it inherits the
   // reading pane. Most HTML mail is authored for a white page, so its own
   // colours (dark ink, dark links) are baked in with inline styles — on our

@@ -117,7 +117,7 @@ export async function fetchOwnedAddresses(active: ActiveSigner): Promise<string[
   // Deliberately unconditional (not gated behind a dev-only flag) so the
   // real response shape can be confirmed against production without a
   // redeploy.
-  console.debug('[addresses] get-nip05 response', body)
+  if (import.meta.env.DEV) console.debug('[addresses] get-nip05 response', body)
 
   return normalizeOwnedAddresses(body)
 }

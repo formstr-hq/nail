@@ -101,7 +101,9 @@ export function useMailMeta() {
           useMailStore.getState().hydrateFlags([{ ref: entry.ref, flags: entry.flags }])
         },
         onFailure: (event, reason) => {
-          console.warn(`[mailmeta] could not decode ${event.id.slice(0, 8)}: ${reason}`)
+          if (import.meta.env.DEV) {
+            console.warn(`[mailmeta] could not decode ${event.id.slice(0, 8)}: ${reason}`)
+          }
         },
         onPendingChange: () => {
           // No UI surface for metadata backlog yet.

@@ -31,6 +31,16 @@ describe('buildEmailFrame', () => {
     expect(buildEmailFrame('', false, true)).not.toContain('img-src data: https:')
     expect(buildEmailFrame('', true, true)).toContain('img-src data: https: http:')
   })
+
+  it('upgrades insecure subresources only once remote content is allowed', () => {
+    // Regression: the app runs on a secure origin (the Capacitor build serves
+    // from https://localhost), where the WebView blocks http:// images as
+    // mixed content before the CSP applies — "Load images" appeared to do
+    // nothing. upgrade-insecure-requests is the standard rewrite and is scoped
+    // to subresources, so link hrefs are untouched.
+    expect(buildEmailFrame('', true, true)).toContain('upgrade-insecure-requests')
+    expect(buildEmailFrame('', false, true)).not.toContain('upgrade-insecure-requests')
+  })
 })
 
 describe('hasRemoteContent', () => {

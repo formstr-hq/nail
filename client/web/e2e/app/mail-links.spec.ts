@@ -19,6 +19,11 @@ import { createAccount, completeOnboarding } from './helpers'
 const BRIDGE_SK_HEX = '11'.repeat(32)
 const BRIDGE_PK = getPublicKey(hexToBytes(BRIDGE_SK_HEX))
 const RELAY_URL = 'ws://localhost:4699'
+/** A 1x1 PNG — enough for the browser to count the image as loaded. */
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+)
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/.well-known/nostr.json*', (route) => {
@@ -189,4 +194,38 @@ test('on native the click is routed through the Browser plugin', async ({ page }
     .poll(() => page.evaluate(() => (window as unknown as { __opened: string[] }).__opened))
     .toEqual(['https://example.com/native'])
   expect(popupSeen.value).toBe(false)
+})
+
+/**
+ * Remote images: the notice appears first (no network), and "Load images" must
+ * actually fetch them.
+ *
+ * The regression was mixed content: on a secure origin the WebView blocks
+ * `http://` images before the CSP applies, so the button appeared dead. The
+ * frame now carries `upgrade-insecure-requests`, so a host that serves the
+ * same path over https loads.
+ */
+test('Load images fetches remote content, including an http URL', async ({ page }) => {
+  const fetched: string[] = []
+  await page.route('https://images.example.test/**', (route) => {
+    fetched.push(route.request().url())
+    route.fulfill({ status: 200, contentType: 'image/png', body: PNG })
+  })
+
+  await deliverAndOpen(page, 'Remote image', [
+    'MIME-Version: 1.0',
+    'Content-Type: text/html; charset=UTF-8',
+    '',
+    '<p>Hello</p><img src="http://images.example.test/hero.png" alt="hero">',
+  ])
+
+  await expect(page.getByText(/hosted elsewhere/i)).toBeVisible()
+  expect(fetched).toEqual([])
+
+  await page.getByRole('button', { name: /load images/i }).click()
+
+  // The upgrade rewrote http -> https, so this is the URL that was fetched.
+  await expect.poll(() => fetched, { timeout: 5000 }).toEqual([
+    'https://images.example.test/hero.png',
+  ])
 })

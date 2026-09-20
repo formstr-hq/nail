@@ -1175,3 +1175,121 @@ the remaining gap above can be closed by a phone on the same network:
   "Mail by Form* (debug)".
 - The server is a plain static host serving only the APKs; it is not a repo
   artifact. No auth — LAN only; stop the process when done.
+
+## 2026-09-21 — Prod-readiness pass: dev config leaked into the APK, error overlay blocked the app, mixed-content images
+
+Context consulted per rule 15: the link-opening entry directly above (same
+session), the 2026-09-19 rotation entry, and the 2026-09-15
+`VITE_BRIDGE_DOMAIN` deploy-fix entry (same class of bug: build-time config
+silently falling back). Work on `fix/mail-link-opening`, base `main`
+(`38a71e6`), continuing from the link fix.
+
+### Root causes (three separate defects, all observed on the real APK)
+
+1. **The dev error overlay blocked the whole page.** `MessageBody`'s
+   `ResizeObserver` observed `doc.documentElement` while its callback wrote the
+   iframe's height — which resizes that very element. The browser reported the
+   self-retrigger as `ResizeObserver loop completed with undelivered
+   notifications`, an `error` event; `DebugErrorOverlay` captured every one as
+   a fatal app error and rendered a full-height overlay over a working page.
+   Because layout kept settling, they arrived continuously. Diagnosed on the
+   real WebView: the user's console dump was 100% these notifications.
+2. **`Load images` did nothing on native.** Verified over Chrome DevTools
+   Protocol against the app's actual WebView (Android 15 ATD image): the app
+   serves from `https://localhost`, so `http://` images are blocked as
+   **mixed content before CSP applies** —
+   `blockedReason: "mixed-content"` on `Network.loadingFailed`, `naturalWidth: 0`.
+   The same probe with `https://` loaded (`width: 32`). Plaintext/HTML link
+   tests could not catch this: the e2e dev server runs on `http://localhost`,
+   where mixed-content rules never apply.
+3. **The mobile APK shipped staging config.** `client/scripts/build-web.mjs`
+   ran `pnpm run build` without pinning `VITE_*`; Vite loads `client/web/.env`
+   (gitignored) on every build, and this machine's file points at staging. The
+   shipped bundle contained `api.stg.formstr.app`, `wss://api.stg.formstr.app`
+   and `stg.mailstr.app` — a production APK calling staging and claiming
+   `@stg.mailstr.app` addresses.
+
+Additionally, dev diagnostics and the Developer-mode UI (raw rumor JSON, key
+fingerprints) were shipping in production, and console traces narrated relay
+timings and decoded mail ids in the APK.
+
+### What changed
+
+1. **`MessageBody.tsx` (ResizeObserver loop):** observe `doc.body` (content-
+   driven, never resized by our height write) instead of `documentElement`;
+   defer the write to `requestAnimationFrame`; and skip sub-pixel oscillations
+   (`|Δ| ≤ 1`). This removes the root cause rather than only hiding its
+   symptom.
+2. **`DebugErrorOverlay.tsx`:** `isBenignError()` filters both ResizeObserver
+   notification forms at the capture boundary (tested). Two-mode surface:
+   production gets a plain "Something went wrong" + Reload, never stacks or
+   messages; dev keeps the copyable stack overlay. Critically, in production a
+   stray error/rejection can no longer replace a working page — only a React
+   render crash (where the tree is already gone) takes the screen. The error
+   list is capped at 20 so a repeating error cannot lock the UI. Global capture
+   is dev-only.
+3. **`emailFrame.ts` (mixed content):** the remote-allowed CSP gains
+   `upgrade-insecure-requests`, the standard subresource rewrite. Chosen over a
+   hand-rolled `src`/`srcset`/`url()` regex (rule 13) and verified on the real
+   WebView: `http://www.google.com/favicon.ico` upgrades and loads
+   (`currentSrc: https://…`, `width: 32`), while link `href`s stay untouched.
+4. **`client/scripts/build-web.mjs`:** pins `VITE_API_BASE_URL`,
+   `VITE_WS_BASE_URL`, `VITE_API_CANONICAL_BASE_URL`, `VITE_MAIL_DOMAIN` and
+   `VITE_BRIDGE_DOMAIN` to production in `PROD_ENV`. Process env beats `.env`
+   file values, so the APK is production regardless of a developer's local
+   file. (The Docker deploy service already passed these as build args; this
+   fixes the mobile build path, which did not.)
+5. **Dev surfaces prod-gated:** `DebugPanel` (raw rumor disclosure) and the
+   Developer-mode setting render only when `import.meta.env.DEV`; both were
+   previously reachable in the shipped app via a persisted preference.
+6. **Console traces stripped:** every step-by-step trace (settings stage
+   timings, PGP key-id matching, addresses response, inbox rejects, account
+   warm-up) now sits behind an inline `if (import.meta.env.DEV)`. An imported
+   `logger.dev…` helper was tried first and **removed** — Vite cannot
+   statically drop an imported function's arguments, so the message strings
+   still shipped (verified in the bundle); the inline guard is what minifies
+   away. Genuine failure logs (`FAILED after…`, `failed to publish…`) stay in
+   production.
+7. **Version:** `versionCode 3 → 4`, `versionName 0.2.1 → 0.2.2`,
+   `client/package.json` `0.2.2`.
+
+### Verification (exact, at this working tree)
+
+- `pnpm lint` — 0 errors.
+- `pnpm build` (mobile assembly) — ok; bundle greps: **0** staging hits, 4
+  `api.formstr.app`; `VITE_API_BASE_URL/VITE_WS_BASE_URL/VITE_MAIL_DOMAIN` all
+  production; **0** occurrences of `the stall is here`, `decrypted with`,
+  `message targets key IDs`, `Developer mode`, `Debug · rumor event`,
+  `Copy JSON`, `App error`; failure logs still present (1/3/1/1).
+- `pnpm test` — 329 passed / 4 failed; the 4 are the pre-existing env failures
+  (`api/addresses.test.ts` ×3, `mail/composeFields.test.ts` ×1) already
+  recorded, unchanged on `main`. New: `DebugErrorOverlay.test.tsx` 4/4
+  (benign-error recognition, real errors not swallowed, capture installs,
+  crash surfaces in dev) and `emailFrame.test.ts` +1 (upgrade directive only
+  when remote is allowed).
+- `pnpm e2e` — 18 passed / 1 failed; the failure is the pre-existing
+  `buy-address.spec.ts` one. New spec in `mail-links.spec.ts`: a mail with an
+  `http://` image is not fetched before consent, then `Load images` fetches it
+  as `https://` (`upgrade-insecure-requests` proven end to end).
+- **On the real Android WebView** (Android 15 `google_atd` image, the app's own
+  `https://localhost` origin, Chrome DevTools Protocol):
+  - shipped bundle: `stg` hits 0, prod hits 4;
+  - `document.body.innerText` contains none of `App error`, `Developer mode`,
+    `Debug · rumor event`;
+  - 0 ResizeObserver errors after exercising the app;
+  - the app's exact frame CSP + an `http://` image → `width: 32`,
+    `currentSrc: https://…`.
+- `apk:debug` — BUILD SUCCESSFUL; `aapt2 dump badging` confirms package
+  `com.formstr.mail.debug`, **versionCode 4, versionName 0.2.2**, label
+  "Mail by Form* (debug)".
+
+### Notes / limitations
+
+- The mixed-content class of bug is invisible to the current e2e suite by
+  construction (dev server is http). The on-device CDP probe is the evidence
+  here; a permanent guard would need an https-served e2e origin.
+- The `atd`-variant emulator (`google_atd`) is the only one that stayed stable
+  on this host; the Play-store images repeatedly lost their package manager
+  under memory pressure. Commands used are recorded above for the next pass.
+- Host-side debug artifacts (the AVD and a static APK host) are not repo
+  artifacts; the AVDs were deleted after use.

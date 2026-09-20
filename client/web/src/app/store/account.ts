@@ -91,7 +91,7 @@ async function warmUpRemoteSigner(active: ActiveSigner, pubkey: string): Promise
       )
       return true
     } catch {
-      console.warn(`[account] bunker warm-up attempt ${attempt}/${WARMUP_ATTEMPTS} failed`)
+      if (import.meta.env.DEV) console.warn(`[account] bunker warm-up attempt ${attempt}/${WARMUP_ATTEMPTS} failed`)
     }
   }
   return false

@@ -46,37 +46,41 @@ export function AppearanceSection({
         </div>
       </Field>
 
-      <Field
-        label="Developer mode"
-        hint="Adds a debug panel under each message showing its raw decoded event — kind, sender key, tags and content. This device only."
-      >
-        <div
-          role="radiogroup"
-          aria-label="Developer mode"
-          className="flex gap-1 rounded-md border border-input bg-background p-1"
+      {/* Developer mode is a build-time dev aid (raw rumor disclosure), not a
+          user setting — a shipped app must not offer it. */}
+      {import.meta.env.DEV && (
+        <Field
+          label="Developer mode"
+          hint="Adds a debug panel under each message showing its raw decoded event — kind, sender key, tags and content. This device only."
         >
-          {[
-            { on: true, label: 'On' },
-            { on: false, label: 'Off' },
-          ].map((o) => (
-            <button
-              key={o.label}
-              type="button"
-              role="radio"
-              aria-checked={debugPanel === o.on}
-              onClick={() => onDebugPanelChange(o.on)}
-              className={[
-                'flex-1 rounded-sm px-2 py-1.5 text-[12px] font-medium transition-colors duration-[120ms]',
-                debugPanel === o.on
-                  ? 'bg-accent text-foreground'
-                  : 'text-muted-foreground hover:text-foreground',
-              ].join(' ')}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
-      </Field>
+          <div
+            role="radiogroup"
+            aria-label="Developer mode"
+            className="flex gap-1 rounded-md border border-input bg-background p-1"
+          >
+            {[
+              { on: true, label: 'On' },
+              { on: false, label: 'Off' },
+            ].map((o) => (
+              <button
+                key={o.label}
+                type="button"
+                role="radio"
+                aria-checked={debugPanel === o.on}
+                onClick={() => onDebugPanelChange(o.on)}
+                className={[
+                  'flex-1 rounded-sm px-2 py-1.5 text-[12px] font-medium transition-colors duration-[120ms]',
+                  debugPanel === o.on
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                ].join(' ')}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </Field>
+      )}
     </>
   )
 }
