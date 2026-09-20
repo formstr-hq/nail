@@ -11,6 +11,7 @@
  */
 /// <reference lib="webworker" />
 import { RelayService, selfChannel, IndexedDBStorage } from '@formstr/local-relay'
+import { mailPrunePolicy } from './prunePolicy'
 
 const channel = selfChannel(
   self as unknown as {
@@ -22,6 +23,10 @@ const channel = selfChannel(
 const service = new RelayService({
   channel,
   storage: new IndexedDBStorage('mailstr'),
+  // The package default ages cached kind-1059 mail out at 7 days (and can evict
+  // it under the cap), which silently deletes the offline mailbox. Protect the
+  // mail kinds so only the user's own delete removes them — see prunePolicy.ts.
+  persistence: { prunePolicy: mailPrunePolicy() },
 })
 
 // Hydrate from IndexedDB, then begin write-through + pruning. `hydrated` lets the
