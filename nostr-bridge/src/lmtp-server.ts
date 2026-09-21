@@ -9,6 +9,15 @@ import { config } from "./config.js";
 
 const bridgeSigner = keySigner(config.bridgePrivkey);
 
+/**
+ * Buffer cap for one inbound message. See `config.maxMessageBytes`.
+ *
+ * Peak memory per message is a multiple of this: the raw bytes are buffered,
+ * then converted to a byte string, then (on the retry path) parsed and rebuilt
+ * — so the cap is deliberately conservative.
+ */
+const MAX_MESSAGE_BYTES = config.maxMessageBytes;
+
 export class LmtpError extends Error {
   constructor(
     message: string,
@@ -25,8 +34,43 @@ export function createLmtpServer(userResolver: UserResolver): SMTPServer {
     disabledCommands: ["AUTH", "STARTTLS"],
     onData(stream, session, callback) {
       const chunks: Buffer[] = [];
-      stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+      let received = 0;
+      let tooLarge = false;
+      stream.on("data", (chunk: Buffer) => {
+        received += chunk.length;
+        // Memory guard: buffering an unbounded message is how a multi-GB
+        // attachment OOM-kills the process (observed as "the server crashed
+        // during a large-attachment test"). Once past the cap, stop buffering
+        // and keep draining so the peer can finish the transfer.
+        if (received > MAX_MESSAGE_BYTES) {
+          if (!tooLarge) {
+            tooLarge = true;
+            const mailFrom = session.envelope.mailFrom;
+            console.error(
+              `nostr-bridge: message exceeds ${MAX_MESSAGE_BYTES} bytes, discarding further data (from ${
+                mailFrom ? mailFrom.address : "unknown"
+              })`,
+            );
+          }
+          return;
+        }
+        chunks.push(chunk);
+      });
+      stream.on("error", (err) => {
+        console.error("nostr-bridge: LMTP data stream error:", (err as Error).message);
+      });
       stream.on("end", () => {
+        // 552 (exceeded storage allocation) is permanent and bounces to the
+        // sender immediately; 451 would make Postfix re-send the same
+        // oversized message on every retry.
+        if (tooLarge) {
+          callback(
+            Object.assign(new Error("5.3.4 Message too large for this bridge"), {
+              responseCode: 552,
+            }),
+          );
+          return;
+        }
         void handleMessage(
           Buffer.concat(chunks),
           session.envelope.rcptTo[0]?.address,

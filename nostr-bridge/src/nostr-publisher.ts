@@ -51,7 +51,18 @@ export function publishToRelay(
     const ws = new WebSocket(relayUrl);
     const timer = setTimeout(() => finish(false), timeoutMs);
 
-    const sendEvent = () => ws.send(JSON.stringify(["EVENT", event]));
+    // A send on a CONNECTING socket throws synchronously. Both call sites are
+    // EventEmitter callbacks (`on("open")`, a resend after AUTH), where a
+    // throw would escape as an uncaughtException and take the bridge down.
+    // A rejected relay is a normal failure: log and settle false.
+    const sendEvent = () => {
+      try {
+        ws.send(JSON.stringify(["EVENT", event]));
+      } catch (error) {
+        console.error(`nostr-bridge: relay ${relayUrl} send failed:`, (error as Error).message);
+        finish(false);
+      }
+    };
 
     // Only ever authenticate once per connection: relays that keep rejecting
     // after a valid AUTH are refusing us for some other reason, and retrying
@@ -71,7 +82,11 @@ export function publishToRelay(
           pubkey: await signer.getPublicKey(),
         });
         authEventId = authEvent.id;
-        ws.send(JSON.stringify(["AUTH", authEvent]));
+        try {
+          ws.send(JSON.stringify(["AUTH", authEvent]));
+        } catch {
+          finish(false);
+        }
       } catch (error) {
         console.error(`nostr-bridge: relay ${relayUrl} auth failed:`, (error as Error).message);
         finish(false);

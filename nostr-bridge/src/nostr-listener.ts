@@ -298,7 +298,16 @@ export async function startNostrListener(
         console.log(
           `nostr-bridge: received wrap ${event.id.slice(0, 8)} kind=${event.kind} created_at=${event.created_at}`,
         );
-        void handleWrap(pool, relays, transport, event);
+        // handleWrap is exported and defensive, but it is called from an
+        // EventEmitter callback: any throw here would otherwise surface as an
+        // unhandled rejection and kill the process. One bad wrap must never
+        // stop the bridge from serving the rest of the mailbox.
+        handleWrap(pool, relays, transport, event).catch((err) => {
+          console.error(
+            `nostr-bridge: handleWrap failed for ${event.id.slice(0, 8)}:`,
+            (err as Error).message,
+          );
+        });
       },
       oneose: () => console.log("nostr-bridge: subscription reached EOSE (live tail)"),
     },

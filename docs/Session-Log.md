@@ -5,7 +5,49 @@
 Context consulted (rule 15): the 2026-09-20 local-relay prune entry, the
 2026-09-19 nginx/discovery entry, and the 2026-09-19 NIP-42 AUTH entry.
 
+### Crash diagnosis on large-attachment test
+
+"Server crashed when a large attachment was tested" — two independent
+mechanisms, both unguarded:
+
+1. **Unbounded buffering.** `onData` pushes every chunk into an array and
+   never checks size. A large attachment is buffered in full, then converted
+   to a byte string, then (on the retry path) parsed and rebuilt — peak
+   memory is several multiples of the message. Enough concurrent size and
+   the process is OOM-killed. Docker's `restart: unless-stopped` then brings
+   it back, leaving no cause in the log.
+2. **Unhandled errors with no cause attached.** There were no
+   `uncaughtException`/`unhandledRejection` handlers, so a fatal error
+   printed Node's default one-liner and exited; `void handleWrap(...)`,
+   `ws.send` inside EventEmitter callbacks, and unlistened `error` events on
+   the LMTP/health/send servers could each kill the process. SIGTERM was
+   silently ignored by the default handler.
+
 ### What changed (bridge-only)
+
+**Crash logging / hardening (this revision):**
+
+- `fatal.ts` (new) — `registerFatalHandlers()` (called first in `index.ts`)
+  logs `FATAL uncaught exception` / `FATAL unhandled rejection` with
+  name/message/stack and exits 1; logs every `exit` with its code and a
+  `fatal` label when a handler is the cause; logs SIGTERM/SIGINT and shuts
+  down cleanly. Idempotent.
+- `lmtp-server.ts` — `MAX_MESSAGE_BYTES` guard (`MAIL_MAX_BYTES`, default
+  25 MB, mirroring the client cap): past the cap, buffering stops and the
+  message is rejected with **552** (permanent — 451 would make Postfix
+  re-send the same oversized message forever). Data-stream `error` logged.
+  `index.ts` attaches an LMTP server `error` listener.
+- `nostr-publisher.ts` — `ws.send` is wrapped (sending on a CONNECTING
+  socket throws synchronously inside an EventEmitter callback), and auth
+  sends are wrapped too.
+- `nostr-listener.ts` — `void handleWrap(...)` → `.catch(log)` so one bad
+  wrap cannot become an unhandled rejection.
+- `health-server.ts` / `index.ts` — `error` listeners on the health and
+  send-API servers.
+- `docker-compose.bridge.yml` — `MAIL_MAX_BYTES` env with a comment tying
+  it to container memory.
+
+**Attachment retry (earlier revision, unchanged):**
 
 1. **`nostr-bridge/src/stripAttachments.ts` (new).** Parses with `mailparser`,
    rebuilds with `nodemailer`'s `MailComposer` preserving identity/threading
@@ -31,17 +73,27 @@ attachments now *arrives* (body + notice) instead of 451-looping forever.
 
 ### Verification (exact)
 
-- `nostr-bridge`: `npx tsc --noEmit` clean; `npx vitest run` — 11 files / 98
-  tests passed (10 new: 8 in `stripAttachments.test.ts`, 2 + 2 reworked in
-  `lmtp-server.test.ts`); `npx tsc -p tsconfig.json` build ok.
-- New tests cover: notice filename/content, header preservation, HTML-only
-  bodies, attachment-only bodies (notice becomes the body), null for no
-  attachments, null for PGP/MIME, an oversized (>65535 B) attachment mail
-  shrinking under the NIP-44 ceiling, and a latin-1 body surviving the
-  parse/rebuild without mojibake (content is re-encoded/relabelled, never
-  lossily decoded as UTF-8).
-- The retry test asserts the *second* `publishMail` call carries the notice;
-  the failure test asserts 451 only after both attempts.
+- `nostr-bridge`: `npx tsc --noEmit` clean; `npx vitest run` — 13 files / 105
+  tests passed; `npx tsc -p tsconfig.json` build ok.
+- `stripAttachments.test.ts` (8): notice filename/content, header
+  preservation, HTML-only bodies, attachment-only bodies (notice becomes the
+  body), null for no attachments, null for PGP/MIME, an oversized (>65535 B)
+  attachment mail shrinking under the NIP-44 ceiling, and a latin-1 body
+  surviving the parse/rebuild without mojibake.
+- `lmtp-server.test.ts` (+2, 2 reworked): the retry test asserts the *second*
+  `publishMail` call carries the notice; the failure test asserts 451 only
+  after both attempts.
+- `fatal.test.ts` (5, child-process driven — the handlers exit the process, so
+  they cannot be asserted in-runner): uncaught exception → structured stderr +
+  exit 1; unhandled rejection → same; clean exit labeled non-fatal; SIGTERM
+  logged; idempotent registration.
+- `lmtp-server.size.test.ts` (2, real `SMTPServer` over a socket, line-based
+  LMTP client): under-cap message delivered; a 10 KB body against a 4 KB cap
+  gets `552 … too large` and `lookupNip05`/`publishMail` are never called —
+  proving the guard rejects before any buffering/parse/publish work.
+- Not run: the Docker compose / OOM path itself (no container runtime in this
+  environment). The memory-ceiling claim rests on the buffer guard, not on an
+  observed OOM.
 
 ## 2026-09-20 — Local relay pruned kind-1059 mail out of the offline cache
 

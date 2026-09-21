@@ -24,6 +24,13 @@ export function startHealthServer(): void {
     res.end();
   });
 
+  // An EventEmitter `error` with no listener throws. A busy port must be a
+  // logged, visible failure — not a stack-less process death whose cause
+  // Docker swallows on restart.
+  server.on("error", (err) => {
+    console.error(`nostr-bridge: health endpoint error on :${config.healthPort}:`, err.message);
+  });
+
   server.listen(config.healthPort, () => {
     console.log(`nostr-bridge: health endpoint on :${config.healthPort}/healthz`);
   });

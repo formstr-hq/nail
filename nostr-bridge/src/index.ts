@@ -1,4 +1,5 @@
 import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
+import { registerFatalHandlers } from "./fatal.js";
 import { config } from "./config.js";
 import { keySigner } from "./protocol/key-signer.js";
 import { publishBridgeIdentity } from "./self-publish.js";
@@ -9,6 +10,10 @@ import { startNostrListener, handleWrap } from "./nostr-listener.js";
 import { startHealthServer } from "./health-server.js";
 import { createSendApp } from "./send-service.js";
 import { RelayWebSocket } from "./relay-socket.js";
+
+// First thing, before any listener or socket exists: a crash during start-up
+// must log its cause rather than vanishing into a Docker restart.
+registerFatalHandlers();
 
 useWebSocketImplementation(RelayWebSocket);
 
@@ -25,6 +30,12 @@ const userResolver = new UserResolver(
 );
 
 const lmtpServer = createLmtpServer(userResolver);
+// smtp-server emits `error` for socket-level failures; an EventEmitter
+// `error` with no listener throws, which would take the process down with a
+// stack that names nothing useful. Log it and keep serving.
+lmtpServer.on("error", (err: Error) => {
+  console.error("nostr-bridge: LMTP server error:", err.message);
+});
 lmtpServer.listen(config.lmtpPort, () => {
   console.log(`nostr-bridge: LMTP listening on ${config.lmtpPort}`);
 });
@@ -44,8 +55,13 @@ if (config.sendApiKey) {
     injectWrap: (event) =>
       handleWrap(pool, config.bridgeRelays, postfixTransport, event),
   });
-  sendApp.listen(config.sendApiPort, () => {
+  // `app.listen` returns the http.Server, and that is where an `error` (e.g.
+  // EADDRINUSE) is emitted — an unhandled one is a process death.
+  const sendServer = sendApp.listen(config.sendApiPort, () => {
     console.log(`nostr-bridge: send API listening on ${config.sendApiPort}`);
+  });
+  sendServer.on("error", (err: Error) => {
+    console.error(`nostr-bridge: send API error on :${config.sendApiPort}:`, err.message);
   });
 } else {
   console.log("nostr-bridge: send API disabled (SEND_API_KEY unset)");

@@ -52,6 +52,10 @@ services:
       - HEALTH_INTERVAL_MS=${HEALTH_INTERVAL_MS:-3600000}
       - HEALTH_TIMEOUT_MS=${HEALTH_TIMEOUT_MS:-30000}
       - HEALTH_PORT=2510
+      # Inbound LMTP message size cap (bytes). Messages above it get 552 —
+      # they are never buffered, so a huge attachment cannot OOM the process.
+      # 25 MB mirrors the client's own attachment cap.
+      - MAIL_MAX_BYTES=${MAIL_MAX_BYTES:-26214400}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

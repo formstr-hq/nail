@@ -42,6 +42,13 @@ export const config = {
   relayCacheTtlMs: Number(process.env.RELAY_CACHE_TTL_MS ?? 3600000),
   postfixHost: process.env.POSTFIX_HOST ?? "postfix",
   postfixPort: Number(process.env.POSTFIX_PORT ?? 25),
+  // Hard cap on an inbound LMTP message the bridge will buffer in memory.
+  // 25 MB mirrors the client's own attachment cap. Messages above it are
+  // rejected with 552 instead of being buffered — an unbounded buffer is how
+  // a huge attachment OOM-kills the process (each message is then parsed and
+  // rebuilt, multiplying peak memory several times over). Raise it only with
+  // the container's memory limit in mind.
+  maxMessageBytes: Number(process.env.MAIL_MAX_BYTES ?? 25 * 1024 * 1024),
   blossomServerUrl: process.env.BLOSSOM_SERVER_URL ?? "https://nostr.download",
   bridgeDomain: process.env.BRIDGE_DOMAIN ?? "",
   // Domains this deployment accepts mail for and serves NIP-05 records for.
