@@ -32,12 +32,19 @@ export function publishToRelay(
     let challenge: string | null = null;
     let authEventId: string | null = null;
     let authAttempted = false;
+    // Why the relay said no, for the caller's log — a bare `false` cannot
+    // distinguish "too large" (the attachment case) from "blocked: spam",
+    // and the LMTP fallback path makes that distinction worth keeping.
+    let rejection: string | undefined;
 
     const finish = (result: boolean) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       ws.close();
+      if (!result && rejection) {
+        console.warn(`nostr-bridge: relay ${relayUrl} rejected ${event.id.slice(0, 8)}: ${rejection}`);
+      }
       resolve(result);
     };
 
@@ -94,11 +101,17 @@ export function publishToRelay(
           // Auth challenges arrive in a separate AUTH frame; if we have one and
           // have not used it yet, authenticate and let the resend settle this.
           else if (isAuthRequired(reason) && !authAttempted) void authenticate();
-          else if (!isAuthRequired(reason)) finish(false);
+          else if (!isAuthRequired(reason)) {
+            rejection = reason || "rejected by relay";
+            finish(false);
+          }
           // else: auth in flight — wait for the resend result or the timeout.
         } else if (id === authEventId) {
           if (ok) sendEvent(); // authenticated: resend the mail event once
-          else finish(false);
+          else {
+            rejection = reason || "auth rejected";
+            finish(false);
+          }
         }
       }
     });

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
+import { simpleParser } from "mailparser";
 
 // config.ts throws at module load if LOCAL_DOMAINS is unset, and parses
 // NOSTR_BRIDGE_NSEC into a real secp256k1 key eagerly (getPublicKey at
@@ -35,6 +37,19 @@ const RAW = Buffer.from(
   ["From: bob@example.com", "To: alice@mailstr.app", "Subject: hi", "", "hello"].join("\r\n"),
   "utf8",
 );
+
+function buildRawWithAttachment(): Promise<Buffer> {
+  const composer = new MailComposer({
+    from: "bob@example.com",
+    to: "alice@mailstr.app",
+    subject: "with attachment",
+    text: "see attached",
+    attachments: [{ filename: "file.bin", content: Buffer.alloc(1000, 1) }],
+    messageId: "<attached@example.com>",
+    date: new Date("2026-01-01T00:00:00Z"),
+  });
+  return composer.compile().build();
+}
 
 function foundResult(pubkey = PUBKEY): Nip05Result {
   return { status: "found", pubkey };
@@ -103,7 +118,7 @@ describe("handleMessage", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("451s when publishMail resolves false — no relay accepted, never 250", async () => {
+  it("451s when publishMail resolves false and there is nothing to strip", async () => {
     mockedLookup.mockResolvedValue(foundResult());
     mockedPublish.mockResolvedValue(false);
     const resolver = makeUserResolver();
@@ -111,9 +126,10 @@ describe("handleMessage", () => {
       handleMessage(RAW, "alice@mailstr.app", resolver),
     );
     expect(err.responseCode).toBe(451);
+    expect(mockedPublish).toHaveBeenCalledTimes(1);
   });
 
-  it("451s when publishMail throws", async () => {
+  it("451s when publishMail throws and there is nothing to strip", async () => {
     mockedLookup.mockResolvedValue(foundResult());
     mockedPublish.mockRejectedValue(new Error("relay pool blew up"));
     const resolver = makeUserResolver();
@@ -121,6 +137,41 @@ describe("handleMessage", () => {
       handleMessage(RAW, "alice@mailstr.app", resolver),
     );
     expect(err.responseCode).toBe(451);
+    expect(mockedPublish).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries without attachments — as attachments_error.txt — when the full message is rejected", async () => {
+    mockedLookup.mockResolvedValue(foundResult());
+    mockedPublish.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const resolver = makeUserResolver();
+
+    await expect(
+      handleMessage(await buildRawWithAttachment(), "alice@mailstr.app", resolver),
+    ).resolves.toBeUndefined();
+
+    expect(mockedPublish).toHaveBeenCalledTimes(2);
+    const retryRaw: string = mockedPublish.mock.calls[1][0].raw;
+    const parsed = await simpleParser(Buffer.from(retryRaw, "latin1"));
+    expect(parsed.attachments.map((a) => a.filename)).toContain("attachments_error.txt");
+    expect(parsed.attachments[0].content.toString("utf8")).toContain(
+      "Attachments are still a work in progress",
+    );
+    // Identity/threading survives the rebuild.
+    expect(parsed.messageId).toBe("<attached@example.com>");
+  });
+
+  it("retries without attachments when the publish throws, and 451s if the retry also fails", async () => {
+    mockedLookup.mockResolvedValue(foundResult());
+    mockedPublish
+      .mockRejectedValueOnce(new Error("message too large"))
+      .mockResolvedValueOnce(false);
+    const resolver = makeUserResolver();
+
+    const err = await captureLmtpError(
+      handleMessage(await buildRawWithAttachment(), "alice@mailstr.app", resolver),
+    );
+    expect(err.responseCode).toBe(451);
+    expect(mockedPublish).toHaveBeenCalledTimes(2);
   });
 
   it("passes the byte-string form of the raw message to publishMail, not UTF-8-decoded text", async () => {

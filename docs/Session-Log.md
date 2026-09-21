@@ -1,5 +1,48 @@
 # Session Log
 
+## 2026-09-21 — Inbound attachment mail: retry without attachments instead of bouncing
+
+Context consulted (rule 15): the 2026-09-20 local-relay prune entry, the
+2026-09-19 nginx/discovery entry, and the 2026-09-19 NIP-42 AUTH entry.
+
+### What changed (bridge-only)
+
+1. **`nostr-bridge/src/stripAttachments.ts` (new).** Parses with `mailparser`,
+   rebuilds with `nodemailer`'s `MailComposer` preserving identity/threading
+   headers (`From`/`To`/`Cc`/`Reply-To`, `Message-ID`, `Date`, `References`,
+   `In-Reply-To`, `Subject`) plus the body, and replaces every attachment with
+   a single `attachments_error.txt` whose content is:
+   "This mail contained attachments which could not be delivered. Attachments
+   are still a work in progress." Returns `null` when there is nothing to
+   strip (no attachments) or when stripping would corrupt the message
+   (RFC 3156 PGP/MIME — its octet-stream part is the encrypted message, not an
+   attachment).
+2. **`lmtp-server.ts`.** Publish is now `publishWithAttachmentFallback`: on a
+   thrown publish *or* no relay accepting, it logs the failure, strips
+   attachments, republishes once, and only falls back to LMTP 451 if the retry
+   also fails. On success the delivered log line says "(without attachments)".
+3. **`nostr-publisher.ts`.** `publishToRelay` now captures the relay's `OK`
+   rejection reason and logs it (`relay <url> rejected <id>: <reason>`) — a
+   bare `false` could not distinguish "too large" from "blocked: spam".
+
+Deliberately **not** done: Blossom offload / `imeta` tags (the separate
+`attachments` feature branch). This is the quick release: mail with
+attachments now *arrives* (body + notice) instead of 451-looping forever.
+
+### Verification (exact)
+
+- `nostr-bridge`: `npx tsc --noEmit` clean; `npx vitest run` — 11 files / 98
+  tests passed (10 new: 8 in `stripAttachments.test.ts`, 2 + 2 reworked in
+  `lmtp-server.test.ts`); `npx tsc -p tsconfig.json` build ok.
+- New tests cover: notice filename/content, header preservation, HTML-only
+  bodies, attachment-only bodies (notice becomes the body), null for no
+  attachments, null for PGP/MIME, an oversized (>65535 B) attachment mail
+  shrinking under the NIP-44 ceiling, and a latin-1 body surviving the
+  parse/rebuild without mojibake (content is re-encoded/relabelled, never
+  lossily decoded as UTF-8).
+- The retry test asserts the *second* `publishMail` call carries the notice;
+  the failure test asserts 451 only after both attempts.
+
 ## 2026-09-20 — Local relay pruned kind-1059 mail out of the offline cache
 
 Context consulted (rule 15): the 2026-09-19 nginx/discovery entry, the NIP-42
