@@ -1,5 +1,121 @@
 # Session Log
 
+## 2026-09-20 — Local relay pruned kind-1059 mail out of the offline cache
+
+Context consulted (rule 15): the 2026-09-19 nginx/discovery entry, the NIP-42
+AUTH entry (whose open item already flagged this: "the local relay TTLs
+non-protected kinds at 7 days and 1059 is not protected"), and the send-wrap-API
+entry.
+
+### Root cause
+
+`@formstr/local-relay`'s `defaultPrunePolicy()` protects only profiles (0),
+contacts (3), relay lists (10002) and the 10000–19999 replaceable range.
+**Kind 1059 (the mail/DM gift-wrap ciphertext) is not protected**, so the
+Persistence prune pass removes cached wraps once `created_at` is older than
+`defaultTtlSeconds` (7 days), and the 50k hard cap can evict them oldest-first
+before that. The local relay IS the offline mailbox (IndexedDB replay serves
+mail before any relay answers), so this is exactly "my local emails vanish" —
+and it explains why a just-received message is present while one from hours/days
+ago is not. (The observed "2 hours" is downstream of this plus refetch/relay
+timing; the deterministic defect is the missing protection.)
+
+### Is a relay-side delete triggered by pruning? No.
+
+Traced every `EventDB.onChange` listener: `RelayCore` acts only on `add`/`reset`
+(no network); `Persistence` writes the removal to the local StorageAdapter;
+`RelayService` calls `outbox.remove(id)` (drops pending outbound debt). Nothing
+publishes a kind-5 deletion. Only the explicit user delete
+(`lib/nostr/delete.ts` `publishGiftwrapDeletion`, two NIP-09 events) deletes
+upstream. Prune is local-only: it makes the device forget, never deletes on
+relays.
+
+### What changed
+
+1. **`client/web/src/app/lib/nostr/prunePolicy.ts` (new).**
+   `mailPrunePolicy()` starts from `defaultPrunePolicy()` and adds
+   `KIND_GIFTWRAP` (1059), `KIND_MAIL_META` (34578, read/archived/trashed state)
+   and `KIND_SETTINGS` (30078) to `protectedKinds`. Docstring states the
+   local-only invariant and that the durable fix belongs upstream.
+2. **`relay.worker.ts`** passes it as `persistence: { prunePolicy:
+   mailPrunePolicy() }` — the supported `RelayServiceOptions` seam.
+3. **`prunePolicy.ts.test`** — asserts the package default does NOT protect
+   these (so the test fails if upstream fixes it and the override becomes
+   redundant), that the mail kinds are protected, that no existing protected kind
+   is lost, and that TTLs/cap are otherwise unchanged.
+
+This is a client-side override of an upstream default; the proper fix is in
+`common-packages/packages/local-relay` `defaultPrunePolicy` (or an opt-in), and
+that should be raised separately.
+
+### Verification (exact)
+
+- Package behavior, Node: an 8-month-old kind-1059 event with the base policy
+  `prune()` → removed=1, gone; with `mailPrunePolicy()` → removed=0, still
+  stored.
+- Standalone local-relay (0.6.2) against live relays with the app's exact three
+  inbox filters: 422 wraps fetched; a second worker over the same storage
+  cold-replayed all 422 before any upstream answer and after an immediate
+  observe-before-hydration — so fetch/cold-replay themselves are sound and the
+  prune is the actionable defect.
+- `pnpm --filter mailstr-web test` — 39 files / 316 tests passed.
+- `pnpm --filter mailstr-web lint` — 0 errors.
+- `pnpm --filter mailstr-web build` — ok (`NODE_OPTIONS=--experimental-strip-types`
+  for the pre-existing prerender/Node 22.17 issue). Built
+  `dist/assets/relay.worker-*.js` adds 1059/34578/30078 to the protected set.
+
+### Open items
+
+- Push the protection upstream (`@formstr/local-relay`): either protect 1059 by
+  default or expose per-host kind protection; nail's override is a stopgap.
+- `KIND_MAIL_META` protects kind-34578 *events* by kind — but the store also
+  holds every other addressable app's 34578s, so this over-protects. Acceptable
+  for now (small; correctness over memory), revisit with a kind+namespace rule.
+
+## 2026-09-19 — nginx proxy for mail discovery; live end-to-end probe
+
+Context consulted (rule 15): the 2026-09-17 send-wrap-API entry, its open item
+"Wire nginx to proxy `/.well-known/nostr-mail.json` → `/api/mails/discovery`",
+and the prerendered/nginx vhost entry, per the last-3 rule.
+
+### What changed
+
+1. **`~/Dev/formstr/nginx-prod/sites-enabled/mailstr.app`** (separate repo
+   `formstr-hq/nginx`, branch `fix/mail-discovery-well-known`, commit `091742c`;
+   pushed, PR open). Added a `location = /.well-known/nostr-mail.json` block
+   proxying to `http://127.0.0.1:5000/api/mails/discovery` with open CORS
+   (GET/OPTIONS), mirroring the existing `nostr.json` route. This closes the
+   open item above: previously the well-known URL fell through to the landing
+   `try_files` and returned `200 text/html`, so `fetchMailDiscovery`
+   (`lib/nostr/bridgeSend.ts`) failed to parse it and silently relay-fell-back.
+
+2. No app code changed. The `e2e-nostr` live probe was a one-off, run against
+   prod and then deleted — it is not part of the CI-matched suite.
+
+### Verification (exact)
+
+- `nginx -t` on the edited vhost (nginx:alpine + stub cert): syntax ok.
+- Live before: `https://mailstr.app/.well-known/nostr-mail.json` → 200
+  `text/html` (landing fallback). After deploy: 200
+  `application/json; charset=utf-8`, `access-control-allow-origin: *`,
+  body `{version:1, bridge_pubkey, send_wrap_endpoint, relays}`.
+- Live end-to-end (throwaway key, no mail delivered): fetch discovery via the
+  fixed well-known URL → build a real kind-1301 mail rumor with the shared
+  protocol `buildMailRumor`/`sealAndWrap`, p-tagged to the discovered bridge →
+  NIP-98 sign `POST {wrap}` → `https://api.formstr.app/api/mails/send-wrap` →
+  **202 `{"accepted":true}`** (backend → bridge `/v1/relay` → `handleWrap`).
+  Negative controls: no-auth POST → **401**; kind-1 wrap → **400
+  `wrap must be kind 1059`**. So the API is reached, authed, and gated — not
+  accepting everything.
+
+### Why
+
+Discovery is the preferred road to the bridge (no relay round-trip). The
+well-known proxy makes the documented URL live; the backend fallback remains
+for deploys where this nginx change has not landed. The live probe confirms the
+whole chain (discovery → NIP-98 → backend → bridge ingest) works from a real
+client, not just in unit tests.
+
 ## 2026-09-13 — Frontend audit rev 2; `shared/` deleted; `mobile/` joins the pnpm workspace
 
 Context: docs/Session-Log.md was empty at session start (no prior entries to
