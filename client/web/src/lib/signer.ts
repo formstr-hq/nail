@@ -16,6 +16,7 @@ export const pool = new SimplePool();
 
 // Relays used for the nostrconnect (Remote QR) pairing flow.
 export const NOSTRCONNECT_RELAYS = [
+  "wss://relay.formstr.app",
   "wss://relay.primal.net",
   "wss://nos.lol",
 ];

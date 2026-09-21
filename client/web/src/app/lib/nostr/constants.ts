@@ -27,7 +27,7 @@ export const LABEL_NAMESPACE = 'mail'
 // public set.
 const DEFAULT_RELAYS_RAW: string =
   (import.meta.env.VITE_DEFAULT_RELAYS as string | undefined) ??
-  'wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social'
+  'wss://relay.formstr.app,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social'
 
 export const DEFAULT_RELAYS: string[] = DEFAULT_RELAYS_RAW.split(',')
   .map((r) => r.trim())
