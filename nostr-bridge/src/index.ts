@@ -1,6 +1,6 @@
 import { SimplePool, useWebSocketImplementation } from "nostr-tools/pool";
 import { registerFatalHandlers } from "./fatal.js";
-import { config } from "./config.js";
+import { config, logEffectiveLimits } from "./config.js";
 import { keySigner } from "./protocol/key-signer.js";
 import { publishBridgeIdentity } from "./self-publish.js";
 import { createLmtpServer } from "./lmtp-server.js";
@@ -14,6 +14,11 @@ import { RelayWebSocket } from "./relay-socket.js";
 // First thing, before any listener or socket exists: a crash during start-up
 // must log its cause rather than vanishing into a Docker restart.
 registerFatalHandlers();
+
+// Make the deployment's size policy visible in the first lines: these caps
+// decide which mail is deliverable, they differ per env override, and a 552
+// is otherwise inexplicable from the logs.
+logEffectiveLimits();
 
 useWebSocketImplementation(RelayWebSocket);
 

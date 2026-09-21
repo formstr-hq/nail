@@ -24,6 +24,22 @@ const bridgePrivkey = parsePrivkey("NOSTR_BRIDGE_NSEC");
 // behaviour is skipped. A reliability measure until we run our own relay.
 export const FIXED_RELAY = (process.env.FIXED_RELAY ?? "").trim();
 
+/**
+ * How much larger a kind-1059 wrap event is than the raw message it carries.
+ *
+ * Measured against the deployed relay set: 24.6 KiB raw → 55.1 KiB event,
+ * 32.8 KiB → 77.0 KiB. Two NIP-44 layers, each base64-armored, inflate the
+ * content — and because NIP-44 pads to fixed chunk sizes, the ratio steps
+ * rather than growing smoothly (1.97x-2.70x observed on ASCII mail). 2.4 is
+ * the working figure; non-ASCII mail (multi-byte UTF-8, base64-heavy bodies)
+ * can exceed it, which is why the ceiling is a conservative gate, not an
+ * estimate of the exact event size.
+ */
+const WRAP_INFLATION = 2.4;
+
+/** Largest kind-1059 wrap event the relays will carry — see the config field. */
+const relayMaxEventBytes = Number(process.env.RELAY_MAX_EVENT_BYTES ?? 100 * 1024);
+
 export const config = {
   lmtpPort: Number(process.env.LMTP_PORT ?? 2400),
   // Internal mail-send API (welcome mail, receipts, ...). Disabled unless a key
@@ -43,12 +59,30 @@ export const config = {
   postfixHost: process.env.POSTFIX_HOST ?? "postfix",
   postfixPort: Number(process.env.POSTFIX_PORT ?? 25),
   // Hard cap on an inbound LMTP message the bridge will buffer in memory.
-  // 25 MB mirrors the client's own attachment cap. Messages above it are
-  // rejected with 552 instead of being buffered — an unbounded buffer is how
-  // a huge attachment OOM-kills the process (each message is then parsed and
-  // rebuilt, multiplying peak memory several times over). Raise it only with
-  // the container's memory limit in mind.
-  maxMessageBytes: Number(process.env.MAIL_MAX_BYTES ?? 25 * 1024 * 1024),
+  // Messages above it are rejected with 552 during transfer rather than
+  // buffered. Parsing and rebuilding a message peaks at several times its
+  // size (measured ~5x for attachment mail), so this cap must fit the
+  // container's memory limit alongside node's baseline (~50 MB): with the
+  // stock 128 MB override that means keeping this at 8 MB or less.
+  maxMessageBytes: Number(process.env.MAIL_MAX_BYTES ?? 8 * 1024 * 1024),
+
+  // Largest kind-1059 wrap event the relays will carry. 100 KiB matches
+  // relay.formstr.app's measured content cap (102400 — our own relay, so it
+  // is the one that matters most). nos.lol and relay.nostr.com are stricter
+  // and still answer "event too large" above 65536, so events between the two
+  // land on formstr.app, primal and damus only.
+  relayMaxEventBytes,
+
+  // Largest raw message the bridge will seal and wrap. Derived from the relay
+  // event cap above, because sealing holds the message as several full-size
+  // copies: two NIP-44 layers, each base64-armored, make the event ~2.4x the
+  // raw mail, and peak memory while sealing is ~150x. Attempting a full wrap
+  // for a large attachment is what OOM-killed the 128 MB container, and the
+  // relays that accept events this size are the minority — so above this the
+  // bridge strips attachments first instead of paying the memory, then a
+  // 451/552 retry, to reach only the permissive relays.
+  maxWrappableMessageBytes: Math.floor(relayMaxEventBytes / WRAP_INFLATION),
+
   blossomServerUrl: process.env.BLOSSOM_SERVER_URL ?? "https://nostr.download",
   bridgeDomain: process.env.BRIDGE_DOMAIN ?? "",
   // Domains this deployment accepts mail for and serves NIP-05 records for.
@@ -83,6 +117,25 @@ export const config = {
 if (config.localDomains.length === 0) {
   throw new Error(
     "Missing required env var: LOCAL_DOMAINS (comma-separated, e.g. mailstr.app)",
+  );
+}
+
+/**
+ * Print the effective size limits at boot.
+ *
+ * These caps silently decide which mail is deliverable, and every one of them
+ * is an env override that may differ between deployments — a 552'd message
+ * looks inexplicable without knowing the numbers in force. Logging them makes
+ * each deployment's actual policy visible in its first lines.
+ */
+export function logEffectiveLimits(): void {
+  const kib = (bytes: number) => `${(bytes / 1024).toFixed(0)} KiB`;
+  console.log(
+    "nostr-bridge: size limits — " +
+      `max inbound message ${kib(config.maxMessageBytes)}, ` +
+      `relay event cap ${kib(config.relayMaxEventBytes)} ` +
+      `(raw-message ceiling ${kib(config.maxWrappableMessageBytes)}; ` +
+      "mail above it is delivered without attachments)",
   );
 }
 

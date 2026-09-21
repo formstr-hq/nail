@@ -1,42 +1,72 @@
 # Session Log
 
-## 2026-09-21 — Inbound attachment mail: retry without attachments instead of bouncing
+## 2026-09-21 — Inbound attachment mail: retry without attachments; OOM crash root-caused on chhotu
 
 Context consulted (rule 15): the 2026-09-20 local-relay prune entry, the
 2026-09-19 nginx/discovery entry, and the 2026-09-19 NIP-42 AUTH entry.
 
-### Crash diagnosis on large-attachment test
+### Root cause of "the server crashes on large attachments" (chhotu, 2026-09-21)
 
-"Server crashed when a large attachment was tested" — two independent
-mechanisms, both unguarded:
+**It is a kernel OOM kill, not an exception.** Debugged live on `chhotu`
+(`srv1112032`). Kernel log at the crash:
 
-1. **Unbounded buffering.** `onData` pushes every chunk into an array and
-   never checks size. A large attachment is buffered in full, then converted
-   to a byte string, then (on the retry path) parsed and rebuilt — peak
-   memory is several multiples of the message. Enough concurrent size and
-   the process is OOM-killed. Docker's `restart: unless-stopped` then brings
-   it back, leaving no cause in the log.
-2. **Unhandled errors with no cause attached.** There were no
-   `uncaughtException`/`unhandledRejection` handlers, so a fatal error
-   printed Node's default one-liner and exited; `void handleWrap(...)`,
-   `ws.send` inside EventEmitter callbacks, and unlistened `error` events on
-   the LMTP/health/send servers could each kill the process. SIGTERM was
-   silently ignored by the default handler.
+```
+MainThread invoked oom-killer: gfp_mask=0xcc0(GFP_KERNEL), order=0
+memory: usage 131072kB, limit 131072kB, failcnt 39365
+Memory cgroup out of memory: Killed process (MainThread)
+  total-vm:9763432kB, anon-rss:126652kB
+```
 
-### What changed (bridge-only)
+`mail-server/docker-compose.override.yml` caps `nostr-bridge` at
+`mem_limit: 128m`; mailcow's postfix accepts up to `message_size_limit =
+104857600` (100 MB). The bridge dies **while building the full NIP-44 wrap**,
+before any relay can reject the event:
 
-**Crash logging / hardening (this revision):**
+- Measured inflation: raw mail → wrap event is **~2.4x** (24.6 KB → 55.1 KB,
+  32.8 KB → 77.0 KB); peak RSS while sealing is far worse — **~150x** the
+  message (0.5 MB mail → +58 MB; 1.3 MB → +205 MB), because the content is
+  held as several full-size strings (byte string → rumor JSON → seal
+  ciphertext → outer ciphertext).
+- Reproduced end-to-end over LMTP from the postfix container:
+  - 1 MB attachment → survived, relays rejected (over their caps), the
+    strip-retry delivered `(without attachments)`.
+  - 10 MB attachment → kernel OOM-killed the bridge mid-transfer
+    (`RestartCount` 1→3, no app-level log possible).
+- Relay caps measured directly, and they are **not uniform**:
+
+  | event size | formstr.app | nos.lol / nostr.com | primal | damus |
+  |---|---|---|---|---|
+  | 64 KiB | reject | reject | accept | accept |
+  | 100 KiB | reject | reject | accept | accept |
+  | 256 KiB | reject | reject | accept | reject |
+  | 512 KiB | reject | reject | reject | accept |
+
+  So the size cap **was already active implicitly**: relays rejected the
+  event, `publishMail` counts success as *any* relay accepting, and mail in
+  the 100-256 KiB event band (≈42-107 KiB raw) previously "delivered" on
+  `relay.primal.net` alone — visible only to recipients whose read set
+  includes it, and with no signal to the sender either way. Above that, the
+  wrap either bounced (451, retried forever) or OOM-killed the process
+  mid-seal. The explicit gate replaces that with a deliberate, logged
+  decision and a 552 when nothing can be done; it is stricter than the old
+  best-effort band, which is the point — "accepted by one relay" was never a
+  delivery guarantee.
+
+`Fatal` handlers cannot catch this: SIGKILL gives the process no chance to
+log. The fix has to be **not doing the work**, which is what the size gate
+below does.
+
+### Crash logging / hardening
 
 - `fatal.ts` (new) — `registerFatalHandlers()` (called first in `index.ts`)
   logs `FATAL uncaught exception` / `FATAL unhandled rejection` with
   name/message/stack and exits 1; logs every `exit` with its code and a
   `fatal` label when a handler is the cause; logs SIGTERM/SIGINT and shuts
-  down cleanly. Idempotent.
-- `lmtp-server.ts` — `MAX_MESSAGE_BYTES` guard (`MAIL_MAX_BYTES`, default
-  25 MB, mirroring the client cap): past the cap, buffering stops and the
-  message is rejected with **552** (permanent — 451 would make Postfix
-  re-send the same oversized message forever). Data-stream `error` logged.
-  `index.ts` attaches an LMTP server `error` listener.
+  down cleanly. Idempotent. (Useful for the exception class of crash; an OOM
+  SIGKILL remains visible only in `journalctl -k`.)
+- `lmtp-server.ts` — buffer guard (`MAIL_MAX_BYTES`, now default **8 MB**):
+  past the cap, buffering stops and the message gets **552** (permanent —
+  451 would make Postfix re-send it forever). Data-stream `error` logged.
 - `nostr-publisher.ts` — `ws.send` is wrapped (sending on a CONNECTING
   socket throws synchronously inside an EventEmitter callback), and auth
   sends are wrapped too.
@@ -44,10 +74,45 @@ mechanisms, both unguarded:
   wrap cannot become an unhandled rejection.
 - `health-server.ts` / `index.ts` — `error` listeners on the health and
   send-API servers.
-- `docker-compose.bridge.yml` — `MAIL_MAX_BYTES` env with a comment tying
-  it to container memory.
 
-**Attachment retry (earlier revision, unchanged):**
+### The OOM fix (size gate)
+
+- `config.ts` — `relayMaxEventBytes` (`RELAY_MAX_EVENT_BYTES`, default
+  102400 = 100 KiB, matching relay.formstr.app's measured content cap).
+- `lmtp-server.ts` — `MAX_WRAPPABLE_MESSAGE_BYTES = relayMaxEventBytes /
+  WRAP_INFLATION` (~42 KB at defaults). A message over it **skips the full
+  publish entirely** and goes straight to the strip path; nothing over it can
+  fit a relay-accepted wrap anyway. If stripping cannot bring it under (or
+  there is nothing to strip — a huge plain-text body), the message is
+  **552'd** as permanently undeliverable rather than retried forever.
+- `docker-compose.bridge.yml` — `MAIL_MAX_BYTES` default 8 MB (safe in the
+  128 MB override: strip-path peak measured ~message + 60 MB) and
+  `RELAY_MAX_EVENT_BYTES` default 102400 (100 KiB).
+- `config.ts` — `logEffectiveLimits()`, called first in `index.ts`: prints
+  `max inbound message`, `relay event cap` and the derived `raw-message
+  ceiling` in KiB, plus what happens above the ceiling. These caps decide
+  deliverability, are env-overridable, and a 552 is otherwise inexplicable
+  from the logs.
+
+**On the ~42 KiB raw-message ceiling (answer to "is 100 KiB enough?"):**
+
+The 100 KiB is an *event* cap; the raw-mail ceiling it implies is ~42 KiB
+(100 KiB / 2.4). It is enough for most mail — plain-text bodies, transactional
+mail, headers, and small inline images routinely sit far below it — but it is
+not a comfortable margin for rich HTML newsletters, and it is worse for
+non-ASCII: NIP-44 pads to fixed chunk sizes, so where the 2.4 figure is
+derived from ASCII measurements (ratios measured 1.97-2.70 depending on where
+the content lands against a padding chunk), multi-byte UTF-8 and base64-heavy
+bodies measure ~5.3x, dropping the effective ceiling to ~19 KiB. The gate
+therefore sits below the event cap for some content classes: it is a
+conservative *skip* threshold, not a promise the resulting event just fits.
+The cap **was already active implicitly** — relays rejected oversized events
+and the bridge bounced (451, retried forever) or OOM-crashed while sealing.
+What changes is that the decision is now explicit, logged at boot and per
+message, with a 552 when nothing can be done instead of an unbounded retry
+or a dead process.
+
+### Attachment retry (unchanged from the earlier revision)
 
 1. **`nostr-bridge/src/stripAttachments.ts` (new).** Parses with `mailparser`,
    rebuilds with `nodemailer`'s `MailComposer` preserving identity/threading
@@ -73,27 +138,38 @@ attachments now *arrives* (body + notice) instead of 451-looping forever.
 
 ### Verification (exact)
 
-- `nostr-bridge`: `npx tsc --noEmit` clean; `npx vitest run` — 13 files / 105
+- `nostr-bridge`: `npx tsc --noEmit` clean; `npx vitest run` — 14 files / 111
   tests passed; `npx tsc -p tsconfig.json` build ok.
+- `config.test.ts` (3): the ceiling is correctly derived from the relay cap;
+  the buffer cap stays within the 128 MB strip-path memory budget (tripwire
+  against raising it carelessly); the boot log names all three numbers.
 - `stripAttachments.test.ts` (8): notice filename/content, header
   preservation, HTML-only bodies, attachment-only bodies (notice becomes the
   body), null for no attachments, null for PGP/MIME, an oversized (>65535 B)
   attachment mail shrinking under the NIP-44 ceiling, and a latin-1 body
   surviving the parse/rebuild without mojibake.
-- `lmtp-server.test.ts` (+2, 2 reworked): the retry test asserts the *second*
-  `publishMail` call carries the notice; the failure test asserts 451 only
-  after both attempts.
+- `lmtp-server.test.ts` (14): the retry test asserts the *second* `publishMail`
+  call carries the notice; the failure test asserts 451 only after both
+  attempts; new — an over-ceiling attachment message triggers exactly one
+  publish and it is the stripped one; a huge plain-text body 552s without any
+  publish; a huge body plus an attachment 552s because the stripped form is
+  still over the ceiling.
 - `fatal.test.ts` (5, child-process driven — the handlers exit the process, so
   they cannot be asserted in-runner): uncaught exception → structured stderr +
   exit 1; unhandled rejection → same; clean exit labeled non-fatal; SIGTERM
   logged; idempotent registration.
 - `lmtp-server.size.test.ts` (2, real `SMTPServer` over a socket, line-based
-  LMTP client): under-cap message delivered; a 10 KB body against a 4 KB cap
-  gets `552 … too large` and `lookupNip05`/`publishMail` are never called —
-  proving the guard rejects before any buffering/parse/publish work.
-- Not run: the Docker compose / OOM path itself (no container runtime in this
-  environment). The memory-ceiling claim rests on the buffer guard, not on an
-  observed OOM.
+  LMTP client): under-cap message delivered; an over-cap body against a 4 KB
+  cap gets `552 … too large` and `lookupNip05`/`publishMail` are never called.
+- Live on chhotu (the diagnosis, not the fix — the size gate had not been
+  deployed at measurement time): kernel OOM kill reproduced with a 10 MB LMTP
+  message (`journalctl -k`: `Killed process (MainThread) anon-rss:126652kB`;
+  `RestartCount` 1→3). 1 MB message survived and delivered via the strip path.
+  Relay caps probed directly (see above).
+- Not yet run: the fixed image deployed. To verify after deploy: send 1 MB and
+  10 MB attachment mail over LMTP to `112@stg.mailstr.app`; expect both to
+  deliver as `(without attachments)` with **no** container restart, and the
+  10 MB case to never reach the full-wrap code path.
 
 ## 2026-09-20 — Local relay pruned kind-1059 mail out of the offline cache
 

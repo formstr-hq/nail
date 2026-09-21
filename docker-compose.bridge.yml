@@ -52,10 +52,18 @@ services:
       - HEALTH_INTERVAL_MS=${HEALTH_INTERVAL_MS:-3600000}
       - HEALTH_TIMEOUT_MS=${HEALTH_TIMEOUT_MS:-30000}
       - HEALTH_PORT=2510
-      # Inbound LMTP message size cap (bytes). Messages above it get 552 —
-      # they are never buffered, so a huge attachment cannot OOM the process.
-      # 25 MB mirrors the client's own attachment cap.
-      - MAIL_MAX_BYTES=${MAIL_MAX_BYTES:-26214400}
+      # Inbound LMTP message size cap (bytes). Messages above it get 552 and
+      # are never buffered or parsed, so a huge attachment cannot OOM the
+      # process. Peak memory on the strip path is ~message + 60 MB, so keep
+      # this small relative to the container's memory limit: 8 MB is safe in
+      # the 128 MB override; raise both together.
+      - MAIL_MAX_BYTES=${MAIL_MAX_BYTES:-8388608}
+      # Largest wrap event the relays will carry. 100 KiB = relay.formstr.app's
+      # measured content cap. Above this the bridge skips the full publish and
+      # strips attachments instead (wrapping inflates content ~2.4x, so this
+      # implies a ~42 KiB raw-message ceiling; nos.lol/relay.nostr.com are
+      # stricter at 64 KiB events).
+      - RELAY_MAX_EVENT_BYTES=${RELAY_MAX_EVENT_BYTES:-102400}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
