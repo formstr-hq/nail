@@ -8,6 +8,10 @@ import type { Email, SenderProof } from '@/app/types/mail'
  * exact content as it arrived, before any RFC 2822 interpretation. Collapsed by
  * default so it never intrudes on normal reading.
  *
+ * Dev-only: it exposes raw event internals, which a shipped app has no reason
+ * to render (the store's opt-in survives upgrades, so this checks the build
+ * target rather than only the preference).
+ *
  * `proof` is passed in rather than read off the email: it is derived at render
  * time (useSenderIdentity) and never stored, so the debug view reports the
  * verdict actually shown to the reader alongside the raw facts.
@@ -15,7 +19,7 @@ import type { Email, SenderProof } from '@/app/types/mail'
 export function DebugPanel({ email, proof }: { email: Email; proof: SenderProof }) {
   const debugPanel = useDevStore((s) => s.debugPanel)
   const [copied, setCopied] = useState(false)
-  if (!debugPanel) return null
+  if (!import.meta.env.DEV || !debugPanel) return null
   const debug = email.debug!
   const json = JSON.stringify(
     { ...debug, senderProof: proof, giftWrapId: email.id },

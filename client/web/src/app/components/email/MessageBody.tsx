@@ -4,14 +4,40 @@ import { usePgpMessage } from '@/app/hooks/usePgpMessage'
 import { setSessionPassphrase } from '@/app/lib/pgp/session'
 import type { Email } from '@/app/types/mail'
 import { buildEmailFrame, hasRemoteContent } from '@/app/lib/mail/emailFrame'
+import { splitPlainLinks } from '@/app/lib/mail/plainLinks'
+import { openExternal } from '@/app/lib/openLink'
 import { Button } from '@/app/components/ui/Button'
 import { PgpSignatureBadge } from './PgpSignatureBadge'
 
-/** Plaintext render used for non-HTML bodies and decrypted PGP text. */
+/**
+ * Plaintext render used for non-HTML bodies and decrypted PGP text.
+ *
+ * URLs become real anchors — plaintext never went through the HTML frame, so
+ * without this a link in a text-only message was inert. They carry
+ * `target="_blank"` to match HTML mail's behavior, and on native the popup is
+ * a no-op, so `openExternal` routes the click to the system browser instead.
+ */
 function PlainBody({ text }: { text: string }) {
   return (
     <pre className="whitespace-pre-wrap break-words font-sans text-[13.5px] leading-relaxed text-foreground">
-      {text}
+      {splitPlainLinks(text).map((segment, i) =>
+        segment.href ? (
+          <a
+            key={i}
+            href={segment.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary underline underline-offset-2"
+            onClick={(e) => {
+              if (openExternal(segment.href!)) e.preventDefault()
+            }}
+          >
+            {segment.text}
+          </a>
+        ) : (
+          segment.text
+        ),
+      )}
     </pre>
   )
 }
@@ -47,20 +73,46 @@ export function MessageBody({ email, senderAddress }: { email: Email; senderAddr
   const frameKey = `${email.id}:${allowRemote}:${dark ? 'd' : 'l'}`
 
   // Size the frame to its own content so the message scrolls with the reading
-  // pane instead of trapping a second scrollbar inside a fixed-height box. This
-  // reads the framed document directly (allow-same-origin), and a ResizeObserver
-  // keeps it in step as images and late layout settle after load.
+  // pane instead of trapping a second scrollbar inside a fixed-height box.
+  //
+  // Observe the BODY, not documentElement: writing the iframe's height resizes
+  // the documentElement (the frame's viewport), so observing it made the
+  // callback re-trigger itself and browsers reported the loop as the uncaught
+  // error "ResizeObserver loop completed with undelivered notifications". The
+  // body box is content-driven, so this fires when the message's own layout
+  // settles (a late image, a webfont) and never on our own height writes.
   function fitToContent(e: React.SyntheticEvent<HTMLIFrameElement>) {
     const iframe = e.currentTarget
     const doc = iframe.contentDocument
     if (!doc) return
+
+    // Native has no popup support (see openLink.ts), so `<base target="_blank">`
+    // is a silent no-op there and HTML links would be dead. The frame runs no
+    // scripts (`allow-scripts` is off), so the click listener has to come from
+    // the parent side — same-origin access is already relied on below. On the
+    // web openExternal declines and the anchor opens its normal tab.
+    doc.addEventListener('click', (event) => {
+      const anchor = (event.target as Element | null)?.closest?.('a[href]')
+      if (anchor && openExternal(anchor.getAttribute('href') ?? '')) event.preventDefault()
+    })
+
+    let lastHeight = -1
     const fit = () => {
-      iframe.style.height = `${doc.documentElement.scrollHeight}px`
+      const next = doc.documentElement.scrollHeight
+      // Sub-pixel layout can otherwise oscillate between two heights forever.
+      if (Math.abs(next - lastHeight) <= 1) return
+      lastHeight = next
+      iframe.style.height = `${next}px`
     }
     fit()
     observerRef.current?.disconnect()
-    observerRef.current = new ResizeObserver(fit)
-    observerRef.current.observe(doc.documentElement)
+    observerRef.current = new ResizeObserver(() => {
+      // Defer the write out of the observer's delivery cycle for the same
+      // reason: resizing synchronously inside the callback is what trips the
+      // loop warning.
+      requestAnimationFrame(fit)
+    })
+    observerRef.current.observe(doc.body)
   }
 
   // The remote-image notice + sized iframe, shared by a plain HTML body and a

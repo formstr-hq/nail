@@ -150,12 +150,14 @@ export function usePgpMessage(
         candidates = withKeyIDs
           .filter(({ keyIDs }) => keyIDs.some((id) => targetKeyIDs.includes(id)))
           .map(({ kp }) => kp)
-        console.debug(
-          '[pgp] message targets key IDs',
-          targetKeyIDs,
-          '-> matching held keys:',
-          candidates.map((k) => k.address),
-        )
+        if (import.meta.env.DEV) {
+          console.debug(
+            '[pgp] message targets key IDs',
+            targetKeyIDs,
+            '-> matching held keys:',
+            candidates.map((k) => k.address),
+          )
+        }
         if (!alive) return
         if (candidates.length === 0) {
           // We know EXACTLY which key this needs, and it isn't one we hold —
@@ -182,7 +184,7 @@ export function usePgpMessage(
           ? getSessionPassphrase(kp.keypairFingerprint) ?? undefined
           : undefined
         if (kp.passphraseProtected && !passphrase) {
-          console.debug('[pgp] key locked, no cached passphrase for', kp.address, kp.keypairFingerprint)
+          if (import.meta.env.DEV) console.debug('[pgp] key locked, no cached passphrase for', kp.address, kp.keypairFingerprint)
           if (lockedFingerprint === null) {
             lockedFingerprint = kp.keypairFingerprint
             lockedAddress = kp.address
@@ -196,18 +198,20 @@ export function usePgpMessage(
             passphrase,
             verificationPublicKeys: senderKey ? [senderKey] : undefined,
           })
-          console.debug('[pgp] decrypted with', kp.keypairFingerprint)
+          if (import.meta.env.DEV) console.debug('[pgp] decrypted with', kp.keypairFingerprint)
           if (alive) setComputed({ emailId: email.id, state: { kind: 'decrypted', ...(await unwrapMimeEnvelope(result.text)), signature: result.signature } })
           return
         } catch (e) {
           const reason = e instanceof Error ? e.message : String(e)
-          console.debug(
-            '[pgp] key attempt failed',
-            kp.keypairFingerprint,
-            'hadCachedPassphrase',
-            kp.passphraseProtected ? !!passphrase : 'n/a',
-            reason,
-          )
+          if (import.meta.env.DEV) {
+            console.debug(
+              '[pgp] key attempt failed',
+              kp.keypairFingerprint,
+              'hadCachedPassphrase',
+              kp.passphraseProtected ? !!passphrase : 'n/a',
+              reason,
+            )
+          }
           // We only reach here having already confirmed (via the PKESK key ID
           // match above) that this key IS the message's target — UNLESS we
           // fell back to trying every key because the target couldn't be
@@ -229,13 +233,15 @@ export function usePgpMessage(
       if (!alive) return
       // Nothing decrypted. If a locked key might have been the right one, ask to
       // unlock it; otherwise the message simply isn't addressed to any key we hold.
-      console.debug(
-        '[pgp] no key decrypted this message; lockedFingerprint =',
-        lockedAddress,
-        lockedFingerprint,
-        'wrongPassphrase',
-        wrongPassphrase,
-      )
+      if (import.meta.env.DEV) {
+        console.debug(
+          '[pgp] no key decrypted this message; lockedFingerprint =',
+          lockedAddress,
+          lockedFingerprint,
+          'wrongPassphrase',
+          wrongPassphrase,
+        )
+      }
       setComputed({
         emailId: email.id,
         state: lockedFingerprint

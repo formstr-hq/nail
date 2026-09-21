@@ -83,9 +83,9 @@ export function useInbox() {
       },
       onFailure: (event, reason) => {
         if (!alive) return
-        console.warn(
-          `[inbox] rejected wrap ${event.id.slice(0, 8)}: ${reason}`,
-        )
+        if (import.meta.env.DEV) {
+          console.warn(`[inbox] rejected wrap ${event.id.slice(0, 8)}: ${reason}`)
+        }
       },
       onPendingChange: (pending) => {
         if (!alive) return

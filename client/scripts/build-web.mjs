@@ -32,6 +32,23 @@ const MAILS_URL = "/mails/index.html";
 // relative to it and index.html references base-prefixed assets.)
 const CLIENT_BASE = "/mails/";
 
+// Production deploy values, pinned.
+//
+// The APK is a shipped product, not a developer preview, so it must never
+// inherit the developer machine's `client/web/.env`. Vite loads `.env` for
+// every build and those values were being baked into the APK — this machine's
+// file points at staging, so the mobile app shipped calling
+// `api.stg.formstr.app` and claiming `@stg.mailstr.app` addresses. Explicit
+// process-env values win over `.env` file entries, so pinning here is what
+// makes the mobile bundle production regardless of local files.
+const PROD_ENV = {
+  VITE_API_BASE_URL: "https://api.formstr.app",
+  VITE_WS_BASE_URL: "wss://api.formstr.app",
+  VITE_API_CANONICAL_BASE_URL: "https://api.formstr.app",
+  VITE_MAIL_DOMAIN: "mailstr.app",
+  VITE_BRIDGE_DOMAIN: "mailstr.app",
+};
+
 function run(cmd, args, cwd, extraEnv = {}) {
   console.log(`\n$ ${cmd} ${args.join(" ")}  (${path.relative(repo, cwd)})`);
   execFileSync(cmd, args, {
@@ -47,6 +64,7 @@ function run(cmd, args, cwd, extraEnv = {}) {
 run("pnpm", ["run", "build"], webDir, {
   CLIENT_BASE_PATH: CLIENT_BASE,
   VITE_MAILS_URL: MAILS_URL,
+  ...PROD_ENV,
 });
 
 // Assemble www/: prerendered pages at the root, and everything the

@@ -14,16 +14,22 @@ const SETTINGS_D_TAG = 'mail-settings'
  * browser extension or a NIP-46 bunker on the far side of a relay), the relay
  * query, and the publish. Only the last two have timeouts, so a signer that
  * never answers leaves the UI on "Saving…" forever with nothing in the console.
+ * Traces are dev-only; a real failure still logs in production.
  */
 async function stage<T>(label: string, fn: () => Promise<T>): Promise<T> {
   const t0 = performance.now()
-  const stall = setTimeout(
-    () => console.warn(`[settings] "${label}" still pending after 5s — the stall is here`),
-    5000,
-  )
+  let stall: ReturnType<typeof setTimeout> | undefined
+  if (import.meta.env.DEV) {
+    stall = setTimeout(
+      () => console.warn(`[settings] "${label}" still pending after 5s — the stall is here`),
+      5000,
+    )
+  }
   try {
     const result = await fn()
-    console.info(`[settings] ${label}: ok in ${Math.round(performance.now() - t0)}ms`)
+    if (import.meta.env.DEV) {
+      console.debug(`[settings] ${label}: ok in ${Math.round(performance.now() - t0)}ms`)
+    }
     return result
   } catch (e) {
     console.error(`[settings] ${label}: FAILED after ${Math.round(performance.now() - t0)}ms`, e)
@@ -122,13 +128,13 @@ export async function saveSettings(
   // so hint the worker toward them; the durable outbox re-delivers to any that
   // don't accept immediately.
   const relays = await stage('fetchDmRelays', () => fetchDmRelays(pubkey))
-  console.info('[settings] publishing to', relays)
+  if (import.meta.env.DEV) console.debug('[settings] publishing to', relays)
 
   const outcomes = await stage('publish', () =>
     getLocalRelay().publish(event, { relays }),
   )
   const accepted = outcomes.filter((o) => o.status === 'accepted').map((o) => o.relay)
-  console.info('[settings] accepted by', accepted)
+  if (import.meta.env.DEV) console.debug('[settings] accepted by', accepted)
 
   if (!accepted.length) {
     const reason = outcomes.find((o) => o.message)?.message ?? 'no relay accepted the event'
@@ -168,7 +174,7 @@ export async function loadSettingsDetailed(
   )
 
   if (!events.length) {
-    console.warn('[settings] no kind-30078 event found on', relays, '— nothing was ever saved')
+    if (import.meta.env.DEV) console.warn('[settings] no kind-30078 event found on', relays, '— nothing was ever saved')
     return { settings: null, eventExists: false }
   }
 

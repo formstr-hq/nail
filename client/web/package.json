@@ -18,6 +18,7 @@
     "@formstr/local-relay": "^0.6.2",
     "@formstr/signer": "^0.3.2",
     "@tailwindcss/typography": "^0.5.19",
+    "linkifyjs": "^4.3.3",
     "lucide-react": "^0.563.0",
     "nostr-signer-capacitor-plugin": "^0.0.5",
     "nostr-tools": "^2.7.0",
