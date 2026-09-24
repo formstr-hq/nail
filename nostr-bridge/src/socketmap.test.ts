@@ -32,7 +32,7 @@ function makeDirectory(managed: string[], opts?: { fail?: boolean }): DomainDire
 }
 
 function options(directory: DomainDirectory): ResponderOptions {
-  return { directory, transportNexthop: TRANSPORT };
+  return { directory, platformDomains: [], transportNexthop: TRANSPORT };
 }
 
 describe("netstring framing", () => {
@@ -114,6 +114,24 @@ describe("answer", () => {
       options(makeDirectory(["acme.com"])),
     );
     expect(reply.kind).toBe("notfound");
+  });
+
+  // unionmap concatenates results from every matching table, so answering for
+  // a domain mailcow's own maps already cover would corrupt the value (e.g. a
+  // doubled transport). Platform domains must get NOTFOUND from us.
+  it("answers NOTFOUND for a platform domain so unionmap does not concatenate", async () => {
+    const opts = {
+      ...options(makeDirectory(["mailstr.app"])),
+      platformDomains: ["mailstr.app"],
+    };
+    for (const mapName of [
+      SOCKETMAP_MAPS.relayDomains,
+      SOCKETMAP_MAPS.relayRecipients,
+      SOCKETMAP_MAPS.transport,
+    ]) {
+      const reply = await answer({ mapName, key: "alice@mailstr.app" }, opts);
+      expect(reply.kind).toBe("notfound");
+    }
   });
 
   // The load-bearing failure policy: an outage must defer, never bounce.

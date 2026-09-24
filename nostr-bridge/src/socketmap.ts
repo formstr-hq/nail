@@ -86,6 +86,13 @@ export const SOCKETMAP_MAPS = {
 export interface ResponderOptions {
   directory: DomainDirectory;
   /**
+   * Domains mailcow's own maps already answer for. The socketmap must NOT
+   * answer for these: `unionmap:` concatenates the results of every matching
+   * table, so a second answer would corrupt the value (e.g. a transport of
+   * "lmtp:...:2400,lmtp:...:2400"). Platform domains are mailcow's job.
+   */
+  platformDomains: string[];
+  /**
    * Value returned for `transport`. The transport the mailcow Postfix should
    * use for tenant domains — LMTP into this bridge, matching the platform
    * domain's route (the bridge is already on the mailcow network).
@@ -107,6 +114,12 @@ export async function answer(
   // transport lookups as bare domains. Normalize once.
   const at = request.key.lastIndexOf("@");
   const domain = (at >= 0 ? request.key.slice(at + 1) : request.key).toLowerCase();
+
+  // Platform domains are served by mailcow's own maps. Answering here too
+  // would concatenate values under unionmap (see ResponderOptions).
+  if (options.platformDomains.includes(domain)) {
+    return { kind: "notfound" };
+  }
 
   let managed: boolean;
   try {

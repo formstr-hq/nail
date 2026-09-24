@@ -83,6 +83,7 @@ if (directory) {
 if (config.socketmapPort > 0 && directory) {
   const socketmapServer = createSocketmapServer({
     directory,
+    platformDomains: config.localDomains,
     transportNexthop: config.transportNexthop,
   });
   socketmapServer.on("error", (err: Error) => {
