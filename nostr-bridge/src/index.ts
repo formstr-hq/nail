@@ -10,6 +10,8 @@ import { startNostrListener, handleWrap } from "./nostr-listener.js";
 import { startHealthServer } from "./health-server.js";
 import { createSendApp } from "./send-service.js";
 import { RelayWebSocket } from "./relay-socket.js";
+import { createSocketmapServer } from "./socketmap.js";
+import { BackendDomainDirectory } from "./domain-directory.js";
 
 // First thing, before any listener or socket exists: a crash during start-up
 // must log its cause rather than vanishing into a Docker restart.
@@ -46,6 +48,45 @@ lmtpServer.listen(config.lmtpPort, () => {
 });
 
 const postfixTransport = createPostfixTransport(config.postfixHost, config.postfixPort);
+
+// Postfix socketmap responder for tenant-domain routing (socketmap.ts). Only
+// started when a port is configured and a directory source exists, so
+// platform-only deployments keep exactly their previous surface.
+if (config.socketmapPort > 0) {
+  const directory = new BackendDomainDirectory({
+    platformDomains: config.localDomains,
+    directoryUrl: config.directoryUrl,
+    directoryKey: config.directoryKey || undefined,
+    ttlMs: config.directoryTtlMs,
+    negativeTtlMs: config.directoryNegativeTtlMs,
+    maxStaleMs: config.directoryMaxStaleMs,
+  });
+  // Warm the cache so the first tenant message is not a cache miss. Failure
+  // is non-fatal: the responder defers (TEMP) until a refresh succeeds.
+  void directory
+    .refresh()
+    .then(() =>
+      console.log("nostr-bridge: domain directory loaded for socketmap"),
+    )
+    .catch((err: Error) =>
+      console.warn(
+        `nostr-bridge: domain directory warm-up failed (will defer until reachable): ${err.message}`,
+      ),
+    );
+
+  const socketmapServer = createSocketmapServer({
+    directory,
+    transportNexthop: config.transportNexthop,
+  });
+  socketmapServer.on("error", (err: Error) => {
+    console.error("nostr-bridge: socketmap server error:", err.message);
+  });
+  socketmapServer.listen(config.socketmapPort, () => {
+    console.log(`nostr-bridge: socketmap listening on ${config.socketmapPort}`);
+  });
+} else {
+  console.log("nostr-bridge: socketmap disabled (SOCKETMAP_PORT unset)");
+}
 
 // Internal mail-send API — only started when a key is configured, so a
 // deployment that never wires it up stays closed rather than open by default.

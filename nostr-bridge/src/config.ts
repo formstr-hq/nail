@@ -58,6 +58,24 @@ export const config = {
   relayCacheTtlMs: Number(process.env.RELAY_CACHE_TTL_MS ?? 3600000),
   postfixHost: process.env.POSTFIX_HOST ?? "postfix",
   postfixPort: Number(process.env.POSTFIX_PORT ?? 25),
+
+  // Postfix socketmap responder for tenant-domain routing (socketmap.ts).
+  // Disabled at 0 so platform-only deployments keep their previous surface.
+  socketmapPort: Number(process.env.SOCKETMAP_PORT ?? 0),
+  // Where the responder learns which tenant domains are active. The backend
+  // exposes this list; the bridge caches it.
+  directoryUrl: process.env.DOMAIN_DIRECTORY_URL ?? "",
+  directoryKey: process.env.DOMAIN_DIRECTORY_KEY ?? "",
+  directoryTtlMs: Number(process.env.DOMAIN_DIRECTORY_TTL_MS ?? 5 * 60 * 1000),
+  directoryNegativeTtlMs: Number(
+    process.env.DOMAIN_DIRECTORY_NEGATIVE_TTL_MS ?? 60 * 1000,
+  ),
+  directoryMaxStaleMs: Number(
+    process.env.DOMAIN_DIRECTORY_MAX_STALE_MS ?? 60 * 1000,
+  ),
+  // The nexthop the socketmap returns for tenant domains. LMTP into this
+  // bridge, matching the platform domain's route.
+  transportNexthop: process.env.TRANSPORT_NEXTHOP ?? "nostr-bridge:2400",
   // Hard cap on an inbound LMTP message the bridge will buffer in memory.
   // Messages above it are rejected with 552 during transfer rather than
   // buffered. Parsing and rebuilding a message peaks at several times its
