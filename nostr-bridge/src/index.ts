@@ -49,31 +49,38 @@ lmtpServer.listen(config.lmtpPort, () => {
 
 const postfixTransport = createPostfixTransport(config.postfixHost, config.postfixPort);
 
-// Postfix socketmap responder for tenant-domain routing (socketmap.ts). Only
-// started when a port is configured and a directory source exists, so
-// platform-only deployments keep exactly their previous surface.
-if (config.socketmapPort > 0) {
-  const directory = new BackendDomainDirectory({
-    platformDomains: config.localDomains,
-    directoryUrl: config.directoryUrl,
-    directoryKey: config.directoryKey || undefined,
-    ttlMs: config.directoryTtlMs,
-    negativeTtlMs: config.directoryNegativeTtlMs,
-    maxStaleMs: config.directoryMaxStaleMs,
-  });
+// Tenant-domain directory: the single source for "is this a managed domain?"
+// on both inbound (socketmap) and outbound (handleWrap) paths. Created only
+// when a directory URL is configured, so platform-only deployments keep
+// exactly their previous behaviour.
+const directory = config.directoryUrl
+  ? new BackendDomainDirectory({
+      platformDomains: config.localDomains,
+      directoryUrl: config.directoryUrl,
+      directoryKey: config.directoryKey || undefined,
+      ttlMs: config.directoryTtlMs,
+      negativeTtlMs: config.directoryNegativeTtlMs,
+      maxStaleMs: config.directoryMaxStaleMs,
+    })
+  : null;
+
+if (directory) {
   // Warm the cache so the first tenant message is not a cache miss. Failure
-  // is non-fatal: the responder defers (TEMP) until a refresh succeeds.
+  // is non-fatal: the socketmap defers (TEMP) and outbound refuses tenant
+  // domains (fail-closed) until a refresh succeeds.
   void directory
     .refresh()
-    .then(() =>
-      console.log("nostr-bridge: domain directory loaded for socketmap"),
-    )
+    .then(() => console.log("nostr-bridge: tenant domain directory loaded"))
     .catch((err: Error) =>
       console.warn(
         `nostr-bridge: domain directory warm-up failed (will defer until reachable): ${err.message}`,
       ),
     );
+}
 
+// Postfix socketmap responder for tenant-domain routing (socketmap.ts). Only
+// started when a port is configured; requires the directory to answer.
+if (config.socketmapPort > 0 && directory) {
   const socketmapServer = createSocketmapServer({
     directory,
     transportNexthop: config.transportNexthop,
@@ -84,6 +91,10 @@ if (config.socketmapPort > 0) {
   socketmapServer.listen(config.socketmapPort, () => {
     console.log(`nostr-bridge: socketmap listening on ${config.socketmapPort}`);
   });
+} else if (config.socketmapPort > 0) {
+  console.warn(
+    "nostr-bridge: socketmap requested but DOMAIN_DIRECTORY_URL is unset — not starting",
+  );
 } else {
   console.log("nostr-bridge: socketmap disabled (SOCKETMAP_PORT unset)");
 }
@@ -99,7 +110,7 @@ if (config.sendApiKey) {
     nip05BaseUrl: config.nip05BaseUrl,
     // Feed injected wraps through the same receive path as the subscription.
     injectWrap: (event) =>
-      handleWrap(pool, config.bridgeRelays, postfixTransport, event),
+      handleWrap(pool, config.bridgeRelays, postfixTransport, event, directory ?? undefined),
   });
   // `app.listen` returns the http.Server, and that is where an `error` (e.g.
   // EADDRINUSE) is emitted — an unhandled one is a process death.
@@ -113,7 +124,7 @@ if (config.sendApiKey) {
   console.log("nostr-bridge: send API disabled (SEND_API_KEY unset)");
 }
 
-startNostrListener(pool, postfixTransport).catch((err) => {
+startNostrListener(pool, postfixTransport, directory ?? undefined).catch((err) => {
   console.error("nostr-bridge: nostr listener failed to start:", err);
   process.exit(1);
 });

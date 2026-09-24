@@ -49,6 +49,11 @@ export const config = {
   bridgePrivkey,
   bridgePubkey: getPublicKey(bridgePrivkey),
   nip05BaseUrl: process.env.NIP05_BASE_URL,
+  // Backend address resolver — the fallback for tenant (workspace) domains,
+  // which have no well-known of their own. Empty disables the fallback, so
+  // platform-only deployments behave as before.
+  nip05ResolverUrl: process.env.NIP05_RESOLVER_URL ?? "",
+  nip05ResolverKey: process.env.NIP05_RESOLVER_KEY ?? "",
   bootstrapRelays: (process.env.BOOTSTRAP_RELAYS ?? "wss://relay.formstr.app,wss://relay.primal.net,wss://nos.lol")
     .split(",")
     .map((s) => s.trim())
