@@ -69,11 +69,12 @@ function MailApp() {
   const { load, settings, loaded: settingsLoaded, eventExists: settingsEventExists } =
     useSettingsStore()
   const { selectedId, setSelected, syncError, setSyncError } = useMailStore()
-  const { ctx, bridgeError, resolving: bridgeResolving, retry: retryBridge } = useResolveContext()
+  const { addresses } = useOwnedAddresses()
+  const { ctx, bridgeError, resolving: bridgeResolving, retry: retryBridge } =
+    useResolveContext(addresses)
   const { status, retry } = useInbox()
   // Keep read/archived/trashed state synced across devices via kind-34578 events.
   const { refresh: refreshMeta } = useMailMeta()
-  const { addresses } = useOwnedAddresses()
   // Every address this account owns — the default npub mailbox, a configured
   // sender address, and any NIP-05 aliases — deduped, case-insensitively,
   // keeping first-seen order (npub mailbox first). Doubles as "everything that

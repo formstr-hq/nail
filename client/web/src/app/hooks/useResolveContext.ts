@@ -9,6 +9,7 @@ import {
   type BridgeProbe,
 } from '@/app/lib/nostr/bridge'
 import { BRIDGE_DOMAIN } from '@/app/lib/nostr/constants'
+import { splitAddress } from '@protocol'
 import { pubkeyToNpub } from '@/app/lib/nostr/giftwrap'
 import type { ResolveContext } from '@/app/lib/mail/resolve'
 
@@ -39,7 +40,15 @@ export interface ResolveContextState {
   retry: () => void
 }
 
-export function useResolveContext(): ResolveContextState {
+/**
+ * @param ownedAddresses The signed-in user's own mail addresses. Their
+ *   domains are added to `localDomains`: a workspace address like
+ *   `alice@acme.com` is served by the same bridge, so a From on it is legal
+ *   for external mail — and a recipient on it is reachable over Nostr, not
+ *   legacy. Without this the composer rejects a perfectly valid workspace
+ *   sender ("not a registered alias") and misroutes workspace recipients.
+ */
+export function useResolveContext(ownedAddresses: string[] = []): ResolveContextState {
   const { account } = useAccountStore()
   const { settings } = useSettingsStore()
   const probes = useBridgeStore((s) => s.probes)
@@ -74,7 +83,14 @@ export function useResolveContext(): ResolveContextState {
   const ownDomain = senderAddress.includes('@')
     ? senderAddress.slice(senderAddress.lastIndexOf('@') + 1)
     : BRIDGE_DOMAIN
-  const localDomains = Array.from(new Set([BRIDGE_DOMAIN, ownDomain]))
+  // Workspace domains the user holds an address on are served by the same
+  // bridge, so they belong in localDomains alongside the platform domain.
+  const ownedDomains = ownedAddresses
+    .map((a) => splitAddress(a)?.domain)
+    .filter((d): d is string => Boolean(d))
+  const localDomains = Array.from(
+    new Set([BRIDGE_DOMAIN, ownDomain, ...ownedDomains]),
+  )
   const bridgePubkey = outboundBridge(probes)
   // Before the first pass lands, probes is empty — that is "still resolving",
   // not "failed", so the composer must not flash an unavailable error.

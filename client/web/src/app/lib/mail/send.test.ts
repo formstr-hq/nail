@@ -163,6 +163,91 @@ describe('buildWraps', () => {
     expect(wraps.length).toBeGreaterThan(0)
   })
 
+  // A workspace (tenant) domain is served by the same bridge, so a From on it
+  // is a legal sender for external mail — provided the address resolves to the
+  // sending key. Before localDomains included owned workspace domains, the
+  // composer rejected this with the "not a registered alias" error.
+  it('accepts a workspace From for external recipients when the domain is served', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/nip-05/resolve')) {
+          return new Response(
+            JSON.stringify({ pubkey: ALICE_PK, address: 'test@hllo.live' }),
+          )
+        }
+        if (url.includes('hllo.live')) {
+          // A tenant domain serves no well-known — that is what sends the
+          // lookup to the resolver.
+          return new Response('', { status: 404 })
+        }
+        // Platform well-known still answers for alice@mailstr.app.
+        return new Response(JSON.stringify({ names: { alice: ALICE_PK } }))
+      }),
+    )
+    const workspaceCtx = { ...CTX, localDomains: ['mailstr.app', 'hllo.live'] }
+    const { wraps, errors } = await buildWraps({
+      ...base,
+      ctx: workspaceCtx,
+      from: { address: 'test@hllo.live' },
+      to: ['b@example.org'],
+    })
+    expect(errors).toEqual([])
+    expect(toBridge(wraps)).toHaveLength(1)
+  })
+
+  it('still refuses a workspace From the sending key does not own', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/nip-05/resolve')) {
+          return new Response(
+            JSON.stringify({ pubkey: 'f'.repeat(64), address: 'test@hllo.live' }),
+          )
+        }
+        if (url.includes('hllo.live')) return new Response('', { status: 404 })
+        return new Response(JSON.stringify({ names: { alice: ALICE_PK } }))
+      }),
+    )
+    const workspaceCtx = { ...CTX, localDomains: ['mailstr.app', 'hllo.live'] }
+    const { wraps, errors } = await buildWraps({
+      ...base,
+      ctx: workspaceCtx,
+      from: { address: 'test@hllo.live' },
+      to: ['b@example.org'],
+    })
+    expect(wraps).toEqual([])
+    expect(errors[0]).toContain('test@hllo.live')
+  })
+
+  // A workspace recipient is reachable over Nostr (the resolver maps them), so
+  // they must NOT ride the legacy bridge wrap.
+  it('routes a workspace recipient Nostr-direct, not through the bridge', async () => {
+    const bobPk = getPublicKey(generateSecretKey())
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/nip-05/resolve')) {
+          return new Response(JSON.stringify({ pubkey: bobPk, address: 'bob@hllo.live' }))
+        }
+        if (url.includes('hllo.live')) return new Response('', { status: 404 })
+        return new Response(JSON.stringify({ names: { alice: ALICE_PK } }))
+      }),
+    )
+    const workspaceCtx = { ...CTX, localDomains: ['mailstr.app', 'hllo.live'] }
+    const { wraps, errors } = await buildWraps({
+      ...base,
+      ctx: workspaceCtx,
+      from: { address: 'alice@mailstr.app' },
+      to: ['bob@hllo.live'],
+    })
+    expect(errors).toEqual([])
+    expect(toBridge(wraps)).toHaveLength(0)
+  })
+
   it('surfaces resolution errors instead of sending', async () => {
     const { wraps, errors } = await buildWraps({ ...base, to: ['ghost@mailstr.app'] })
     expect(errors[0]).toContain('ghost@mailstr.app')
