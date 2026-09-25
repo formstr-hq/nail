@@ -24,7 +24,6 @@ import {
 } from '@/app/lib/api/workspace'
 import { Nip98AuthError } from '@/app/lib/api/addresses'
 import InvoiceQR from '@/components/InvoiceQR'
-import { watchPayment } from '@/app/lib/api/payment'
 
 /**
  * The Workspace pane: run your own mail domain on this bridge.
