@@ -177,20 +177,64 @@ describe("socketmap server", () => {
   async function ask(mapName: string, key: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const socket = net.connect(port, "127.0.0.1");
-      const chunks: Buffer[] = [];
+      let buffer = Buffer.alloc(0);
       socket.on("connect", () => socket.write(encodeNetstring(`${mapName} ${key}`)));
-      socket.on("data", (c) => chunks.push(c));
-      socket.on("end", () => {
-        const decoded = decodeNetstring(Buffer.concat(chunks));
-        if (!decoded) reject(new Error("no decodable reply"));
-        else resolve(decoded.payload);
+      socket.on("data", (c) => {
+        buffer = Buffer.concat([buffer, c]);
+        const decoded = decodeNetstring(buffer);
+        if (!decoded) return; // reply still arriving
+        socket.end();
+        resolve(decoded.payload);
       });
       socket.on("error", reject);
+      socket.setTimeout(5000, () => {
+        socket.destroy();
+        reject(new Error("timed out waiting for a reply"));
+      });
     });
   }
 
   it("answers a managed domain with OK over the wire", async () => {
     await expect(ask("relay_domains", "acme.com")).resolves.toBe("OK acme.com");
+  });
+
+  // Postfix reuses one connection for several lookups (proxymap); replying and
+  // hanging up produced "write after end" on staging.
+  it("serves multiple lookups on one connection", async () => {
+    const replies = await new Promise<string[]>((resolve, reject) => {
+      const socket = net.connect(port, "127.0.0.1");
+      const out: string[] = [];
+      let buffer: Buffer = Buffer.alloc(0);
+      socket.on("connect", () => {
+        socket.write(encodeNetstring("relay_domains acme.com"));
+        socket.write(encodeNetstring("transport acme.com"));
+        socket.write(encodeNetstring("relay_domains nope.tld"));
+      });
+      socket.on("data", (c) => {
+        buffer = Buffer.concat([buffer, c]);
+        let decoded = decodeNetstring(buffer);
+        while (decoded) {
+          buffer = decoded.rest;
+          out.push(decoded.payload);
+          decoded = decodeNetstring(buffer);
+        }
+        if (out.length === 3) {
+          socket.end();
+          resolve(out);
+        }
+      });
+      socket.on("error", reject);
+      socket.setTimeout(5000, () => {
+        socket.destroy();
+        reject(new Error(`only got ${out.length} replies`));
+      });
+    });
+
+    expect(replies).toEqual([
+      "OK acme.com",
+      `OK lmtp:inet:${TRANSPORT}`,
+      "NOTFOUND ",
+    ]);
   });
 
   it("answers an unknown domain with NOTFOUND over the wire", async () => {

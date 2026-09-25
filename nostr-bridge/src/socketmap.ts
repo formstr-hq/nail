@@ -172,26 +172,35 @@ export function createSocketmapServer(options: ResponderOptions): net.Server {
   const server = net.createServer((socket) => {
     let buffer: Buffer = Buffer.alloc(0);
 
+    // The protocol is one request/reply per message, but a client may reuse a
+    // connection for several lookups (Postfix's proxymap does). Loop over all
+    // complete netstrings and keep the connection open until the client closes
+    // it — replying once and hanging up produced "write after end" errors on
+    // staging when a second lookup arrived on the same socket.
+    const handleRequest = async (request: SocketmapRequest): Promise<void> => {
+      const reply = await answer(request, options).catch((err: Error) => {
+        // A throw here is a bug, not a data condition; still defer rather than
+        // bounce, because only the message is at stake.
+        console.error("nostr-bridge: socketmap handler threw:", err.message);
+        return { kind: "temp", reason: "handler error" } as const;
+      });
+      if (socket.writable) socket.write(formatReply(reply));
+    };
+
     socket.on("data", (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
-      const decoded = decodeNetstring(buffer);
-      if (!decoded) return; // wait for the rest
-      buffer = decoded.rest;
 
-      const request = parseRequest(decoded.payload);
-      if (!request) {
-        socket.end(formatReply({ kind: "perm", reason: "malformed request" }));
-        return;
+      let decoded = decodeNetstring(buffer);
+      while (decoded) {
+        buffer = decoded.rest;
+        const request = parseRequest(decoded.payload);
+        if (request) {
+          void handleRequest(request);
+        } else if (socket.writable) {
+          socket.write(formatReply({ kind: "perm", reason: "malformed request" }));
+        }
+        decoded = decodeNetstring(buffer);
       }
-
-      void answer(request, options)
-        .then((reply) => socket.end(formatReply(reply)))
-        .catch((err: Error) => {
-          // A throw here is a bug, not a data condition; still defer rather
-          // than bounce, because only the message is at stake.
-          console.error("nostr-bridge: socketmap handler threw:", err.message);
-          socket.end(formatReply({ kind: "temp", reason: "handler error" }));
-        });
     });
 
     socket.on("error", (err) => {
