@@ -13,6 +13,7 @@ import { Overlay } from '@/app/components/ui/Overlay'
 
 export type { SectionId } from '@/app/components/settings/sections'
 import { AddressesSection } from '@/app/components/settings/sections/AddressesSection'
+import { WorkspaceSection } from '@/app/components/settings/sections/WorkspaceSection'
 import { RelaysSection } from '@/app/components/settings/sections/RelaysSection'
 import { ComposingSection } from '@/app/components/settings/sections/ComposingSection'
 import { AppearanceSection } from '@/app/components/settings/sections/AppearanceSection'
@@ -234,6 +235,8 @@ export function SettingsModal({ onClose, initialSection, onBuyAddress }: Setting
                   onSenderAddressChange={senderDraft.setSenderAddress}
                 />
               )}
+
+              {section === 'workspace' && <WorkspaceSection active={active} />}
 
               {section === 'relays' && <RelaysSection relays={relays} onChange={setRelays} />}
 
