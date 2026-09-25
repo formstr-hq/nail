@@ -53,6 +53,10 @@ export interface WorkspaceMember {
   role: 'owner' | 'admin' | 'member'
   status: 'invited' | 'active' | 'revoked'
   nip05_id?: number | null
+  /** The address this member holds, e.g. `alice@acme.com`. */
+  address?: string | null
+  /** Local part only, when an address is held. */
+  local_part?: string | null
   claimed_at?: string | null
 }
 

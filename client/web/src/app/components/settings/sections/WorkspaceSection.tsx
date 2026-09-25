@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { nip19 } from 'nostr-tools'
 import type { ActiveSigner } from '@formstr/signer'
 import { Button } from '@/app/components/ui/Button'
 import { AlertIcon, CheckIcon, PlusIcon } from '@/app/components/ui/icons'
@@ -136,6 +137,21 @@ export function WorkspaceSection({ active }: WorkspaceSectionProps) {
       {current && <DomainDetail active={active} domain={current} onChanged={load} />}
     </>
   )
+}
+
+/** Decode an npub to hex, or accept an already-hex key. Null if neither. */
+function decodePubkey(input: string): string | null {
+  const value = input.trim()
+  if (/^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase()
+  if (value.startsWith('npub1')) {
+    try {
+      const decoded = nip19.decode(value)
+      if (decoded.type === 'npub') return decoded.data as string
+    } catch {
+      return null
+    }
+  }
+  return null
 }
 
 function StatusPill({ status }: { status: WorkspaceDomain['status'] }) {
@@ -387,8 +403,15 @@ function MembersPanel({
     setBusy(true)
     setMessage(null)
     try {
+      // Accept an npub or hex: an admin copying an identity out of a nostr
+      // client will almost always have the npub, and the backend takes hex.
+      const decoded = decodePubkey(pubkey.trim())
+      if (!decoded) {
+        setMessage('That does not look like an npub or a hex pubkey.')
+        return
+      }
       const res = await assignMember(active, domain.domain, {
-        pubkey: pubkey.trim(),
+        pubkey: decoded,
         name: name.trim(),
       })
       setSeats(res.seats)
@@ -434,9 +457,16 @@ function MembersPanel({
               key={m.pubkey}
               className="flex items-center gap-2 rounded-md border border-input px-3 py-2"
             >
-              <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
-                {m.pubkey.slice(0, 16)}…
-              </span>
+              {/* The address is what an admin thinks in; the pubkey is the
+                  identity behind it, shown small for reference. */}
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-mono text-[11px]">
+                  {m.address ?? <span className="text-subtle">no address yet</span>}
+                </div>
+                <div className="truncate font-mono text-[10px] text-subtle">
+                  {m.pubkey.slice(0, 20)}…
+                </div>
+              </div>
               <span className="flex-none text-[10px] uppercase text-subtle">{m.role}</span>
               {m.role !== 'owner' && (
                 <Button
