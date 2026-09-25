@@ -27,6 +27,31 @@ describe('normalizeOwnedAddresses', () => {
     ).toEqual(['abhay@mailstr.app', 'me@example.org'])
   })
 
+  // A workspace address comes back as {nip05:'alice', domain:'acme.com'} from
+  // the backend's get-nip05. Qualifying it with BRIDGE_DOMAIN would turn it
+  // into alice@mailstr.app — a different, wrong address.
+  it('uses the entry domain for a workspace address instead of BRIDGE_DOMAIN', () => {
+    expect(
+      normalizeOwnedAddresses([
+        { nip05: 'alice', domain: 'acme.com' },
+        { nip05: 'bob', domain: 'hllo.live' },
+      ]),
+    ).toEqual(['alice@acme.com', 'bob@hllo.live'])
+  })
+
+  it('still qualifies a domainless entry with BRIDGE_DOMAIN', () => {
+    expect(normalizeOwnedAddresses([{ nip05: 'abhay', domain: null }])).toEqual([
+      'abhay@mailstr.app',
+    ])
+    expect(normalizeOwnedAddresses([{ name: 'abhay' }])).toEqual(['abhay@mailstr.app'])
+  })
+
+  it('prefers an already-qualified nip05 over the domain field', () => {
+    expect(
+      normalizeOwnedAddresses([{ nip05: 'alice@acme.com', domain: 'ignored.com' }]),
+    ).toEqual(['alice@acme.com'])
+  })
+
   it('returns [] for unrecognized shapes', () => {
     expect(normalizeOwnedAddresses(null)).toEqual([])
     expect(normalizeOwnedAddresses(42)).toEqual([])
