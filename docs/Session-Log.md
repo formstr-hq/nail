@@ -1751,3 +1751,32 @@ UI could only display wrong.
   routing was not re-run for the new page — the back handler case is wired but
   only unit-adjacent.
 
+### Staging deployment (same day)
+
+Deployed to staging `srv1112032` (72.61.138.38). Backend source
+`/root/Servers/formstr-backend` (remote `formstr-hq`, branch
+`feat/custom-domains`), client `/root/Clients/nail` (tracks `github`). Canonical
+ngit `origin` could not be pushed from this machine — the ngit remote helper
+hangs at "signing event (git state) with remote signer" (NIP-46 bunker
+approval); nail went to the `formstr-hq` mirror instead. Backend pushed to
+`formstr-hq` (GitHub `origin` now redirects there).
+
+**Migration handling — deliberately not a rollback.** The branch's
+`20260925130000_domain_members.ts` is already recorded in `knex_migrations`
+(batch 8) on staging, and the DB had the *old* table shape. A branch rollback
+would have dropped `verified_at`, `seats_total`/`seats_used` and
+`domain_members` (all in batches 8/9) and taken real workspaces (`rramaa.com`,
+`hllo.live`, `workspace-test`) offline. The change is additive, so only the
+**delta** was applied by hand — `CREATE TABLE domain_member_addresses` +
+backfill from `domain_members.nip05_id` (3 rows) — leaving `knex_migrations`
+untouched (knex now skips the already-recorded migration). A `pg_dump` of
+`domains`, `domain_members`, `nip05`, `knex_migrations` was taken to
+`/root/backups/pre-workspace-addresses-20261005094555.sql` first.
+
+Deploy verified: backend rebuilt + restarted, logs "Migrations completed" and
+"Server running"; `MAIL_HOST=mails.stg.mailstr.app` in effect; `dist` contains
+`p=reject`; the new `DELETE /api/domains/:d/addresses/:id` route answers 401
+(exists, NIP-98 gated); each domain's `seats_used` equals its active address
+count. Client rebuilt and copied to `/var/www/stg.mailstr.app`; bundle
+`App-Ccg2kQVB.js` carries the new strings;
+`https://stg.mailstr.app/mails/workspace` returns 200.
