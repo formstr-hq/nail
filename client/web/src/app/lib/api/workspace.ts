@@ -46,6 +46,17 @@ export interface WorkspaceDomain {
   dns?: DomainDnsRecords
 }
 
+export interface WorkspaceMemberAddress {
+  id: number
+  member_id: number
+  nip05_id: number
+  status: 'active' | 'revoked'
+  /** The address this row holds, e.g. `alice@acme.com`. */
+  address: string | null
+  /** Local part only, when an address is held. */
+  local_part: string | null
+}
+
 export interface WorkspaceMember {
   id: number
   domain_id: number
@@ -53,10 +64,12 @@ export interface WorkspaceMember {
   role: 'owner' | 'admin' | 'member'
   status: 'invited' | 'active' | 'revoked'
   nip05_id?: number | null
-  /** The address this member holds, e.g. `alice@acme.com`. */
+  /** The primary address (legacy single-address shape). */
   address?: string | null
   /** Local part only, when an address is held. */
   local_part?: string | null
+  /** Every address the member holds. A pubkey may hold several. */
+  addresses?: WorkspaceMemberAddress[]
   claimed_at?: string | null
 }
 
@@ -75,10 +88,22 @@ export interface SeatPack {
 
 /** Verification outcome, mirroring the backend's discriminated result. */
 export type VerifyOutcome =
-  | { status: 'verified' }
+  | { status: 'verified'; onboarding?: DomainOnboarding }
   | { status: 'no-token'; expected: string; found: string[] }
   | { status: 'not-found'; expected: string }
   | { status: 'error'; message: string }
+
+/**
+ * What the backend completed when a domain was activated. Verification is
+ * "you control the domain"; onboarding is "the domain can send mail" (bridge
+ * identity + DKIM signing key). Both matter to the owner, so both are shown.
+ */
+export interface DomainOnboarding {
+  bridgeIdentity: 'created' | 'exists' | 'failed'
+  dkim: 'created' | 'exists' | 'unavailable'
+  dkimTxtValue?: string
+  problems: string[]
+}
 
 function boundSigner(active: ActiveSigner): Nip98Signer {
   return {
@@ -239,6 +264,22 @@ export function revokeMember(
   return authed(
     active,
     `/api/domains/${encodeURIComponent(domain)}/members/${encodeURIComponent(pubkey)}`,
+    { method: 'DELETE' },
+  )
+}
+
+/**
+ * Revoke one address from a member, keeping their membership and any other
+ * addresses. Used when a member holds several addresses and only one should go.
+ */
+export function revokeMemberAddress(
+  active: ActiveSigner,
+  domain: string,
+  nip05Id: number,
+): Promise<{ seats: SeatView }> {
+  return authed(
+    active,
+    `/api/domains/${encodeURIComponent(domain)}/addresses/${nip05Id}`,
     { method: 'DELETE' },
   )
 }

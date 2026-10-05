@@ -238,6 +238,14 @@ export const HelpIcon = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
+export const InfoIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="10" />
+    <path d="M12 16v-4" />
+    <path d="M12 8h.01" />
+  </Icon>
+)
+
 /**
  * The Mail by Form* mark for inline use (headers, cards, loading screen).
  *

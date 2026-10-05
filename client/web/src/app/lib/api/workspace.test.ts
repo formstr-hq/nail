@@ -6,6 +6,7 @@ import {
   verifyDomain,
   assignMember,
   revokeMember,
+  revokeMemberAddress,
   createSeatInvoice,
   fetchSeatPacks,
 } from './workspace'
@@ -153,6 +154,16 @@ describe('revokeMember', () => {
     await revokeMember(active, 'acme.com', 'b'.repeat(64))
     const [url, init] = spy.mock.calls[0]
     expect(String(url)).toContain(`/api/domains/acme.com/members/${'b'.repeat(64)}`)
+    expect(init?.method).toBe('DELETE')
+  })
+})
+
+describe('revokeMemberAddress', () => {
+  it('DELETEs the address path by nip05 id', async () => {
+    const spy = mockFetch(() => json({ seats: { total: 5, used: 0, available: 5 } }))
+    await revokeMemberAddress(active, 'acme.com', 42)
+    const [url, init] = spy.mock.calls[0]
+    expect(String(url)).toContain('/api/domains/acme.com/addresses/42')
     expect(init?.method).toBe('DELETE')
   })
 })
