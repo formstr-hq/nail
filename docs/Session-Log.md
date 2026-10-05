@@ -1755,11 +1755,14 @@ UI could only display wrong.
 
 Deployed to staging `srv1112032` (72.61.138.38). Backend source
 `/root/Servers/formstr-backend` (remote `formstr-hq`, branch
-`feat/custom-domains`), client `/root/Clients/nail` (tracks `github`). Canonical
-ngit `origin` could not be pushed from this machine — the ngit remote helper
-hangs at "signing event (git state) with remote signer" (NIP-46 bunker
-approval); nail went to the `formstr-hq` mirror instead. Backend pushed to
-`formstr-hq` (GitHub `origin` now redirects there).
+`feat/custom-domains`), client `/root/Clients/nail` (tracks `github`). Nail was
+pushed to canonical ngit `origin` (branch `feat/custom-domains`, `ff90c6e`):
+the first attempt stalled at "signing event (git state) with remote signer"
+(the NIP-46 bunker needed approval), and the next failed on transient
+state-event relay timeouts; a retry published the state event to 3/14 relays
+and the branch landed. The `formstr-hq` GitHub mirror was used meanwhile and
+also carries `ff90c6e`. Backend pushed to `formstr-hq` (GitHub `origin` now
+redirects there).
 
 **Migration handling — deliberately not a rollback.** The branch's
 `20260925130000_domain_members.ts` is already recorded in `knex_migrations`
