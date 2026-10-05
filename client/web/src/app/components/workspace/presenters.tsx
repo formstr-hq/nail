@@ -1,6 +1,6 @@
-import { Fragment } from 'react'
+import { Fragment, useState } from 'react'
 import type { DomainDnsRecord, DomainStatus } from '@/app/lib/api/workspace'
-import { CheckIcon, ChevronRightIcon, InfoIcon } from '@/app/components/ui/icons'
+import { CheckIcon, ChevronRightIcon, CopyIcon, InfoIcon } from '@/app/components/ui/icons'
 import { DNS_HELP } from './workspaceUi'
 import type { SetupStep } from './workspaceUi'
 
@@ -109,12 +109,55 @@ export function SetupProgress({ steps }: { steps: SetupStep[] }) {
   )
 }
 
+/** Copy-to-clipboard with a brief "Copied" confirmation. */
+export function CopyButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      aria-label={`Copy ${label}`}
+      title={`Copy ${label}`}
+      onClick={() => {
+        void navigator.clipboard
+          ?.writeText(value)
+          .then(() => {
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1500)
+          })
+          .catch(() => {
+            // Clipboard blocked (insecure context / permission). The value is
+            // on screen and selectable; do not pretend it copied.
+          })
+      }}
+      className="flex flex-none items-center gap-1 rounded border border-input px-1.5 py-0.5 text-[10.5px] text-subtle hover:bg-accent hover:text-foreground"
+    >
+      {copied ? <CheckIcon className="h-3 w-3" /> : <CopyIcon className="h-3 w-3" />}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  )
+}
+
+/** One labelled field of a record, with its own copy button. */
+function RecordField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start gap-2 border-t border-input/60 py-1.5 first:border-t-0 first:pt-0 last:pb-0">
+      <span className="w-12 flex-none pt-0.5 text-[10px] uppercase tracking-wide text-subtle">
+        {label}
+      </span>
+      <code className="min-w-0 flex-1 break-all font-mono text-[11px] text-foreground">
+        {value}
+      </code>
+      <CopyButton value={value} label={label.toLowerCase()} />
+    </div>
+  )
+}
+
 /**
- * A DNS record, type first.
+ * A DNS record an owner has to create at their registrar.
  *
- * A DNS provider's form asks for Type before Name/Value, so leading with it
- * removes the mental reordering the old panel forced. The `i` explains what the
- * record is and why it is needed without cluttering the row itself.
+ * Each value carries its own copy button so a non-technical owner never has to
+ * transcribe a long string by hand, and the fields are labelled in the words a
+ * DNS form uses (Type / Name / Value) rather than being raw lines.
  */
 export function DnsRecordRow({
   kind,
@@ -126,22 +169,19 @@ export function DnsRecordRow({
   showHelp?: boolean
 }) {
   const help = DNS_HELP[kind]
+  const value =
+    record.priority != null ? `${record.priority} ${record.value}` : record.value
   return (
-    <div className="rounded-md border border-input bg-muted px-3 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <span className="rounded bg-foreground/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase text-foreground">
-            {record.type}
-          </span>
-          <span className="text-[11px] text-subtle">{help.label}</span>
-        </div>
-        {showHelp && <InfoNote label={help.label} title={help.why} where={help.where} />}
+    <div className="rounded-md border border-input bg-muted px-3 py-2.5">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
+        <span className="text-[12px] font-medium text-foreground">{help.label}</span>
+        {showHelp && (
+          <InfoNote label={help.label} title={help.why} where={help.where} />
+        )}
       </div>
-      <code className="mt-1 block break-all font-mono text-[11px]">{record.name}</code>
-      <code className="mt-0.5 block break-all font-mono text-[11px] text-subtle">
-        {record.priority != null ? `${record.priority} ` : ''}
-        {record.value}
-      </code>
+      <RecordField label="Type" value={record.type} />
+      <RecordField label="Name" value={record.name} />
+      <RecordField label="Value" value={value} />
     </div>
   )
 }
