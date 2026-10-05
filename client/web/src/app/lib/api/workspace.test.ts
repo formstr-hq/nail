@@ -121,6 +121,34 @@ describe('verifyDomain', () => {
       message: 'dns timeout',
     })
   })
+
+  // The backend returns a not-verified verdict as HTTP 400 with a body, not an
+  // error. The client must return that verdict (so the UI can show what DNS
+  // actually has) rather than throwing "Request failed (400)".
+  it('returns the no-token verdict from a 400 body instead of throwing', async () => {
+    mockFetch(() =>
+      json({ status: 'no-token', expected: 'abc', found: ['something-else'] }, 400),
+    )
+    await expect(verifyDomain(active, 'acme.com')).resolves.toEqual({
+      status: 'no-token',
+      expected: 'abc',
+      found: ['something-else'],
+    })
+  })
+
+  it('returns the not-found verdict from a 400 body', async () => {
+    mockFetch(() => json({ status: 'not-found', expected: 'abc' }, 400))
+    await expect(verifyDomain(active, 'acme.com')).resolves.toEqual({
+      status: 'not-found',
+      expected: 'abc',
+    })
+  })
+
+  // A body without a verdict (e.g. 404 "Domain not found") is still an error.
+  it('throws for a non-verdict error body', async () => {
+    mockFetch(() => json({ error: 'Domain not found' }, 404))
+    await expect(verifyDomain(active, 'acme.com')).rejects.toThrow('Domain not found')
+  })
 })
 
 describe('assignMember', () => {
