@@ -1783,3 +1783,28 @@ Deploy verified: backend rebuilt + restarted, logs "Migrations completed" and
 count. Client rebuilt and copied to `/var/www/stg.mailstr.app`; bundle
 `App-Ccg2kQVB.js` carries the new strings;
 `https://stg.mailstr.app/mails/workspace` returns 200.
+
+### Follow-up (same day) — back navigation, domain delete, snackbars
+
+Three issues raised while testing staging:
+
+1. **"How do I get back to the app?"** The Workspace Back button was
+   `md:hidden`, so at desktop width there was no visible way back (only browser
+   history). It is now always visible and labelled "Back to mail".
+2. **No owner delete.** Only the operator route (`restrictToAdmin`) could
+   delete a domain. Added `DELETE /api/domains/:domain` (NIP-98, owner-only):
+   a pending claim deletes outright; an active domain is refused (409) while
+   any member holds an address, so the owner revokes addresses first rather
+   than the server silently dropping their mail. UI: a trash affordance per
+   domain row; a confirm for active domains only.
+3. **"Should the steps be a snackbar?"** No — steps are persistent state, not
+   an event, so they stay the progress rail. Snackbars (`Snackbar.tsx`, 6 s,
+   dismissible) were added for *events*: domain added, verified, removed, seats
+   purchased. Success confirmations moved out of the inline `message` line and
+   into the snackbar; failures stay inline (they should not vanish).
+
+Verified: backend `tsc` clean, `jest` 121; client `tsc`/`eslint` clean, `vitest`
+376, `playwright` 20/20 (the workspace spec now also deletes a pending domain
+and asserts Back returns to `/mails`). Deployed to staging: backend `6843a40`
+rebuilt, delete route answers 401; client `6e82739` bundle `App-zUBuzTkQ.js`
+carries "Back to mail" / "Delete this domain", `/mails/workspace` 200.
