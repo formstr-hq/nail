@@ -1,5 +1,6 @@
+import { Fragment } from 'react'
 import type { DomainDnsRecord, DomainStatus } from '@/app/lib/api/workspace'
-import { CheckIcon, InfoIcon } from '@/app/components/ui/icons'
+import { CheckIcon, ChevronRightIcon, InfoIcon } from '@/app/components/ui/icons'
 import { DNS_HELP } from './workspaceUi'
 import type { SetupStep } from './workspaceUi'
 
@@ -45,43 +46,66 @@ export function VerifyStatus({
   )
 }
 
-/** The setup progress rail: what is done, what is current, what is left. */
+/**
+ * The setup progress as a breadcrumb trail: completed steps, the step you are
+ * on, and what remains, read left-to-right. The current step is emphasised and
+ * carries its detail; the trail shows at a glance how far along the setup is.
+ */
 export function SetupProgress({ steps }: { steps: SetupStep[] }) {
+  const currentIndex = Math.max(
+    0,
+    steps.findIndex((s) => s.state === 'current'),
+  )
+  const current = steps[currentIndex]
+
   return (
-    <ol className="flex flex-col gap-0.5" aria-label="Setup progress">
-      {steps.map((step, i) => {
-        const done = step.state === 'done'
-        const current = step.state === 'current'
-        return (
-          <li key={step.id} className="flex items-start gap-3 py-1.5">
-            <span
-              className={[
-                'mt-px flex h-5 w-5 flex-none items-center justify-center rounded-full border text-[10px] font-semibold',
-                done
-                  ? 'border-emerald-500/40 bg-emerald-500/15 text-emerald-700'
-                  : current
-                    ? 'border-primary bg-primary text-primary-foreground'
-                    : 'border-input bg-muted text-subtle',
-              ].join(' ')}
-              aria-hidden="true"
-            >
-              {done ? <CheckIcon className="h-3 w-3" /> : i + 1}
-            </span>
-            <div className="min-w-0">
-              <div
+    <div>
+      <ol
+        className="flex flex-wrap items-center gap-x-1.5 gap-y-1"
+        aria-label="Setup progress"
+      >
+        {steps.map((step, i) => {
+          const done = step.state === 'done'
+          const isCurrent = step.state === 'current'
+          return (
+            <Fragment key={step.id}>
+              {i > 0 && (
+                <ChevronRightIcon
+                  className="h-3.5 w-3.5 flex-none text-subtle/60"
+                  aria-hidden="true"
+                />
+              )}
+              <li
+                aria-current={isCurrent ? 'step' : undefined}
                 className={[
-                  'text-[12.5px] leading-snug',
-                  current ? 'font-semibold text-foreground' : 'text-foreground',
+                  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] leading-none',
+                  done
+                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700'
+                    : isCurrent
+                      ? 'border-primary bg-primary/10 font-semibold text-foreground'
+                      : 'border-input bg-muted text-subtle',
                 ].join(' ')}
               >
-                {step.title}
-              </div>
-              <div className="text-[11px] leading-relaxed text-subtle">{step.detail}</div>
-            </div>
-          </li>
-        )
-      })}
-    </ol>
+                {done ? (
+                  <CheckIcon className="h-3 w-3 flex-none" />
+                ) : (
+                  <span className="flex h-4 w-4 flex-none items-center justify-center rounded-full border border-current text-[9px] font-semibold">
+                    {i + 1}
+                  </span>
+                )}
+                <span>{step.title}</span>
+              </li>
+            </Fragment>
+          )
+        })}
+      </ol>
+      {current && current.state !== 'done' && (
+        <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
+          <span className="font-medium text-foreground">{current.title}:</span>{' '}
+          {current.detail}
+        </p>
+      )}
+    </div>
   )
 }
 

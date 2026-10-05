@@ -7,8 +7,9 @@ import userEvent from '@testing-library/user-event'
 import { nip19 } from 'nostr-tools'
 import '@/app/components/test-utils'
 import { DnsPanel } from './DnsPanel'
-import { VerifyStatus } from './presenters'
+import { SetupProgress, VerifyStatus } from './presenters'
 import { AddMemberForm, MemberRow } from './members'
+import { buildSteps } from './workspaceUi'
 import type { DomainDnsRecords, WorkspaceMember } from '@/app/lib/api/workspace'
 
 const HEX = 'a'.repeat(64)
@@ -114,6 +115,19 @@ describe('AddMemberForm', () => {
       />,
     )
     expect(screen.getByText(/same key in raw form/i)).toBeInTheDocument()
+  })
+})
+
+describe('SetupProgress', () => {
+  it('renders a breadcrumb trail with the current step emphasised', () => {
+    render(<SetupProgress steps={buildSteps({ active: false, seatsUsed: 0 })} />)
+    const trail = screen.getByRole('list', { name: /setup progress/i })
+    // Every step appears as a crumb, and the current one is marked.
+    expect(within(trail).getByText('Add your domain')).toBeInTheDocument()
+    expect(within(trail).getByText('Publish the DNS records')).toBeInTheDocument()
+    expect(trail.querySelector('[aria-current="step"]')).toHaveTextContent(
+      'Publish the DNS records',
+    )
   })
 })
 

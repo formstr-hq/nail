@@ -399,7 +399,7 @@ function DomainDetail({
 
   return (
     <>
-      <Field label="Setup steps" hint="Follow these in order — each step depends on the last.">
+      <Field label="Setup progress" hint="Where you are in getting mail running on this domain.">
         <SetupProgress steps={steps} />
       </Field>
 
