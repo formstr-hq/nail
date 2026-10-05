@@ -65,7 +65,7 @@ describe('DNS metadata', () => {
     expect(DNS_ORDER.slice(1)).toEqual(MAIL_RECORD_KEYS)
   })
 
-  it('states the DMARC policy is reject, matching what the backend publishes', () => {
-    expect(DNS_HELP.dmarc.why).toMatch(/p=reject/)
+  it('states the DMARC policy rejects fake mail, matching the backend', () => {
+    expect(DNS_HELP.dmarc.why).toMatch(/reject/i)
   })
 })

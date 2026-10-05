@@ -7,13 +7,18 @@ import { DnsRecordRow, VerifyStatus } from './presenters'
 import { MAIL_RECORD_KEYS } from './workspaceUi'
 
 /**
- * The DNS panel.
+ * The DNS panel, written for someone who has never added a DNS record.
  *
- * Verification is the gate: the TXT proof is shown first and the mail records
- * (MX, SPF, DKIM, DMARC) are presented once the domain is active, because
- * before then they would only add noise. The panel still lets an owner reveal
- * them early — a careful setup may publish everything up front — but the
- * default reflects what actually needs doing now.
+ * The shape follows what the owner actually has to do:
+ *
+ *  - **Before verification** (pending): a short "what to do" line, then the one
+ *    record to add (with copy buttons). Nothing else — the mail records do not
+ *    exist yet and would only confuse.
+ *  - **After verification** (active): the proof record is gone (its job is
+ *    done), and the four records that keep mail flowing are shown with a
+ *    one-line explanation each.
+ *
+ * Every value has a copy button so no long string has to be typed by hand.
  */
 export function DnsPanel({
   domain,
@@ -38,68 +43,82 @@ export function DnsPanel({
 }) {
   const active = status === 'active'
   const [revealEarly, setRevealEarly] = useState(false)
-  const showMail = active || revealEarly
 
   return (
-    <Field
-      label={`DNS for ${domain}`}
-      hint={
-        active
-          ? 'Verified. These records keep mail flowing.'
-          : 'Publish the verification record, then verify. Mail records unlock after verification.'
-      }
-    >
+    <Field label="DNS records" hint={`The DNS settings for ${domain}.`}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <VerifyStatus status={status} verifiedAt={verifiedAt} />
-        <span className="text-[10.5px] text-subtle">Records shown as returned by the verifier</span>
+        {active && (
+          <Button size="sm" variant="ghost" onClick={onVerify} disabled={busy}>
+            Re-check
+          </Button>
+        )}
       </div>
 
       {!dns ? (
         <p className="text-[11.5px] text-subtle">{loading ? 'Loading records…' : 'No records.'}</p>
+      ) : active ? (
+        // Verified: the proof record is no longer shown.
+        <div className="flex flex-col gap-3">
+          <p className="text-[12px] leading-relaxed text-muted-foreground">
+            Your domain is verified. Add the records below at your DNS provider
+            (where you bought the domain) so mail can be sent and received.
+          </p>
+          {MAIL_RECORD_KEYS.map((key) => (
+            <DnsRecordRow key={key} kind={key} record={dns[key]} />
+          ))}
+        </div>
       ) : (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-3">
+          <p className="text-[12px] leading-relaxed text-muted-foreground">
+            To prove you own this domain, add <strong>one</strong> DNS record at
+            your provider (where you bought the domain). Copy the three values
+            below into a new record, save it, then press Verify domain. It can
+            take a few minutes to go live.
+          </p>
           <DnsRecordRow kind="verify" record={dns.verify} />
-          {showMail ? (
+
+          {revealEarly ? (
             MAIL_RECORD_KEYS.map((key) => (
               <DnsRecordRow key={key} kind={key} record={dns[key]} />
             ))
           ) : (
             <div className="rounded-md border border-dashed border-input px-3 py-2.5">
               <p className="text-[11px] leading-relaxed text-subtle">
-                {MAIL_RECORD_KEYS.length} mail records (MX, SPF, DKIM, DMARC) appear here once
-                the domain is verified. Publish them then — the DKIM key does not exist
-                until verification generates it.
+                The {MAIL_RECORD_KEYS.length} records that make mail actually
+                work (MX, SPF, DKIM and DMARC) appear here once the domain is
+                verified.
               </p>
               <button
                 type="button"
                 onClick={() => setRevealEarly(true)}
                 className="mt-1.5 text-[11px] text-subtle underline hover:text-foreground"
               >
-                Show mail records anyway
+                Show them now
               </button>
             </div>
           )}
         </div>
       )}
 
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        {!active && (
+      {!active && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <Button size="sm" variant="primary" onClick={onVerify} disabled={busy}>
             <CheckIcon className="h-3.5 w-3.5" /> Verify domain
           </Button>
-        )}
-        <Button size="sm" onClick={onRotate} disabled={busy}>
-          New token
-        </Button>
-        {active && (
-          <Button size="sm" variant="ghost" onClick={onVerify} disabled={busy}>
-            Re-run checks
-          </Button>
-        )}
-      </div>
+          <button
+            type="button"
+            onClick={onRotate}
+            disabled={busy}
+            className="text-[11px] text-subtle underline hover:text-foreground disabled:opacity-50"
+          >
+            I made a mistake — give me a new code
+          </button>
+        </div>
+      )}
 
       {message && (
-        <p className="mt-2 text-[11.5px] text-subtle" role="status">
+        <p className="mt-2 text-[11.5px] text-muted-foreground" role="status">
           {message}
         </p>
       )}

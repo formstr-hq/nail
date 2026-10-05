@@ -58,7 +58,7 @@ describe('DnsPanel', () => {
     renderDns('pending')
     expect(screen.getByText('token-123')).toBeInTheDocument()
     // MX/SPF/DKIM/DMARC are not rendered yet.
-    expect(screen.queryByText('mails.stg.mailstr.app')).not.toBeInTheDocument()
+    expect(screen.queryByText(/mails\.stg\.mailstr\.app/)).not.toBeInTheDocument()
     expect(screen.queryByText(/v=DKIM1/)).not.toBeInTheDocument()
   })
 
@@ -69,22 +69,33 @@ describe('DnsPanel', () => {
     expect(screen.getByText(/v=DMARC1; p=reject/)).toBeInTheDocument()
   })
 
+  // Once proven, the proof record is noise — its job is done.
+  it('drops the verification record once the domain is active', () => {
+    renderDns('active')
+    expect(screen.queryByText('token-123')).not.toBeInTheDocument()
+  })
+
+  // A non-technical owner should never have to transcribe a long value.
+  it('offers a copy button for every record field', () => {
+    renderDns('active')
+    // 4 mail records x (Type, Name, Value) — each field is copyable.
+    expect(screen.getAllByRole('button', { name: /^copy /i }).length).toBe(12)
+  })
+
   it('lets an owner reveal the mail records before verification', async () => {
     const user = userEvent.setup()
     renderDns('pending')
-    await user.click(screen.getByRole('button', { name: /show mail records anyway/i }))
+    await user.click(screen.getByRole('button', { name: /show them now/i }))
     expect(screen.getByText(/v=DKIM1/)).toBeInTheDocument()
   })
 
-  it('shows the record type before name/value and offers an info note', () => {
+  it('labels each record field and offers an info note', () => {
     renderDns('active')
-    // One row per record, each carrying its type label.
-    expect(screen.getAllByText('TXT').length).toBeGreaterThanOrEqual(4)
-    expect(screen.getByText('MX')).toBeInTheDocument()
-    // The info affordance explains why the record is needed.
-    expect(
-      screen.getByLabelText(/about the DMARC policy record/i),
-    ).toBeInTheDocument()
+    // Each record is broken into Type/Name/Value, each its own labelled field.
+    expect(screen.getAllByText('Type').length).toBe(4)
+    expect(screen.getAllByText('MX').length).toBeGreaterThanOrEqual(1)
+    // Each record carries its own info affordance.
+    expect(screen.getAllByLabelText(/about the .* record/i).length).toBe(4)
   })
 })
 

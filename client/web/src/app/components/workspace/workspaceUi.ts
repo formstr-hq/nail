@@ -31,15 +31,15 @@ export function shortPubkey(pubkey: string): string {
 /**
  * Per-record copy for the workspace DNS panel.
  *
- * The UI shows the record *type* first (that is what a DNS provider asks for),
- * with an info affordance explaining what the record is and why it is needed.
+ * Written for someone who has never added a DNS record: a plain name, why it
+ * matters in one sentence, and where it goes in the words a DNS provider uses.
  * Keeping the copy here means the panel stays a presenter and the wording can
  * be unit-tested.
  */
 export interface DnsHelp {
-  /** Human name for the record. */
+  /** Plain-language name for the record. */
   label: string
-  /** One line: what it does. */
+  /** One line: what it does, and what breaks without it. */
   why: string
   /** Where it goes, in DNS-provider terms. */
   where: string
@@ -47,29 +47,29 @@ export interface DnsHelp {
 
 export const DNS_HELP: Record<keyof DomainDnsRecords, DnsHelp> = {
   verify: {
-    label: 'Domain verification',
-    why: 'Proves to us that you control the domain, so nobody else can claim it and receive its mail.',
-    where: 'TXT record at the verification name shown below',
+    label: 'Prove you own this domain',
+    why: 'A one-time code. It proves the domain is yours, so nobody else can claim it and receive its mail.',
+    where: 'Add it as a new TXT record — you will not need it again after verifying.',
   },
   mx: {
-    label: 'Mail server',
-    why: 'Tells the internet which server accepts mail for your domain. Without it, inbound mail has nowhere to go.',
-    where: 'MX record on the domain itself',
+    label: 'Where to deliver your mail',
+    why: 'Tells the rest of the internet which server receives mail for your domain. Without it, incoming mail has nowhere to go.',
+    where: 'Add it as a new MX record on your domain.',
   },
   spf: {
-    label: 'Sender policy',
-    why: 'Authorizes our mail server to send as your domain. Without it, your outbound mail is more likely to be marked as spam.',
-    where: 'TXT record on the domain itself',
+    label: 'Who is allowed to send your mail',
+    why: 'Says our mail server is allowed to send email as your domain. Without it, your outgoing mail is far more likely to land in spam.',
+    where: 'Add it as a new TXT record on your domain.',
   },
   dkim: {
-    label: 'DKIM signature',
-    why: 'A public key that lets recipients cryptographically verify mail sent from your domain. It is generated when your domain is verified.',
-    where: 'TXT record at the DKIM selector shown below',
+    label: 'Your mail signature key',
+    why: 'A public key that lets the people you email cryptographically check that your mail is really from you. We create it when your domain is verified.',
+    where: 'Add it as a new TXT record, using the exact name shown.',
   },
   dmarc: {
-    label: 'DMARC policy',
-    why: 'Tells receivers what to do when a message fails SPF or DKIM. We publish p=reject, so forged mail from your domain is rejected outright.',
-    where: 'TXT record at the _dmarc name shown below',
+    label: 'What to do with fake mail',
+    why: 'Tells email providers what to do with messages pretending to be you. We say reject, so forged mail from your domain is refused.',
+    where: 'Add it as a new TXT record, using the exact name shown.',
   },
 }
 
