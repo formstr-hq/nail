@@ -107,11 +107,13 @@ export function DomainDetail({
       } else if (outcome.status === 'no-token') {
         setMessage(
           outcome.found.length
-            ? `Found a different TXT value: ${outcome.found.join(', ')}`
+            ? `Found a different TXT value: ${outcome.found.join(', ')} (expected ${outcome.expected})`
             : 'No matching TXT record found yet. DNS can take a few minutes.',
         )
       } else if (outcome.status === 'not-found') {
-        setMessage('Record not found yet. If you just added it, wait a moment and retry.')
+        setMessage(
+          `No TXT record found at _mailstr-verify.${domain.domain} yet. DNS can take a few minutes to propagate — if you just added it, wait and retry.`,
+        )
       } else {
         setMessage(outcome.message)
       }

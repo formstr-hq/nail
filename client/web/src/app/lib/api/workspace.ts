@@ -226,9 +226,11 @@ export async function verifyDomain(
     // Fall through to the generic outcome below.
   }
 
-  // 503 from the verify route carries {status:'error', message} — a retryable
-  // verdict. Any other non-OK status is a real error.
-  if (res.status === 503 && body && typeof body === 'object' && 'status' in body) {
+  // The verify route reports the DNS verdict as the response body for its
+  // non-success cases too: 200 verified, 400 no-token/not-found, 503 error.
+  // All carry {status}. Return them as a verdict; only a body without one
+  // (a 404 "not found", a 500, …) is a real error.
+  if (body && typeof body === 'object' && 'status' in body) {
     return body as VerifyOutcome
   }
   if (!res.ok) {
