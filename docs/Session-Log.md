@@ -1854,3 +1854,42 @@ Verified: client `tsc`/`eslint` clean, `vitest` 377, `playwright` 20/20 (the
 workspace spec now opens the Participants tab before assigning). Deployed to
 staging: bundle chain `index-DlDfF3Nm.js` → `App-BUzH5QcN.js`, which carries
 "Participants"; `/mails/workspace` 200.
+
+### Follow-up — verification 400, resolver outage, and a novice-friendly DNS screen
+
+Three things surfaced testing `hllo.live` on staging:
+
+1. **"Request failed (400)" on Verify, with the record correctly published.**
+   The backend returns the verify *verdict* as the HTTP body for its
+   non-success cases too — 400 `no-token`/`not-found`, 503 `error` — but the
+   client only accepted a 503 body and threw a generic error for the rest,
+   hiding what DNS actually had. `verifyDomain` now returns any body carrying
+   `{status}` and only throws for a body without one (a 404/500). `not-found`
+   names the record to look for.
+
+2. **Root cause of the failed check: the host resolver.** The record was
+   published and matched the stored token, but staging's default resolver
+   (`127.0.0.11` → host `systemd-resolved`, servers `153.92.2.6 1.1.1.1
+   8.8.4.4`) returned `ENOTFOUND` — the first two nameservers time out and only
+   1.1.1.1 answers, so the same record resolved on one attempt and not the
+   next. Verification now runs against pinned nameservers
+   (`VERIFY_DNS_SERVERS`, default `1.1.1.1,8.8.8.8,9.9.9.9`) via a
+   `node:dns/promises` `Resolver`. An unusable resolver raises `EAI_AGAIN`,
+   which is reported as retryable (`error`), never as `not-found` — a host
+   outage must not read as "your DNS is wrong". Tenant domains are public, so a
+   public resolver is the correct dependency here.
+
+3. **The DNS screen was confusing for a non-technical owner.** Reworked:
+   - The verification record is **hidden once active** — its job is done.
+   - Every field (Type / Name / Value) has its own **copy button**; no long
+     string is hand-typed.
+   - Plain-language names and explanations ("Where to deliver your mail",
+     "Who is allowed to send your mail", "What to do with fake mail") instead of
+     MX/SPF/DKIM/DMARC jargon, with a step-by-step intro.
+   - "I made a mistake — give me a new code" replaces the bare "New token".
+
+Verified: backend `tsc` clean, `jest` 123 (+2: pinned resolver used by default;
+`EAI_AGAIN` is retryable). Client `tsc`/`eslint` clean, `vitest` 382, e2e 20/20.
+Deployed: backend `d0f4cd7` (resolver fix) — container can resolve the record
+via the pinned resolver; client `9366e6a` bundle `App-pEWHNFv2.js`. `hllo.live`
+is active/verified.
