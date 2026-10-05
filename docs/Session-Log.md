@@ -1808,3 +1808,23 @@ Verified: backend `tsc` clean, `jest` 121; client `tsc`/`eslint` clean, `vitest`
 and asserts Back returns to `/mails`). Deployed to staging: backend `6843a40`
 rebuilt, delete route answers 401; client `6e82739` bundle `App-zUBuzTkQ.js`
 carries "Back to mail" / "Delete this domain", `/mails/workspace` 200.
+
+### Follow-up — MX is computed, not stored; staging workspace DB cleared
+
+Correction to an earlier verbal note: `domains` has **no DNS column**
+(`\d domains` shows only `dns_token`; `buildDnsRecords()` computes MX/SPF/DKIM/
+DMARC per request from `MAIL_HOST`/`MAIL_DOMAIN`). There was therefore never a
+stale MX in our database to refresh. `#11` fixes what the panel *tells* the
+owner to publish; an owner who already published the old (web-host) MX must
+update it at their own registrar — nothing server-side changes, and our DB does
+not reflect their DNS. Consequence for routing: mail to a tenant domain routes
+to whatever MX the domain actually publishes; a wrong MX means senders never
+reach mailcow.
+
+Staging workspace test data cleared for a clean re-test: 4 tenant domains
+(`workspace-test.stg.mailstr.app`, `hllo.live`, `rramaa.com`,
+`hitchhikersguidethroughthemetaverse.info`), their 6 members, 3 member
+addresses, 7 nip05 rows on those domains, and 2 pending seat orders removed in
+one transaction. The platform domain (`stg.mailstr.app`, all 16 nip05 rows
+incl. `_smtp`) is untouched. Backup:
+`/root/backups/pre-clear-workspaces-20261005110054.sql`.
