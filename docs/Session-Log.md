@@ -1627,3 +1627,127 @@ timings and decoded mail ids in the APK.
   under memory pressure. Commands used are recorded above for the next pass.
 - Host-side debug artifacts (the AVD and a static APK host) are not repo
   artifacts; the AVDs were deleted after use.
+
+## 2026-10-05 — Workspace (custom domains): separate page, setup guidance, multi-address members
+
+Context consulted per rule 15: the 2026-09-21 prod-readiness entry, the
+2026-09-21 mail-links entry, and the 2026-09-19 nginx SPA-fallback entry. Work
+on `nail` branch `feat/custom-domains` and the sibling `formstr-backend` branch
+of the same name. Scope was frontend **and** backend (the workspace contract
+lives in the backend).
+
+A batch of user feedback on the Settings → Workspace pane drove this. Most of
+it was UI (ordering, visibility, guidance); three items were backend facts the
+UI could only display wrong.
+
+### What changed — `nail/client/web`
+
+1. **Separate Workspace page.** `Settings → Workspace` is now a launcher; the
+   flow lives at `/mails/workspace` (`components/workspace/WorkspacePage.tsx`),
+   opened from Settings or a new sidebar "Workspace" row. Deep-linkable, and
+   the Android back handler pops it (`App.tsx` `handleBack`, case 0). Files
+   split along seams: `DnsPanel`, `presenters`, `members`, `workspaceUi`
+   (pure helpers + copy), each well under the 300-line target.
+2. **Add-domain first** (it was below the list), and the flow is now a
+   **progress rail** (`SetupProgress`) derived from real state
+   (`buildSteps({active, seatsUsed})`) rather than a stored step index.
+3. **Verification status** is an explicit chip (`VerifyStatus`), not a small
+   uppercase pill.
+4. **DNS record type first, with an `i`.** `DnsRecordRow` leads with the
+   record type (what a DNS provider asks for) and an inline info note explains
+   what each record is and why it is needed. The note is a `<details>` so it
+   works on touch, not only hover.
+5. **Mail records gated behind verification.** Only the verification TXT is
+   shown while `pending`; MX/SPF/DKIM/DMARC appear once active (with a "show
+   anyway" escape hatch for careful setups).
+6. **DKIM was invisible after verifying.** Activation is when the backend
+   *generates* the signing key, so the pre-verification fetch returned a
+   placeholder. `runVerify` now refetches DNS after success, so the live
+   `v=DKIM1; k=rsa; p=…` appears. (Backend also returns `onboarding`; an
+   unavailable DKIM surfaces as a specific message.)
+7. **npub/hex + "Add my identity".** `AddMemberForm` fills the signed-in
+   account's npub in one tap and explains that an npub and its hex are the same
+   key. `decodePubkey` accepts both (moved to `workspaceUi.ts`, unit-tested).
+8. **Multiple addresses per member.** The member row lists every address the
+   identity holds, each individually revocable. Backend change below.
+9. **Seats update after payment.** `MembersPanel` refetches on a `refreshToken`
+   bump, so a completed seat purchase shows the new seats without a page
+   reload. Seat usage is also reported up so the progress rail tracks it.
+
+### What changed — `formstr-backend`
+
+10. **`domain_member_addresses`** (folded into the branch-local
+    `20260925130000_domain_members.ts`; the branch is unmerged, so the original
+    migration is edited rather than adding a new one — rollback + reapply on
+    staging). One row per (member, address); `domain_members.nip05_id` stays
+    the primary address for the legacy join. Assigning a second address to an
+    existing pubkey now appends instead of 409-ing. Per-address seats: a seat
+    is a mailbox, which is what the pricing already implied. New
+    `DELETE /api/domains/:domain/addresses/:nip05Id` revokes one address;
+    recount and orphan-backfill read the address set.
+11. **Reserved names on a tenant's own domain** are allowed (#8): the owner
+    controls the domain and is the one who would be impersonated, so
+    `contact@`/`support@` on *their* domain have no victim. Platform-domain
+    claims still enforce `isReservedName` (purchase routes untouched).
+12. **MX host is `MAIL_HOST`, not `MAIL_DOMAIN`** (#11): the SMTP server
+    (`mails.stg.mailstr.app`) is not the address domain. New env, defaulting to
+    `MAIL_DOMAIN` for back-compat; documented in `.env.example`.
+13. **DMARC `p=reject`** (#12), was `p=none`.
+
+### Verification (exact, at this working tree)
+
+- `formstr-backend`: `npx tsc --noEmit` clean; `npx jest` — 11 suites / 116
+  tests passed (was 110; +6 for reserved-on-own-domain, multi-address,
+  re-activation, single-address revoke, `p=reject`).
+- `nail/client/web` (Node 22.17.0 via nvm; 18.19 lacks a working `crypto` and
+  fails 14 pre-existing tests): `tsc -b` clean; `eslint` 0 errors / 0 warnings;
+  `vitest run` — 45 files / 375 tests passed; `playwright test` — 20/20 passed
+  (new `e2e/app/workspace.spec.ts` drives add → DNS → verify → assign, plus
+  the previously-failing `buy-address.spec.ts` now green); production build
+  (tsc + vite + ssr + prerender) ok with
+  `NODE_OPTIONS=--experimental-strip-types` (the pre-existing Node-22.17
+  prerender issue).
+- New unit tests: `workspaceUi.test.ts` (9 — npub/hex decode, step
+  derivation, DNS copy/order), `workspace/workspace.test.tsx` (8 — status chip,
+  record-type-first, mail-record gating, live DKIM, "Add my identity", multi
+  address row), `workspace.test.ts` (+2 — address revoke endpoint).
+
+### ADR-008: a workspace member may hold several addresses; a seat is an address
+
+- **Status:** accepted (2026-10-05).
+- **Context:** `domain_members` enforced `UNIQUE(domain_id, pubkey)` and one
+  `nip05_id`, so a pubkey could hold exactly one address per domain — while a
+  platform domain lets one account own many aliases. The user hit this directly
+  ("pubkey is already a member"). The constraint was a data-model artefact, not
+  a policy: seats are priced per mailbox, and a person routinely needs several
+  (role address + personal).
+- **Decision:** a new `domain_member_addresses` table holds one row per
+  (member, address); `domain_members.nip05_id` remains the primary address for
+  the list join. Seats are counted over active address rows, so N addresses by
+  one key consume N seats. Address revoke is per-row; member revoke marks all
+  the member's rows revoked.
+- **Consequences:**
+  - The migration is additive to the branch's existing `domain_members`
+    migration (branch unmerged). On any environment that ran the old shape,
+    roll back and reapply — the branch-local table is dropped and recreated
+    with the address set. No production migration path is implied until the
+    branch merges.
+  - `recountSeats` and the orphan backfill read the address set, so the counter
+    and the record can always be reconciled.
+  - The member listing gains `addresses[]`; the client falls back to the legacy
+    single-address shape, so an older backend still renders.
+  - A future per-address role or alias label is a column on this table, not a
+    second membership model.
+
+### Open items / not done
+
+- `MAIL_HOST` must be set per deployment (`mails.mailstr.app` staging,
+  `mail.formstr.app` prod) or the MX record stays on `MAIL_DOMAIN`. The
+  `.env.example` default is a placeholder.
+- #9's migration and the `#8` policy change need explicit approval before
+  deploying anywhere that runs them (rule 14 / backend AGENTS): "deploy this
+  branch" is not approval for the schema edit.
+- The Workspace page is web-verified (e2e + unit); on-device Android click
+  routing was not re-run for the new page — the back handler case is wired but
+  only unit-adjacent.
+

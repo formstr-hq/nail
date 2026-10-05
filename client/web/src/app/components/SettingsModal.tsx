@@ -27,9 +27,16 @@ interface SettingsModalProps {
   initialSection?: SectionId
   /** Open the in-app buy-address modal (from the Addresses pane). */
   onBuyAddress: () => void
+  /** Open the full-page Workspace setup (from the Workspace pane). */
+  onOpenWorkspace: () => void
 }
 
-export function SettingsModal({ onClose, initialSection, onBuyAddress }: SettingsModalProps) {
+export function SettingsModal({
+  onClose,
+  initialSection,
+  onBuyAddress,
+  onOpenWorkspace,
+}: SettingsModalProps) {
   const { account, active } = useAccountStore()
   const { settings, save } = useSettingsStore()
   const { preference, setPreference } = useThemeStore()
@@ -236,7 +243,9 @@ export function SettingsModal({ onClose, initialSection, onBuyAddress }: Setting
                 />
               )}
 
-              {section === 'workspace' && <WorkspaceSection active={active} />}
+              {section === 'workspace' && (
+                <WorkspaceSection active={active} onOpen={onOpenWorkspace} />
+              )}
 
               {section === 'relays' && <RelaysSection relays={relays} onChange={setRelays} />}
 

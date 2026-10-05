@@ -26,6 +26,8 @@ interface SidebarProps {
   onAddAccount: () => void
   /** Open the in-app "buy a new address" flow. */
   onBuyAddress: () => void
+  /** Open the full-page Workspace (custom domain) setup. */
+  onWorkspace: () => void
   /** The account's own addresses, for the per-alias inbox filter. */
   aliases: string[]
   status: InboxStatus
@@ -68,7 +70,7 @@ function RelayState({ status }: { status: InboxStatus }) {
   )
 }
 
-export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onBuyAddress, aliases, status }: SidebarProps) {
+export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onBuyAddress, onWorkspace, aliases, status }: SidebarProps) {
   const { folder, setFolder, emails, mailState, inboxFilter, setInboxFilter } = useMailStore()
   const { account } = useAccountStore()
   // Effective senders, so an unbacked (possibly spoofed) header never files a
@@ -155,6 +157,18 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onB
           >
             <PlusIcon className="h-4 w-4 flex-none text-subtle" />
             <span>Buy a new address</span>
+          </button>
+          <button
+            type="button"
+            onClick={onWorkspace}
+            className={[
+              'flex items-center gap-2 rounded-md border-l-2 border-l-transparent px-3 py-2.5 text-left',
+              'text-[15px] text-muted-foreground transition-colors duration-[120ms]',
+              'hover:bg-accent/60 hover:text-foreground',
+            ].join(' ')}
+          >
+            <AtSignIcon className="h-4 w-4 flex-none text-subtle" />
+            <span>Workspace</span>
           </button>
         </nav>
 

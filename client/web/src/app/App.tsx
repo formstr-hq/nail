@@ -23,6 +23,7 @@ import { EmailList } from '@/app/components/EmailList'
 import { EmailView } from '@/app/components/EmailView'
 import { ComposeModal } from '@/app/components/ComposeModal'
 import { SettingsModal, type SectionId } from '@/app/components/SettingsModal'
+import { WorkspacePage } from '@/app/components/workspace/WorkspacePage'
 import { BuyAddressModal } from '@/app/components/BuyAddressModal'
 import { reloadOwnedAddresses } from '@/app/hooks/useOwnedAddresses'
 
@@ -110,6 +111,11 @@ function MailApp() {
       : "menu"
     : null
   const addingAccount = location.pathname === `${MAIL_APP_PREFIX}/add-account`
+  const workspaceOpen = location.pathname === `${MAIL_APP_PREFIX}/workspace`
+  const openWorkspace = useCallback(
+    () => navigate(`${MAIL_APP_PREFIX}/workspace`),
+    [navigate],
+  )
   // In-app navigations must stay under the app prefix — a bare "/settings"
   // would escape the /mails route and land on the landing catch-all.
   const openSettings = useCallback(
@@ -163,7 +169,12 @@ function MailApp() {
   // the handler only covers the overlays that aren't navigation: the compose
   // window (overlay store) and the open email (store-selected, not a route).
   const handleBack = useCallback((): boolean => {
-    // 0. The buy-address wizard is open → close it (it renders above
+    // 0. The Workspace page is open → return to where it was opened from.
+    if (workspaceOpen) {
+      navigate(-1)
+      return true
+    }
+    // 1. The buy-address wizard is open → close it (it renders above
     //    everything else it can be opened over).
     if (useBuyOverlay.getState().visible) {
       useBuyOverlay.getState().close()
@@ -193,7 +204,7 @@ function MailApp() {
     //    (The WebView's first history entry is the landing page, so popping
     //    history would bounce the user out to the marketing site.)
     return false
-  }, [setSelected, navOpen])
+  }, [setSelected, navOpen, workspaceOpen, navigate])
 
   useEffect(() => {
     const dispose = installAndroidBackHandler(handleBack)
@@ -245,6 +256,7 @@ function MailApp() {
             onOpenRelays={() => openSettings("relays")}
             onAddAccount={() => setAddingAccount(true)}
             onBuyAddress={() => openBuy()}
+            onWorkspace={openWorkspace}
             aliases={selfAddresses}
             status={status}
           />
@@ -275,6 +287,10 @@ function MailApp() {
                 }}
                 onBuyAddress={() => {
                   openBuy()
+                  setNavOpen(false)
+                }}
+                onWorkspace={() => {
+                  openWorkspace()
                   setNavOpen(false)
                 }}
                 aliases={selfAddresses}
@@ -324,7 +340,17 @@ function MailApp() {
           initialSection={settingsSection === "menu" ? undefined : settingsSection}
           onClose={closeSettings}
           onBuyAddress={() => openBuy()}
+          onOpenWorkspace={openWorkspace}
         />
+      )}
+
+      {/* Workspace setup is a full page, opened from the sidebar or Settings.
+          Rendered as a fixed layer over the mail ui so the route is
+          deep-linkable and Android back pops it (see handleBack). */}
+      {workspaceOpen && (
+        <div className="fixed inset-0 z-50 bg-background">
+          <WorkspacePage onBack={() => navigate(-1)} />
+        </div>
       )}
 
       {/* First-run relay setup — shown once per account (the `onboardedAt` flag
