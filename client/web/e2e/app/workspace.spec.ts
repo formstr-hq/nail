@@ -57,25 +57,48 @@ async function stubApp(page: import('@playwright/test').Page) {
     local_part: string
   }[] = []
 
+  const deleted = new Set<string>()
+  const domains = () =>
+    [
+      {
+        id: 1,
+        domain: 'acme.com',
+        owner_pubkey: BRIDGE_PK,
+        status: verified ? 'active' : 'pending',
+        verified_at: verified ? '2026-01-01T00:00:00Z' : null,
+        seats_total: 1,
+        seats_used: memberAddresses.length,
+      },
+      {
+        id: 2,
+        domain: 'typo.example',
+        owner_pubkey: BRIDGE_PK,
+        status: 'pending',
+        verified_at: null,
+        seats_total: 0,
+        seats_used: 0,
+      },
+    ].filter((d) => !deleted.has(d.domain))
+
   await page.route('**/api/domains/mine', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({
-        domains: [
-          {
-            id: 1,
-            domain: 'acme.com',
-            owner_pubkey: BRIDGE_PK,
-            status: verified ? 'active' : 'pending',
-            verified_at: verified ? '2026-01-01T00:00:00Z' : null,
-            seats_total: 1,
-            seats_used: memberAddresses.length,
-          },
-        ],
-      }),
+      body: JSON.stringify({ domains: domains() }),
     }),
   )
+  // A pending domain can be removed; the server refuses when addresses remain.
+  await page.route('**/api/domains/typo.example', (route) => {
+    if (route.request().method() === 'DELETE') {
+      deleted.add('typo.example')
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ deleted: 'typo.example' }),
+      })
+    }
+    return route.fallback()
+  })
   await page.route('**/api/domains/acme.com/dns', (route) =>
     route.fulfill({
       status: 200,
@@ -226,7 +249,7 @@ test('workspace setup: add → DNS → verify → assign addresses', async ({ pa
   // Add first: the add form is at the top, above the domain list.
   const addInput = page.getByLabel('Domain name')
   await expect(addInput).toBeVisible()
-  await expect(page.getByRole('button', { name: /acme\.com/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'acme.com', exact: true })).toBeVisible()
 
   // Status is explicit while pending.
   await expect(page.getByText(/pending verification/i).first()).toBeVisible()
@@ -257,4 +280,15 @@ test('workspace setup: add → DNS → verify → assign addresses', async ({ pa
   await page.getByRole('button', { name: /^assign$/i }).click()
   await expect(page.getByText('sales@acme.com')).toBeVisible()
   await expect(page.getByText('contact@acme.com')).toBeVisible()
+
+  // Delete a pending domain: no confirmation (it routes nothing), a snackbar
+  // confirms, and it leaves the list.
+  await page.getByRole('button', { name: 'Delete typo.example' }).click()
+  await expect(page.getByRole('status')).toContainText(/typo\.example removed/i)
+  await expect(page.getByRole('button', { name: 'Delete typo.example' })).toHaveCount(0)
+
+  // Back to the mail app is reachable at desktop width (not just mobile).
+  await page.getByRole('button', { name: /back to mail/i }).click()
+  await expect(page).toHaveURL(/\/mails$/)
+  await expect(page.getByRole('button', { name: /^write$/i })).toBeVisible()
 })

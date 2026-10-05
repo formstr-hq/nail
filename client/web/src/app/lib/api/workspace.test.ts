@@ -7,6 +7,7 @@ import {
   assignMember,
   revokeMember,
   revokeMemberAddress,
+  removeDomain,
   createSeatInvoice,
   fetchSeatPacks,
 } from './workspace'
@@ -165,6 +166,21 @@ describe('revokeMemberAddress', () => {
     const [url, init] = spy.mock.calls[0]
     expect(String(url)).toContain('/api/domains/acme.com/addresses/42')
     expect(init?.method).toBe('DELETE')
+  })
+})
+
+describe('removeDomain', () => {
+  it('DELETEs the domain and surfaces a refusal message', async () => {
+    const spy = mockFetch(() => json({ deleted: 'acme.com' }))
+    await removeDomain(active, 'acme.com')
+    const [url, init] = spy.mock.calls[0]
+    expect(String(url)).toContain('/api/domains/acme.com')
+    expect(init?.method).toBe('DELETE')
+
+    mockFetch(() => json({ error: 'still has addresses assigned' }, 409))
+    await expect(removeDomain(active, 'acme.com')).rejects.toThrow(
+      'still has addresses assigned',
+    )
   })
 })
 
