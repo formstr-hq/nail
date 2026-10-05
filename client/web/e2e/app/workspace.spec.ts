@@ -265,6 +265,9 @@ test('workspace setup: add → DNS → verify → assign addresses', async ({ pa
   await expect(page.getByText(/v=DMARC1; p=reject/)).toBeVisible()
   await expect(page.getByText(/^Verified/).first()).toBeVisible()
 
+  // Members live on their own tab now.
+  await page.getByRole('tab', { name: /participants/i }).click()
+
   // Members: "Add my identity" fills the npub form of the signed-in key.
   await page.getByRole('button', { name: /add my identity/i }).click()
   await expect(page.getByLabel('Identity pubkey')).toHaveValue(/^npub1/)
