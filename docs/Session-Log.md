@@ -1798,10 +1798,14 @@ Three issues raised while testing staging:
    than the server silently dropping their mail. UI: a trash affordance per
    domain row; a confirm for active domains only.
 3. **"Should the steps be a snackbar?"** No — steps are persistent state, not
-   an event, so they stay the progress rail. Snackbars (`Snackbar.tsx`, 6 s,
-   dismissible) were added for *events*: domain added, verified, removed, seats
-   purchased. Success confirmations moved out of the inline `message` line and
-   into the snackbar; failures stay inline (they should not vanish).
+   an event, so they stay a progress affordance rather than a snackbar.
+   Snackbars (`Snackbar.tsx`, 6 s, dismissible) were added for *events*: domain
+   added, verified, removed, seats purchased. Success confirmations moved out of
+   the inline `message` line and into the snackbar; failures stay inline (they
+   should not vanish). On a later clarification ("I meant breadcrumbs"), the
+   setup progress was rendered as a horizontal **breadcrumb trail** (done /
+   current / remaining, current emphasised with its detail below) instead of the
+   vertical numbered rail.
 
 Verified: backend `tsc` clean, `jest` 121; client `tsc`/`eslint` clean, `vitest`
 376, `playwright` 20/20 (the workspace spec now also deletes a pending domain
