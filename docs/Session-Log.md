@@ -1832,3 +1832,25 @@ addresses, 7 nip05 rows on those domains, and 2 pending seat orders removed in
 one transaction. The platform domain (`stg.mailstr.app`, all 16 nip05 rows
 incl. `_smtp`) is untouched. Backup:
 `/root/backups/pre-clear-workspaces-20261005110054.sql`.
+
+### Follow-up — workspace density: master/detail + tabs
+
+Feedback: one screen held the domain list, progress, DNS records, members and
+billing, which was too dense. Restructured, not just restyled:
+
+- **Master/detail.** Domain management (add / list / delete) is a left column;
+  the selected domain's workspace fills the right.
+- **Per-domain tabs** — `Setup` (progress trail + DNS + verify),
+  `Participants` (members and their addresses), `Billing` (seat top-ups).
+  `role="tablist"`/`role="tab"`/`role="tabpanel"` with `aria-selected`, so it is
+  a real tab widget, not a button row.
+- **Files split along seams** (the old `WorkspacePage.tsx` was 529 lines):
+  `WorkspacePage` (shell, 199), `DomainDetail` (tabs + DNS/verify state, 236),
+  `DomainsPanel` (list + add, 126), `billing` (`SeatsPanel`, 111), `memberRow`
+  (83), `members` (`MembersPanel`/`AddMemberForm`, 249). All under the 300-line
+  target; `presenters`, `DnsPanel`, `Snackbar`, `workspaceUi` unchanged.
+
+Verified: client `tsc`/`eslint` clean, `vitest` 377, `playwright` 20/20 (the
+workspace spec now opens the Participants tab before assigning). Deployed to
+staging: bundle chain `index-DlDfF3Nm.js` → `App-BUzH5QcN.js`, which carries
+"Participants"; `/mails/workspace` 200.
