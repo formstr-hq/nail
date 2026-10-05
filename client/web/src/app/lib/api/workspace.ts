@@ -182,6 +182,17 @@ export function fetchDomainDns(
 }
 
 /**
+ * Remove a domain the account owns. A pending claim deletes outright; an
+ * active domain is refused by the server while it still has assigned
+ * addresses (the caller revokes those first).
+ */
+export function removeDomain(active: ActiveSigner, domain: string): Promise<{ deleted: string }> {
+  return authed(active, `/api/domains/${encodeURIComponent(domain)}`, {
+    method: 'DELETE',
+  })
+}
+
+/**
  * Run DNS verification.
  *
  * The outcome is a *result*, not a failure: "not verified yet" is the normal

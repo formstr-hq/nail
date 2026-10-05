@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { ActiveSigner } from '@formstr/signer'
 import { useAccountStore } from '@/app/store/account'
 import { Button } from '@/app/components/ui/Button'
-import { AlertIcon, BackIcon, CheckIcon, PlusIcon } from '@/app/components/ui/icons'
+import { AlertIcon, BackIcon, CheckIcon, PlusIcon, TrashIcon } from '@/app/components/ui/icons'
 import { Field, inputClass } from '@/app/components/settings/Field'
 import InvoiceQR from '@/components/InvoiceQR'
 import {
@@ -11,6 +11,7 @@ import {
   fetchMyDomains,
   fetchSeatPacks,
   registerDomain,
+  removeDomain,
   rotateDomainToken,
   verifyDomain,
   type DomainDnsRecords,
@@ -24,6 +25,7 @@ import { Nip98AuthError } from '@/app/lib/api/addresses'
 import { DnsPanel } from './DnsPanel'
 import { MembersPanel } from './members'
 import { SetupProgress, VerifyStatus } from './presenters'
+import { Snackbar, type Toast } from './Snackbar'
 import { buildSteps } from './workspaceUi'
 
 /**
@@ -46,6 +48,19 @@ export function WorkspacePage({ onBack }: { onBack: () => void }) {
   const [selected, setSelected] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ message: string; action?: string; onAction?: () => void } | null>(
+    null,
+  )
+
+  const notify = useCallback<Toast>((message, opts) => {
+    setToast({ message, action: opts?.action, onAction: opts?.onAction })
+  }, [])
+
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 6000)
+    return () => clearTimeout(t)
+  }, [toast])
 
   const load = useCallback(async () => {
     if (!active) return
@@ -85,11 +100,34 @@ export function WorkspacePage({ onBack }: { onBack: () => void }) {
 
   const current = domains.find((d) => d.domain === selected) ?? null
 
+  async function handleDelete(d: WorkspaceDomain) {
+    if (!active) return
+    // An active domain takes its addresses offline, so make that explicit. A
+    // pending claim routes nothing and needs no ceremony. The server is the
+    // real guard: it refuses while any address is assigned.
+    if (d.status === 'active') {
+      const ok = window.confirm(
+        `Delete ${d.domain}? This stops mail for the domain. It must have no assigned addresses.`,
+      )
+      if (!ok) return
+    }
+    try {
+      await removeDomain(active, d.domain)
+      notify(
+        d.status === 'active' ? `${d.domain} removed` : `Pending domain ${d.domain} removed`,
+      )
+      if (selected === d.domain) setSelected(null)
+      await load()
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   return (
     <div className="mail-app safe-y flex h-[100dvh] flex-col bg-background text-foreground">
       <header className="flex items-center gap-2 border-b border-border px-3 py-3 md:px-6">
-        <Button size="sm" variant="ghost" onClick={onBack} className="md:hidden">
-          <BackIcon className="h-4 w-4" /> Back
+        <Button size="sm" variant="ghost" onClick={onBack} className="flex-none">
+          <BackIcon className="h-4 w-4" /> Back to mail
         </Button>
         <div className="min-w-0 flex-1">
           <div className="eyebrow">Settings</div>
@@ -112,7 +150,13 @@ export function WorkspacePage({ onBack }: { onBack: () => void }) {
           ) : (
             <>
               {/* 1. Add first — it is the entry point to everything below. */}
-              <AddDomainForm active={active} onAdded={load} />
+              <AddDomainForm
+                active={active}
+                onAdded={async (domain) => {
+                  notify(`${domain} added — publish its DNS record, then verify.`)
+                  await load()
+                }}
+              />
 
               {loading && domains.length === 0 && (
                 <p className="text-[11.5px] text-subtle">Loading your domains…</p>
@@ -139,19 +183,30 @@ export function WorkspacePage({ onBack }: { onBack: () => void }) {
                 <Field label="Your domains">
                   <div className="flex flex-col gap-1">
                     {domains.map((d) => (
-                      <button
+                      <div
                         key={d.domain}
-                        type="button"
-                        onClick={() => setSelected(d.domain)}
-                        className={`flex items-center justify-between rounded-md border px-3 py-2 text-left font-mono text-[11px] ${
-                          d.domain === selected
-                            ? 'border-primary bg-muted'
-                            : 'border-input hover:bg-muted/50'
+                        className={`flex items-center gap-2 rounded-md border px-3 py-2 ${
+                          d.domain === selected ? 'border-primary bg-muted' : 'border-input'
                         }`}
                       >
-                        <span className="min-w-0 truncate">{d.domain}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelected(d.domain)}
+                          className="min-w-0 flex-1 truncate text-left font-mono text-[11px]"
+                        >
+                          {d.domain}
+                        </button>
                         <VerifyStatus status={d.status} />
-                      </button>
+                        <button
+                          type="button"
+                          aria-label={`Delete ${d.domain}`}
+                          title="Delete this domain"
+                          onClick={() => void handleDelete(d)}
+                          className="flex-none text-subtle hover:text-destructive"
+                        >
+                          <TrashIcon className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </Field>
@@ -163,6 +218,7 @@ export function WorkspacePage({ onBack }: { onBack: () => void }) {
                   active={active}
                   domain={current}
                   ownPubkey={account.pubkey}
+                  notify={notify}
                   onChanged={load}
                 />
               )}
@@ -170,6 +226,15 @@ export function WorkspacePage({ onBack }: { onBack: () => void }) {
           )}
         </div>
       </div>
+
+      {toast && (
+        <Snackbar
+          message={toast.message}
+          action={toast.action}
+          onAction={toast.onAction}
+          onDismiss={() => setToast(null)}
+        />
+      )}
     </div>
   )
 }
@@ -180,7 +245,7 @@ function AddDomainForm({
   onAdded,
 }: {
   active: ActiveSigner
-  onAdded: () => Promise<void>
+  onAdded: (domain: string) => Promise<void>
 }) {
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
@@ -194,7 +259,7 @@ function AddDomainForm({
     try {
       await registerDomain(active, domain)
       setValue('')
-      await onAdded()
+      await onAdded(domain)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -233,11 +298,13 @@ function DomainDetail({
   active,
   domain,
   ownPubkey,
+  notify,
   onChanged,
 }: {
   active: ActiveSigner
   domain: WorkspaceDomain
   ownPubkey: string
+  notify: Toast
   onChanged: () => Promise<void>
 }) {
   const [dns, setDns] = useState<DomainDnsRecords | null>(null)
@@ -289,10 +356,10 @@ function DomainDetail({
         // activation, so the value fetched before it was a placeholder. Without
         // this refetch the signature looked missing even on success.
         await loadDns()
-        setMessage(
+        notify(
           outcome.onboarding?.dkim === 'unavailable'
             ? 'Verified — but the DKIM key could not be generated. Mail may fail authentication until it is.'
-            : 'Verified — mail will start routing shortly.',
+            : `${domain.domain} verified — mail will start routing shortly.`,
         )
       } else if (outcome.status === 'no-token') {
         setMessage(
@@ -367,6 +434,7 @@ function DomainDetail({
           // Refresh the domain list (seats_total changed) *and* the member/seat
           // panel, so the new seats are visible immediately.
           setMembersRefresh((n) => n + 1)
+          notify(`Seats added to ${domain.domain}`)
           await onChanged()
         }}
       />
@@ -411,7 +479,6 @@ function SeatsPanel({
 
   async function paid() {
     setInvoice(null)
-    setMessage('Paid — seats added.')
     await onPurchased()
   }
 
