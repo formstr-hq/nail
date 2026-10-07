@@ -43,32 +43,45 @@ export class Nip98AuthError extends Error {
  * runner (see report: none exists in client/ today).
  */
 export function normalizeOwnedAddresses(body: unknown): string[] {
-  const qualify = (addr: string): string =>
-    addr.includes('@') ? addr : `${addr}@${BRIDGE_DOMAIN}`
+  // A workspace address carries its own domain (`{nip05:'alice',
+  // domain:'acme.com'}`); qualifying that with BRIDGE_DOMAIN would invent the
+  // wrong address entirely. Only entries with no domain at all are qualified.
+  const qualify = (addr: string, domain?: unknown): string => {
+    if (addr.includes('@')) return addr
+    if (typeof domain === 'string' && domain.trim()) return `${addr}@${domain}`
+    return `${addr}@${BRIDGE_DOMAIN}`
+  }
 
   if (typeof body === 'string') return [qualify(body)]
 
-  let raw: string[] = []
+  let raw: Array<{ value: string; domain?: unknown }> = []
 
   if (Array.isArray(body)) {
-    raw = body.flatMap((entry): string[] => {
-      if (typeof entry === 'string') return [entry]
+    raw = body.flatMap((entry): Array<{ value: string; domain?: unknown }> => {
+      if (typeof entry === 'string') return [{ value: entry }]
       if (entry && typeof entry === 'object') {
         const obj = entry as Record<string, unknown>
-        if (typeof obj.nip05 === 'string') return [obj.nip05]
-        if (typeof obj.name === 'string') return [obj.name]
+        if (typeof obj.nip05 === 'string') {
+          return [{ value: obj.nip05, domain: obj.domain }]
+        }
+        if (typeof obj.name === 'string') {
+          return [{ value: obj.name, domain: obj.domain }]
+        }
       }
       return []
     })
   } else if (body && typeof body === 'object') {
     const obj = body as Record<string, unknown>
-    if (typeof obj.nip05 === 'string') raw = [obj.nip05]
-    else if (Array.isArray(obj.nip05Addresses)) {
-      raw = obj.nip05Addresses.filter((v): v is string => typeof v === 'string')
+    if (typeof obj.nip05 === 'string') {
+      raw = [{ value: obj.nip05, domain: obj.domain }]
+    } else if (Array.isArray(obj.nip05Addresses)) {
+      raw = obj.nip05Addresses
+        .filter((v): v is string => typeof v === 'string')
+        .map((value) => ({ value }))
     }
   }
 
-  return raw.map(qualify)
+  return raw.map(({ value, domain }) => qualify(value, domain))
 }
 
 /**

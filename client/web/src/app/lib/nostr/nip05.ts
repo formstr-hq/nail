@@ -1,4 +1,5 @@
 import { splitAddress } from '@protocol'
+import { apiUrl } from '@/app/lib/api/config'
 
 /**
  * What the sender-proof derivation knows about an address's NIP-05 record.
@@ -116,6 +117,33 @@ export function peekNip05(address: string): { pubkey: string | null } | null {
 }
 
 /**
+ * The backend resolver, for addresses whose own domain serves no well-known.
+ *
+ * A workspace (tenant) domain has no web presence at all, so the direct probe
+ * above can never succeed for it. The backend already holds those records and
+ * exposes them at `/api/nip-05/resolve` — the same endpoint the bridge uses.
+ *
+ * Returns `undefined` when the fallback could not be consulted (network error,
+ * non-OK status), which callers must treat as "unknown", NOT as "not Nostr".
+ * The distinction matters on the routing path: a negative here sends mail
+ * through the legacy bridge instead of Nostr-direct.
+ */
+async function probeResolver(address: string, timeoutMs: number): Promise<string | null | undefined> {
+  try {
+    const res = await fetch(
+      apiUrl(`/api/nip-05/resolve?address=${encodeURIComponent(address)}`),
+      { signal: AbortSignal.timeout(timeoutMs) },
+    )
+    if (res.status === 404) return null
+    if (!res.ok) return undefined
+    const json = (await res.json()) as { pubkey?: string }
+    return typeof json.pubkey === 'string' ? json.pubkey : null
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Look up an address via NIP-05, bounded and cached.
  *
  * The timeout is fail-safe rather than fail-open: on timeout this resolves to
@@ -125,6 +153,9 @@ export function peekNip05(address: string): { pubkey: string | null } | null {
  * CORS failure, 404 and `{"names":{}}` are all "not Nostr-native here" for
  * routing purposes, so they share a return value — but only negatives get the
  * short TTL, so a transient network blip cannot mark a domain legacy forever.
+ *
+ * When the domain's own well-known does not answer, the backend resolver gets
+ * a turn — that is the only path that works for workspace domains.
  */
 export async function probeNip05(
   address: string,
@@ -146,15 +177,26 @@ export async function probeNip05(
   const query = (async (): Promise<string | null> => {
     await acquireProbeSlot()
     try {
-      const res = await fetch(
-        `https://${parts.domain}/.well-known/nostr.json?name=${encodeURIComponent(parts.localpart)}`,
-        { signal: AbortSignal.timeout(timeoutMs) },
-      )
-      if (!res.ok) return null
-      const json = (await res.json()) as { names?: Record<string, string> }
-      return json.names?.[parts.localpart] ?? null
-    } catch {
-      return null
+      // A domain that serves a usable NIP-05 document is authoritative: a hit
+      // resolves, a miss is a definitive no. Deliberately no resolver call
+      // here — it would leak every typed recipient to our backend, and a
+      // domain that answers does not need it.
+      try {
+        const res = await fetch(
+          `https://${parts.domain}/.well-known/nostr.json?name=${encodeURIComponent(parts.localpart)}`,
+          { signal: AbortSignal.timeout(timeoutMs) },
+        )
+        if (res.ok) {
+          const json = (await res.json()) as { names?: Record<string, string> }
+          return json.names?.[parts.localpart] ?? null
+        }
+      } catch {
+        // Unreachable: fall through to the resolver — this is the tenant case.
+      }
+      // No usable well-known. The backend resolver is the only other source,
+      // and it is the one that knows workspace addresses.
+      const viaResolver = await probeResolver(address, timeoutMs)
+      return viaResolver ?? null
     } finally {
       releaseProbeSlot()
     }

@@ -12,7 +12,7 @@ import {
   KIND_MAIL,
   MAX_RUMOR_AGE_SECONDS,
 } from "./protocol/constants.js";
-import { authorizeSender, selectDeliverTargets } from "./outbound.js";
+import { authorizeSender, selectDeliverTargets, selectDeliverTargetsWithManaged } from "./outbound.js";
 import { createPostfixTransport, injectIntoPostfix } from "./smtp-injector.js";
 
 const bridgeSigner = keySigner(config.bridgePrivkey);
@@ -96,11 +96,22 @@ async function sendBounce(
 // Exported (module scope, not a closure) so it can be tested directly against
 // a stubbed pool/transport, the same pattern lmtp-server.ts uses for
 // handleMessage.
+/**
+ * Optional tenant-domain awareness for the outbound path. When provided, the
+ * bridge relays for managed (workspace) domains in addition to the platform's
+ * own, and refuses to SMTP-relay mail addressed to them (they are reachable
+ * over Nostr, like platform users).
+ */
+export interface ManagedDomainLookup {
+  isManagedDomain(domain: string): Promise<boolean>;
+}
+
 export async function handleWrap(
   pool: SimplePool,
   relays: string[],
   transport: ReturnType<typeof createPostfixTransport>,
   event: Event,
+  managed?: ManagedDomainLookup,
 ): Promise<void> {
   const result = await unwrapAndVerify(event, bridgeSigner, {
     maxAgeSeconds: MAX_RUMOR_AGE_SECONDS,
@@ -150,6 +161,9 @@ export async function handleWrap(
     sealPubkey: seal.pubkey,
     localDomains: config.localDomains,
     nip05BaseUrl: config.nip05BaseUrl,
+    isManagedDomain: managed
+      ? (domain) => managed.isManagedDomain(domain)
+      : undefined,
   });
 
   if (!auth.ok) {
@@ -158,10 +172,13 @@ export async function handleWrap(
     return;
   }
 
-  const { deliver, rejected } = selectDeliverTargets(
-    deliverTargets(rumor),
-    config.localDomains,
-  );
+  const { deliver, rejected } = managed
+    ? await selectDeliverTargetsWithManaged(
+        deliverTargets(rumor),
+        config.localDomains,
+        (domain) => managed.isManagedDomain(domain),
+      )
+    : selectDeliverTargets(deliverTargets(rumor), config.localDomains);
 
   if (rejected.length) {
     console.warn(`nostr-bridge: refused deliver targets: ${rejected.join(", ")}`);
@@ -275,6 +292,7 @@ function startWatchdog(pool: SimplePool, relays: string[]): void {
 export async function startNostrListener(
   pool: SimplePool,
   transport: ReturnType<typeof createPostfixTransport>,
+  managed?: ManagedDomainLookup,
 ): Promise<void> {
   const relays = config.bridgeRelays;
 
@@ -302,7 +320,7 @@ export async function startNostrListener(
         // EventEmitter callback: any throw here would otherwise surface as an
         // unhandled rejection and kill the process. One bad wrap must never
         // stop the bridge from serving the rest of the mailbox.
-        handleWrap(pool, relays, transport, event).catch((err) => {
+        handleWrap(pool, relays, transport, event, managed).catch((err) => {
           console.error(
             `nostr-bridge: handleWrap failed for ${event.id.slice(0, 8)}:`,
             (err as Error).message,

@@ -13,6 +13,11 @@ export type AuthResult =
  * that pubkey. Anything else is refused — including every transient failure,
  * because an unverifiable sender must not be relayed.
  *
+ * `isManagedDomain` extends the domain gate to tenant (workspace) domains:
+ * without it the bridge would only relay for the platform's own domains. It is
+ * optional so platform-only deployments (and the existing tests) behave
+ * exactly as before.
+ *
  * sealPubkey MUST come from the kind-13 seal. rumor.pubkey is attacker-chosen
  * plaintext inside the ciphertext and proves nothing.
  */
@@ -21,11 +26,21 @@ export async function authorizeSender(params: {
   sealPubkey: string;
   localDomains: string[];
   nip05BaseUrl?: string;
+  isManagedDomain?: (domain: string) => Promise<boolean>;
 }): Promise<AuthResult> {
   const parts = splitAddress(params.from);
   if (!parts) return { ok: false, reason: `malformed From address: ${params.from}` };
 
-  if (!params.localDomains.includes(parts.domain)) {
+  let domainServed = params.localDomains.includes(parts.domain);
+  if (!domainServed && params.isManagedDomain) {
+    try {
+      domainServed = await params.isManagedDomain(parts.domain);
+    } catch {
+      // Unknown state must refuse: an unverifiable sender must not be relayed.
+      domainServed = false;
+    }
+  }
+  if (!domainServed) {
     return {
       ok: false,
       reason: `Domain "${parts.domain}" is not served by this bridge`,
@@ -76,4 +91,46 @@ export function selectDeliverTargets(
   }
 
   return { deliver, rejected };
+}
+
+/**
+ * `selectDeliverTargets` with managed (tenant) domains also treated as local.
+ *
+ * A tenant member is reachable directly over Nostr, exactly like a platform
+ * user, so a workspace address must never be relayed through SMTP — doing so
+ * would loop the message back through our own MX. The managed-domain check is
+ * async because it may hit the directory cache; it is resolved once per
+ * distinct domain rather than once per recipient.
+ */
+export async function selectDeliverTargetsWithManaged(
+  targets: string[],
+  localDomains: string[],
+  isManagedDomain: (domain: string) => Promise<boolean>,
+): Promise<{ deliver: string[]; rejected: string[] }> {
+  const domains = new Set<string>();
+  for (const target of targets) {
+    const parts = splitAddress(target);
+    if (parts) domains.add(parts.domain);
+  }
+
+  const managed = new Map<string, boolean>();
+  await Promise.all(
+    Array.from(domains).map(async (domain) => {
+      if (localDomains.includes(domain)) {
+        managed.set(domain, true);
+        return;
+      }
+      try {
+        managed.set(domain, await isManagedDomain(domain));
+      } catch {
+        // Cannot prove it is ours: fall back to "not local", which means the
+        // normal relay path — mail either delivers or bounces downstream,
+        // rather than being silently dropped here.
+        managed.set(domain, false);
+      }
+    }),
+  );
+
+  const local = Array.from(domains).filter((d) => managed.get(d));
+  return selectDeliverTargets(targets, [...localDomains, ...local]);
 }
