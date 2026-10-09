@@ -1,8 +1,7 @@
 import { Fragment, useState } from 'react'
 import type { DomainDnsRecord, DomainStatus } from '@/app/lib/api/workspace'
 import { CheckIcon, ChevronRightIcon, CopyIcon, InfoIcon } from '@/app/components/ui/icons'
-import { DNS_HELP } from './workspaceUi'
-import type { SetupStep } from './workspaceUi'
+import { DNS_HELP, STEP_TAB, WORKSPACE_TABS, type SetupStep, type WorkspaceTab } from './workspaceUi'
 
 /**
  * Workspace presenters. Store wiring, protocol calls and signer calls live in
@@ -48,10 +47,17 @@ export function VerifyStatus({
 
 /**
  * The setup progress as a breadcrumb trail: completed steps, the step you are
- * on, and what remains, read left-to-right. The current step is emphasised and
- * carries its detail; the trail shows at a glance how far along the setup is.
+ * on, and what remains, read left-to-right. It sits above the tabs so the owner
+ * sees the whole path at a glance; clicking a crumb follows it to the tab that
+ * owns that step.
  */
-export function SetupProgress({ steps }: { steps: SetupStep[] }) {
+export function SetupProgress({
+  steps,
+  onGoToStep,
+}: {
+  steps: SetupStep[]
+  onGoToStep?: (tab: WorkspaceTab) => void
+}) {
   const currentIndex = Math.max(
     0,
     steps.findIndex((s) => s.state === 'current'),
@@ -67,6 +73,29 @@ export function SetupProgress({ steps }: { steps: SetupStep[] }) {
         {steps.map((step, i) => {
           const done = step.state === 'done'
           const isCurrent = step.state === 'current'
+          const tab = STEP_TAB[step.id]
+          const label = WORKSPACE_TABS.find((t) => t.id === tab)?.label ?? tab
+          const crumbClass = [
+            'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] leading-none',
+            done
+              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700'
+              : isCurrent
+                ? 'border-primary bg-primary/10 font-semibold text-foreground'
+                : 'border-input bg-muted text-subtle',
+            onGoToStep ? 'cursor-pointer hover:border-primary/60' : '',
+          ].join(' ')
+          const inner = (
+            <>
+              {done ? (
+                <CheckIcon className="h-3 w-3 flex-none" />
+              ) : (
+                <span className="flex h-4 w-4 flex-none items-center justify-center rounded-full border border-current text-[9px] font-semibold">
+                  {i + 1}
+                </span>
+              )}
+              <span>{step.title}</span>
+            </>
+          )
           return (
             <Fragment key={step.id}>
               {i > 0 && (
@@ -75,25 +104,19 @@ export function SetupProgress({ steps }: { steps: SetupStep[] }) {
                   aria-hidden="true"
                 />
               )}
-              <li
-                aria-current={isCurrent ? 'step' : undefined}
-                className={[
-                  'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] leading-none',
-                  done
-                    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700'
-                    : isCurrent
-                      ? 'border-primary bg-primary/10 font-semibold text-foreground'
-                      : 'border-input bg-muted text-subtle',
-                ].join(' ')}
-              >
-                {done ? (
-                  <CheckIcon className="h-3 w-3 flex-none" />
+              <li aria-current={isCurrent ? 'step' : undefined}>
+                {onGoToStep ? (
+                  <button
+                    type="button"
+                    onClick={() => onGoToStep(tab)}
+                    title={`Go to ${label}`}
+                    className={crumbClass}
+                  >
+                    {inner}
+                  </button>
                 ) : (
-                  <span className="flex h-4 w-4 flex-none items-center justify-center rounded-full border border-current text-[9px] font-semibold">
-                    {i + 1}
-                  </span>
+                  <span className={crumbClass}>{inner}</span>
                 )}
-                <span>{step.title}</span>
               </li>
             </Fragment>
           )

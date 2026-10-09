@@ -88,11 +88,45 @@ export const DNS_ORDER: (keyof DomainDnsRecords)[] = [
 /** The records that keep mail flowing after verification. */
 export const MAIL_RECORD_KEYS: (keyof DomainDnsRecords)[] = ['mx', 'spf', 'dkim', 'dmarc']
 
+export type WorkspaceTab = 'setup' | 'participants' | 'billing'
+
+/**
+ * The workspace sections, in the order an owner walks them. The tab bar and
+ * any navigation affordance derive from this one list, so the order only lives
+ * in one place.
+ */
+export const WORKSPACE_TABS: { id: WorkspaceTab; label: string }[] = [
+  { id: 'setup', label: 'Setup' },
+  { id: 'participants', label: 'Participants' },
+  { id: 'billing', label: 'Billing' },
+]
+
 export interface SetupStep {
   id: 'add' | 'dns' | 'verify' | 'addresses' | 'send'
   title: string
   detail: string
   state: 'done' | 'current' | 'todo'
+}
+
+export type SetupStepId = SetupStep['id']
+
+/**
+ * Which tab owns each setup step, so a breadcrumb crumb can jump the owner to
+ * the section that finishes it. DNS/verify live under Setup; handing people
+ * addresses and getting mail flowing live under Participants.
+ */
+export const STEP_TAB: Record<SetupStepId, WorkspaceTab> = {
+  add: 'setup',
+  dns: 'setup',
+  verify: 'setup',
+  addresses: 'participants',
+  send: 'participants',
+}
+
+/** The section after `tab`, or null on the last one (Billing). */
+export function nextTab(tab: WorkspaceTab): WorkspaceTab | null {
+  const i = WORKSPACE_TABS.findIndex((t) => t.id === tab)
+  return i >= 0 ? (WORKSPACE_TABS[i + 1]?.id ?? null) : null
 }
 
 /**

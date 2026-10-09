@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ActiveSigner } from '@formstr/signer'
-import { Field } from '@/app/components/settings/Field'
+import { Button } from '@/app/components/ui/Button'
+import { ChevronRightIcon } from '@/app/components/ui/icons'
 import {
   fetchDomainDns,
   rotateDomainToken,
   verifyDomain,
   type DomainDnsRecords,
   type DomainStatus,
+  type SeatView,
   type VerifyOutcome,
   type WorkspaceDomain,
 } from '@/app/lib/api/workspace'
@@ -15,26 +17,24 @@ import { MembersPanel } from './members'
 import { SeatsPanel } from './billing'
 import { SetupProgress } from './presenters'
 import type { Toast } from './Snackbar'
-import { buildSteps } from './workspaceUi'
-
-type Tab = 'setup' | 'participants' | 'billing'
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'setup', label: 'Setup' },
-  { id: 'participants', label: 'Participants' },
-  { id: 'billing', label: 'Billing' },
-]
+import { buildSteps, nextTab, WORKSPACE_TABS, type WorkspaceTab } from './workspaceUi'
 
 /**
  * One domain's workspace, split into tabs so the screen is not DNS + members +
  * billing all at once.
  *
- *  - **Setup** — progress trail, DNS records, verify.
+ *  - **Setup** — DNS records and verify.
  *  - **Participants** — who holds which addresses, seats.
  *  - **Billing** — seat top-ups.
  *
- * State (DNS, status, seat usage) lives here because the breadcrumb and the
- * Participants summary both read it; the panels below stay presenters.
+ * The setup breadcrumb sits above the tabs, not inside one, so an owner can see
+ * the whole path regardless of which tab is open; each crumb jumps to the tab
+ * that finishes that step, and the Setup/Participants panels carry an explicit
+ * "next" button so the flow never dead-ends on a tab.
+ *
+ * State (DNS, status, seat usage) lives here because the breadcrumb, the
+ * Participants panel and the billing gate all read it; the panels stay
+ * presenters.
  */
 export function DomainDetail({
   active,
@@ -49,18 +49,37 @@ export function DomainDetail({
   notify: Toast
   onChanged: () => Promise<void>
 }) {
-  const [tab, setTab] = useState<Tab>('setup')
+  const [tab, setTab] = useState<WorkspaceTab>('setup')
   const [dns, setDns] = useState<DomainDnsRecords | null>(null)
   const [status, setStatus] = useState<DomainStatus>(domain.status)
   const [verifiedAt, setVerifiedAt] = useState<string | null>(domain.verified_at ?? null)
-  const [seatsUsed, setSeatsUsed] = useState(domain.seats_used ?? 0)
-  const handleSeats = useCallback((used: number) => setSeatsUsed(used), [])
+  const [seats, setSeats] = useState<SeatView>({
+    total: domain.seats_total ?? 0,
+    used: domain.seats_used ?? 0,
+    available: Math.max(0, (domain.seats_total ?? 0) - (domain.seats_used ?? 0)),
+  })
+  const handleSeats = useCallback((next: SeatView) => setSeats(next), [])
   const [busy, setBusy] = useState(false)
   const [loadingDns, setLoadingDns] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   // Bumping this forces MembersPanel to refetch — after a seat purchase the
   // member/seat view must update without a full page refresh.
   const [membersRefresh, setMembersRefresh] = useState(0)
+
+  const goToTab = useCallback((t: WorkspaceTab) => {
+    setTab(t)
+    // Keep the workspace body at the top of the scroll container so the change
+    // of section is visible, since the tab bar stays where it is.
+    document.getElementById('workspace-tabs')?.scrollIntoView({ block: 'start' })
+  }, [])
+
+  const goToNext = useCallback(
+    (t: WorkspaceTab) => {
+      const next = nextTab(t)
+      if (next) goToTab(next)
+    },
+    [goToTab],
+  )
 
   const loadDns = useCallback(async () => {
     setLoadingDns(true)
@@ -140,8 +159,9 @@ export function DomainDetail({
     }
   }
 
-  const steps = buildSteps({ active: status === 'active', seatsUsed })
+  const steps = buildSteps({ active: status === 'active', seatsUsed: seats.used })
   const activeNow = status === 'active'
+  const hasSeats = seats.available > 0
 
   return (
     <div className="flex min-w-0 flex-col">
@@ -152,9 +172,20 @@ export function DomainDetail({
         </div>
       </div>
 
+      {/* The setup trail sits above the tabs: it is the map, the tabs are the
+          rooms. Clicking a crumb jumps to the tab that finishes that step. */}
+      <div className="mt-3">
+        <SetupProgress steps={steps} onGoToStep={goToTab} />
+      </div>
+
       {/* Tab bar. ARIA tablist so keyboard/AT users get the right semantics. */}
-      <div role="tablist" aria-label="Workspace sections" className="mt-2 flex gap-1 border-b border-border">
-        {TABS.map((t) => {
+      <div
+        id="workspace-tabs"
+        role="tablist"
+        aria-label="Workspace sections"
+        className="mt-4 flex gap-1 border-b border-border"
+      >
+        {WORKSPACE_TABS.map((t) => {
           const selected = tab === t.id
           return (
             <button
@@ -171,9 +202,9 @@ export function DomainDetail({
               ].join(' ')}
             >
               {t.label}
-              {t.id === 'participants' && seatsUsed > 0 && (
+              {t.id === 'participants' && seats.used > 0 && (
                 <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 font-mono text-[10px] text-subtle">
-                  {seatsUsed}
+                  {seats.used}
                 </span>
               )}
             </button>
@@ -184,13 +215,6 @@ export function DomainDetail({
       <div role="tabpanel" className="flex flex-col gap-5 pt-4">
         {tab === 'setup' && (
           <>
-            <Field
-              label="Setup progress"
-              hint="Where you are in getting mail running on this domain."
-            >
-              <SetupProgress steps={steps} />
-            </Field>
-
             <DnsPanel
               domain={domain.domain}
               dns={dns}
@@ -202,35 +226,77 @@ export function DomainDetail({
               onVerify={() => void runVerify()}
               onRotate={() => void rotate()}
             />
+
+            {/* The forward step: verification is the gate, so the next-tab
+                affordance only appears once it is passed — otherwise it would
+                invite assigning addresses on a domain that cannot route. */}
+            {activeNow ? (
+              <Button
+                size="sm"
+                variant="primary"
+                className="self-start"
+                onClick={() => goToNext('setup')}
+              >
+                Continue to participants
+                <ChevronRightIcon className="h-3.5 w-3.5" />
+              </Button>
+            ) : (
+              <p className="text-[11.5px] leading-relaxed text-subtle">
+                Once the domain is verified, this tab continues to Participants,
+                where you hand out addresses.
+              </p>
+            )}
           </>
         )}
 
         {tab === 'participants' && (
-          <MembersPanel
-            active={active}
-            domain={domain}
-            disabled={!activeNow}
-            ownPubkey={ownPubkey}
-            refreshToken={membersRefresh}
-            onSeats={handleSeats}
-            onChanged={async () => {
-              await onChanged()
-            }}
-          />
+          <>
+            <MembersPanel
+              active={active}
+              domain={domain}
+              disabled={!activeNow}
+              ownPubkey={ownPubkey}
+              refreshToken={membersRefresh}
+              onSeats={handleSeats}
+              onChanged={async () => {
+                await onChanged()
+              }}
+            />
+
+            {/* Out of seats is the common blocker here; route to Billing so the
+                fix is one click away, and to Billing again once seats exist. */}
+            <Button
+              size="sm"
+              variant={hasSeats ? 'secondary' : 'primary'}
+              className="self-start"
+              onClick={() => goToNext('participants')}
+            >
+              {hasSeats ? 'Continue to billing' : 'Buy seats'}
+              <ChevronRightIcon className="h-3.5 w-3.5" />
+            </Button>
+          </>
         )}
 
         {tab === 'billing' && (
-          <SeatsPanel
-            active={active}
-            domain={domain}
-            onPurchased={async () => {
-              // Refresh the domain list (seats_total changed) *and* the
-              // member/seat view, so the new seats are visible immediately.
-              setMembersRefresh((n) => n + 1)
-              notify(`Seats added to ${domain.domain}`)
-              await onChanged()
-            }}
-          />
+          <>
+            {!hasSeats && (
+              <p className="text-[11.5px] leading-relaxed text-subtle">
+                You have no seats left. Each address needs one seat — buy seats
+                below, then return to Participants to assign addresses.
+              </p>
+            )}
+            <SeatsPanel
+              active={active}
+              domain={domain}
+              onPurchased={async () => {
+                // Refresh the domain list (seats_total changed) *and* the
+                // member/seat view, so the new seats are visible immediately.
+                setMembersRefresh((n) => n + 1)
+                notify(`Seats added to ${domain.domain}`)
+                await onChanged()
+              }}
+            />
+          </>
         )}
       </div>
     </div>

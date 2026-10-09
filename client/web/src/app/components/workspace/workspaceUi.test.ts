@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { nip19 } from 'nostr-tools'
-import { buildSteps, decodePubkey, DNS_HELP, DNS_ORDER, MAIL_RECORD_KEYS } from './workspaceUi'
+import {
+  buildSteps,
+  decodePubkey,
+  DNS_HELP,
+  DNS_ORDER,
+  MAIL_RECORD_KEYS,
+  nextTab,
+  STEP_TAB,
+  WORKSPACE_TABS,
+} from './workspaceUi'
 
 /**
  * The workspace page's pure logic. These pin the two things that break
@@ -51,6 +60,26 @@ describe('buildSteps', () => {
   it('marks everything done once verified with an address', () => {
     const steps = buildSteps({ active: true, seatsUsed: 2 })
     expect(steps.every((s) => s.state === 'done')).toBe(true)
+  })
+})
+
+describe('workspace navigation', () => {
+  it('offers the tabs in walk order and knows what follows each', () => {
+    expect(WORKSPACE_TABS.map((t) => t.id)).toEqual(['setup', 'participants', 'billing'])
+    expect(nextTab('setup')).toBe('participants')
+    expect(nextTab('participants')).toBe('billing')
+    // The last tab has nowhere further to send you.
+    expect(nextTab('billing')).toBeNull()
+  })
+
+  it('maps every setup step to the tab that finishes it', () => {
+    expect(STEP_TAB.dns).toBe('setup')
+    expect(STEP_TAB.verify).toBe('setup')
+    expect(STEP_TAB.addresses).toBe('participants')
+    // A crumb is only useful if its tab is a real tab.
+    for (const tab of Object.values(STEP_TAB)) {
+      expect(WORKSPACE_TABS.some((t) => t.id === tab)).toBe(true)
+    }
   })
 })
 

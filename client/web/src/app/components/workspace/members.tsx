@@ -43,8 +43,8 @@ export function MembersPanel({
   onChanged: () => Promise<void> | void
   /** Bump to force a refetch (e.g. after a seat purchase). */
   refreshToken?: number
-  /** Reports seat usage so the parent's progress trail stays accurate. */
-  onSeats?: (used: number) => void
+  /** Reports seat usage so the parent's progress trail and billing gate stay accurate. */
+  onSeats?: (seats: SeatView) => void
 }) {
   const [members, setMembers] = useState<WorkspaceMember[]>([])
   const [seats, setSeats] = useState<SeatView | null>(null)
@@ -56,7 +56,7 @@ export function MembersPanel({
       const res = await fetchMembers(active, domain.domain)
       setMembers(res.members)
       setSeats(res.seats)
-      onSeats?.(res.seats.used)
+      onSeats?.(res.seats)
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
     }
@@ -103,6 +103,8 @@ export function MembersPanel({
     }
   }
 
+  const outOfSeats = !disabled && !!seats && seats.available <= 0
+
   return (
     <Field
       label="Members"
@@ -110,10 +112,19 @@ export function MembersPanel({
         disabled
           ? 'Verify the domain before assigning addresses.'
           : seats
-            ? `${seats.available} of ${seats.total} seats available. Each address uses one seat.`
+            ? outOfSeats
+              ? `No seats left — all ${seats.total} are in use. Buy seats to add more addresses.`
+              : `${seats.available} of ${seats.total} seats available. Each address uses one seat.`
             : undefined
       }
     >
+      {outOfSeats && (
+        <p className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11.5px] leading-relaxed text-amber-700">
+          Every seat is taken, so new addresses cannot be assigned until you buy
+          more. Use <span className="font-medium">Buy seats</span> below.
+        </p>
+      )}
+
       {members.length > 0 && (
         <div className="mb-2 flex flex-col gap-1.5">
           {members.map((m) => (

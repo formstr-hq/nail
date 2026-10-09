@@ -265,8 +265,17 @@ test('workspace setup: add → DNS → verify → assign addresses', async ({ pa
   await expect(page.getByText(/v=DMARC1; p=reject/)).toBeVisible()
   await expect(page.getByText(/^Verified/).first()).toBeVisible()
 
-  // Members live on their own tab now.
-  await page.getByRole('tab', { name: /participants/i }).click()
+  // The setup trail is above the tabs — it stays visible on every tab, so the
+  // owner always sees the whole path.
+  await expect(page.getByRole('list', { name: /setup progress/i })).toBeVisible()
+
+  // Setup no longer dead-ends: the forward button carries the owner to the tab
+  // that finishes the next step (Participants).
+  await page.getByRole('button', { name: /continue to participants/i }).click()
+  await expect(page.getByRole('tab', { name: /participants/i })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
 
   // Members: "Add my identity" fills the npub form of the signed-in key.
   await page.getByRole('button', { name: /add my identity/i }).click()
@@ -283,6 +292,14 @@ test('workspace setup: add → DNS → verify → assign addresses', async ({ pa
   await page.getByRole('button', { name: /^assign$/i }).click()
   await expect(page.getByText('sales@acme.com')).toBeVisible()
   await expect(page.getByText('contact@acme.com')).toBeVisible()
+
+  // With every seat in use, Participants points the owner at Billing through
+  // the "Buy seats" button; clicking it opens the Billing tab.
+  await page.getByRole('button', { name: /buy seats/i }).click()
+  await expect(page.getByRole('tab', { name: /billing/i })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
 
   // Delete a pending domain: no confirmation (it routes nothing), a snackbar
   // confirms, and it leaves the list.

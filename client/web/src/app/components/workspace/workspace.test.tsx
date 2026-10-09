@@ -141,6 +141,20 @@ describe('SetupProgress', () => {
       'Publish the DNS records',
     )
   })
+
+  it('jumps to the tab owning a step when its crumb is clicked', async () => {
+    const user = userEvent.setup()
+    const onGoToStep = vi.fn()
+    render(
+      <SetupProgress
+        steps={buildSteps({ active: true, seatsUsed: 0 })}
+        onGoToStep={onGoToStep}
+      />,
+    )
+    // "Assign addresses" lives on the Participants tab.
+    await user.click(screen.getByRole('button', { name: /assign addresses/i }))
+    expect(onGoToStep).toHaveBeenCalledWith('participants')
+  })
 })
 
 describe('MemberRow', () => {
