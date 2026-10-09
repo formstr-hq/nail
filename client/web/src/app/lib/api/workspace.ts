@@ -79,11 +79,11 @@ export interface SeatView {
   available: number
 }
 
-export interface SeatPack {
-  seats: number
-  discountPercent: number
+/** Flat per-seat price and the allowed purchase range (public). */
+export interface SeatPrice {
   pricePerSeatSats: number
-  totalSats: number
+  minSeats: number
+  maxSeats: number
 }
 
 /** Verification outcome, mirroring the backend's discriminated result. */
@@ -297,11 +297,11 @@ export function revokeMemberAddress(
   )
 }
 
-/** Seat packs and their volume discounts (public — no auth needed). */
-export async function fetchSeatPacks(): Promise<SeatPack[]> {
-  const res = await fetch(apiUrl('/api/workspace/seat-packs'))
-  if (!res.ok) throw new Error(`Could not load seat packs (${res.status})`)
-  return (await res.json()) as SeatPack[]
+/** The flat per-seat price and allowed quantity range (public — no auth). */
+export async function fetchSeatPrice(): Promise<SeatPrice> {
+  const res = await fetch(apiUrl('/api/workspace/seat-price'))
+  if (!res.ok) throw new Error(`Could not load the seat price (${res.status})`)
+  return (await res.json()) as SeatPrice
 }
 
 export interface SeatInvoice {
@@ -309,7 +309,7 @@ export interface SeatInvoice {
   paymentHash: string
   amount: number
   seats: number
-  discountPercent: number
+  pricePerSeatSats: number
 }
 
 /**

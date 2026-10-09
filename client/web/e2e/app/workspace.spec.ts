@@ -170,20 +170,18 @@ async function stubApp(page: import('@playwright/test').Page) {
       }),
     })
   })
-  await page.route('**/api/workspace/seat-packs', (route) =>
+  await page.route('**/api/workspace/seat-price', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify([
-        { seats: 1, discountPercent: 0, pricePerSeatSats: 20, totalSats: 20 },
-      ]),
+      body: JSON.stringify({ pricePerSeatSats: 20, minSeats: 1, maxSeats: 1000 }),
     }),
   )
   await page.route('**/api/workspace/generate-invoice', (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ invoice: 'lnbc1e2e', paymentHash: PAYMENT_HASH, amount: 20, seats: 1, discountPercent: 0 }),
+      body: JSON.stringify({ invoice: 'lnbc1e2e', paymentHash: PAYMENT_HASH, amount: 20, seats: 1, pricePerSeatSats: 20 }),
     }),
   )
 }
@@ -300,6 +298,12 @@ test('workspace setup: add → DNS → verify → assign addresses', async ({ pa
     'aria-selected',
     'true',
   )
+
+  // Billing is flat per-seat with a custom quantity, not fixed packs: the live
+  // total tracks the entered seat count (20 sats/seat).
+  await expect(page.getByText(/20 sats per seat/i)).toBeVisible()
+  await page.getByLabel('Seats to buy').fill('3')
+  await expect(page.getByText('60 sats')).toBeVisible()
 
   // Delete a pending domain: no confirmation (it routes nothing), a snackbar
   // confirms, and it leaves the list.

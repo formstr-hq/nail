@@ -9,7 +9,7 @@ import {
   revokeMemberAddress,
   removeDomain,
   createSeatInvoice,
-  fetchSeatPacks,
+  fetchSeatPrice,
 } from './workspace'
 
 /**
@@ -215,7 +215,7 @@ describe('removeDomain', () => {
 describe('createSeatInvoice', () => {
   it('posts the domain and seat count', async () => {
     const spy = mockFetch(() =>
-      json({ invoice: 'lnbc1...', paymentHash: 'h', amount: 180, seats: 10, discountPercent: 10 }),
+      json({ invoice: 'lnbc1...', paymentHash: 'h', amount: 180, seats: 10, pricePerSeatSats: 18 }),
     )
     const res = await createSeatInvoice(active, 'acme.com', 10)
     expect(JSON.parse(String(spy.mock.calls[0][1]?.body))).toEqual({
@@ -223,22 +223,21 @@ describe('createSeatInvoice', () => {
       seats: 10,
     })
     expect(res.amount).toBe(180)
+    expect(res.pricePerSeatSats).toBe(18)
   })
 })
 
-describe('fetchSeatPacks', () => {
-  it('is unauthenticated and returns the packs', async () => {
-    const spy = mockFetch(() =>
-      json([{ seats: 1, discountPercent: 0, pricePerSeatSats: 20, totalSats: 20 }]),
-    )
-    const packs = await fetchSeatPacks()
-    expect(packs).toHaveLength(1)
+describe('fetchSeatPrice', () => {
+  it('is unauthenticated and returns the flat price and range', async () => {
+    const spy = mockFetch(() => json({ pricePerSeatSats: 20, minSeats: 1, maxSeats: 1000 }))
+    const price = await fetchSeatPrice()
+    expect(price).toEqual({ pricePerSeatSats: 20, minSeats: 1, maxSeats: 1000 })
     // No Authorization header: this endpoint is public.
     expect(spy.mock.calls[0][1]).toBeUndefined()
   })
 
-  it('reports a failure rather than an empty list', async () => {
+  it('reports a failure rather than a silent default', async () => {
     mockFetch(() => json({}, 500))
-    await expect(fetchSeatPacks()).rejects.toThrow(/500/)
+    await expect(fetchSeatPrice()).rejects.toThrow(/500/)
   })
 })

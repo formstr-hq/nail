@@ -1,21 +1,29 @@
 import { useEffect, useState } from 'react'
 import type { ActiveSigner } from '@formstr/signer'
 import { Button } from '@/app/components/ui/Button'
-import { CheckIcon } from '@/app/components/ui/icons'
-import { Field } from '@/app/components/settings/Field'
+import { Field, inputClass } from '@/app/components/settings/Field'
 import InvoiceQR from '@/components/InvoiceQR'
 import {
   createSeatInvoice,
-  fetchSeatPacks,
+  fetchSeatPrice,
   type SeatInvoice,
-  type SeatPack,
+  type SeatPrice,
   type WorkspaceDomain,
 } from '@/app/lib/api/workspace'
 
+/** Clamp a raw input string to an optional non-negative integer. */
+function parseInt0(value: string): number | null {
+  const n = Number(value.trim())
+  return Number.isInteger(n) && n >= 0 ? n : null
+}
+
 /**
- * Billing: buy seats for the workspace. Kept on its own tab so the setup
- * screen is not also a shop. Payment handoff reuses the shared invoice UI
- * (QR, wallet deep-link, countdown, payment socket).
+ * Billing: buy seats for the workspace.
+ *
+ * Pricing is flat — one price per seat, no tiers — so the buyer chooses a
+ * quantity rather than picking a pack. The price and its bounds come from the
+ * server (the invoice is priced there too); this panel only reads them to show
+ * a live total and to validate the input.
  */
 export function SeatsPanel({
   active,
@@ -26,28 +34,38 @@ export function SeatsPanel({
   domain: WorkspaceDomain
   onPurchased: () => Promise<void>
 }) {
-  const [packs, setPacks] = useState<SeatPack[]>([])
-  const [busy, setBusy] = useState<number | null>(null)
+  const [price, setPrice] = useState<SeatPrice | null>(null)
+  const [seats, setSeats] = useState('1')
+  const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [invoice, setInvoice] = useState<SeatInvoice | null>(null)
 
   useEffect(() => {
-    fetchSeatPacks()
-      .then(setPacks)
+    fetchSeatPrice()
+      .then(setPrice)
       .catch(() => {
-        // Non-fatal: packs are a convenience; buying still works once they load.
+        // Non-fatal: the invoice is priced server-side regardless; this only
+        // affects the live total shown before buying.
       })
   }, [])
 
-  async function buy(seats: number) {
-    setBusy(seats)
+  const min = price?.minSeats ?? 1
+  const max = price?.maxSeats ?? 1000
+  const parsed = parseInt0(seats)
+  const inRange = parsed != null && parsed >= min && parsed <= max
+  const total =
+    price && parsed != null && inRange ? price.pricePerSeatSats * parsed : null
+
+  async function buy() {
+    if (!inRange) return
+    setBusy(true)
     setMessage(null)
     try {
-      setInvoice(await createSeatInvoice(active, domain.domain, seats))
+      setInvoice(await createSeatInvoice(active, domain.domain, parsed))
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
     } finally {
-      setBusy(null)
+      setBusy(false)
     }
   }
 
@@ -79,7 +97,10 @@ export function SeatsPanel({
 
   return (
     <>
-      <Field label="Seats" hint="One seat per address. You have used these so far.">
+      <Field
+        label="Seats"
+        hint={`You have used ${domain.seats_used ?? 0} of ${domain.seats_total ?? 0}. One seat per address.`}
+      >
         <p className="font-mono text-[13px]">
           {domain.seats_used ?? 0} used · {domain.seats_total ?? 0} total
         </p>
@@ -87,22 +108,43 @@ export function SeatsPanel({
 
       <Field
         label="Buy seats"
-        hint="Volume discounts apply automatically; one-time payment in sats."
+        hint={
+          price
+            ? `One-time payment in sats. ${price.pricePerSeatSats} sats per seat.`
+            : 'One-time payment in sats.'
+        }
       >
-        <div className="flex flex-wrap gap-2">
-          {packs.map((pack) => (
-            <Button
-              key={pack.seats}
-              size="sm"
-              variant="secondary"
-              onClick={() => void buy(pack.seats)}
-              disabled={busy != null}
-            >
-              <CheckIcon className="h-3.5 w-3.5" />
-              {pack.seats} seats — {pack.totalSats} sats
-              {pack.discountPercent > 0 ? ` (${pack.discountPercent}% off)` : ''}
-            </Button>
-          ))}
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-subtle">Seats to buy</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min={min}
+              max={max}
+              step={1}
+              value={seats}
+              onChange={(e) => setSeats(e.target.value)}
+              aria-label="Seats to buy"
+              disabled={busy}
+              className={`${inputClass} w-24`}
+            />
+          </label>
+          <div className="pb-1.5 text-[13px]">
+            {total != null ? (
+              <>
+                <span className="text-subtle">Total </span>
+                <span className="font-mono font-medium">{total} sats</span>
+              </>
+            ) : (
+              <span className="text-subtle">
+                Enter {min}–{max} seats
+              </span>
+            )}
+          </div>
+          <Button size="sm" variant="primary" onClick={() => void buy()} disabled={busy || !inRange}>
+            {busy ? 'Creating invoice…' : 'Buy seats'}
+          </Button>
         </div>
         {message && <p className="mt-1.5 text-[11.5px] text-subtle">{message}</p>}
       </Field>
