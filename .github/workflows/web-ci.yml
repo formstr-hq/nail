@@ -1,8 +1,7 @@
 name: Web CI
 
 # Runs on every push / PR that touches the frontend or the shared protocol it
-# imports. The verification checklist in AGENTS.md ("build + test + lint at the
-# commit you cite") has no meaning without this.
+# imports. CI is the verification gate: build + test + lint at the commit you cite.
 on:
   push:
     paths:
