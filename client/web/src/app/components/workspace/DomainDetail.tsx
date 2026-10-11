@@ -18,6 +18,7 @@ import { SeatsPanel } from './billing'
 import { SetupProgress } from './presenters'
 import type { Toast } from './Snackbar'
 import { buildSteps, nextTab, WORKSPACE_TABS, type WorkspaceTab } from './workspaceUi'
+import { checkDnsRecords, type DnsCheckReport } from '@/app/lib/mail/dnsCheck'
 
 /**
  * One domain's workspace, split into tabs so the screen is not DNS + members +
@@ -65,6 +66,10 @@ export function DomainDetail({
   // Bumping this forces MembersPanel to refetch — after a seat purchase the
   // member/seat view must update without a full page refresh.
   const [membersRefresh, setMembersRefresh] = useState(0)
+  // DNS health-check result (client-side, over DoH). Null until the owner runs
+  // a check; used to mark each record and to gate the next step.
+  const [dnsReport, setDnsReport] = useState<DnsCheckReport | null>(null)
+  const [checkingDns, setCheckingDns] = useState(false)
 
   const goToTab = useCallback((t: WorkspaceTab) => {
     setTab(t)
@@ -88,6 +93,8 @@ export function DomainDetail({
       setDns(res.dns)
       setStatus(res.status)
       setVerifiedAt(res.verified_at)
+      // A fresh record set invalidates any previous check verdict.
+      setDnsReport(null)
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e))
     } finally {
@@ -159,9 +166,26 @@ export function DomainDetail({
     }
   }
 
+  // Client-side DNS health check over DoH. `checkDnsRecords` never throws (a
+  // resolver outage becomes per-record `error`), so the owner always gets a
+  // verdict rather than a silent failure.
+  const runDnsCheck = useCallback(async () => {
+    if (!dns) return
+    setCheckingDns(true)
+    try {
+      setDnsReport(await checkDnsRecords(dns))
+    } finally {
+      setCheckingDns(false)
+    }
+  }, [dns])
+
   const steps = buildSteps({ active: status === 'active', seatsUsed: seats.used })
   const activeNow = status === 'active'
   const hasSeats = seats.available > 0
+  // The next step is gated on the mail records checking out: handing out
+  // addresses before MX/SPF/DKIM/DMARC resolve correctly means mail silently
+  // fails. The owner must run and pass the check first.
+  const dnsReady = dnsReport?.ok === true
 
   return (
     <div className="flex min-w-0 flex-col">
@@ -225,21 +249,32 @@ export function DomainDetail({
               loading={loadingDns}
               onVerify={() => void runVerify()}
               onRotate={() => void rotate()}
+              report={dnsReport}
+              checking={checkingDns}
+              onCheck={() => void runDnsCheck()}
             />
 
-            {/* The forward step: verification is the gate, so the next-tab
-                affordance only appears once it is passed — otherwise it would
-                invite assigning addresses on a domain that cannot route. */}
+            {/* The forward step is gated on the DNS health check: the owner must
+                first confirm MX/SPF/DKIM/DMARC resolve correctly, so nobody
+                hands out addresses on a domain whose mail silently fails. */}
             {activeNow ? (
-              <Button
-                size="sm"
-                variant="primary"
-                className="self-start"
-                onClick={() => goToNext('setup')}
-              >
-                Continue to participants
-                <ChevronRightIcon className="h-3.5 w-3.5" />
-              </Button>
+              <>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  className="self-start"
+                  onClick={() => goToNext('setup')}
+                  disabled={!dnsReady}
+                >
+                  Continue to participants
+                  <ChevronRightIcon className="h-3.5 w-3.5" />
+                </Button>
+                {!dnsReady && (
+                  <p className="text-[11.5px] leading-relaxed text-subtle">
+                    Run “Check my DNS” above and fix any issues before continuing.
+                  </p>
+                )}
+              </>
             ) : (
               <p className="text-[11.5px] leading-relaxed text-subtle">
                 Once the domain is verified, this tab continues to Participants,

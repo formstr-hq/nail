@@ -1,5 +1,6 @@
 import { Fragment, useState } from 'react'
 import type { DomainDnsRecord, DomainStatus } from '@/app/lib/api/workspace'
+import type { DnsCheckStatus } from '@/app/lib/mail/dnsCheck'
 import { CheckIcon, ChevronRightIcon, CopyIcon, InfoIcon } from '@/app/components/ui/icons'
 import { DNS_HELP, STEP_TAB, WORKSPACE_TABS, type SetupStep, type WorkspaceTab } from './workspaceUi'
 
@@ -175,21 +176,49 @@ function RecordField({ label, value }: { label: string; value: string }) {
   )
 }
 
+/** A small per-record verdict chip from the DNS health check. */
+export function DnsCheckBadge({ status }: { status: DnsCheckStatus }) {
+  const style: Record<DnsCheckStatus, string> = {
+    ok: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700',
+    missing: 'border-amber-500/40 bg-amber-500/10 text-amber-700',
+    mismatch: 'border-destructive/30 bg-destructive/10 text-destructive',
+    error: 'border-input bg-muted text-subtle',
+    skip: 'border-input bg-muted text-subtle',
+  }
+  const label: Record<DnsCheckStatus, string> = {
+    ok: 'Correct',
+    missing: 'Missing',
+    mismatch: 'Incorrect',
+    error: "Couldn't check",
+    skip: 'Not yet',
+  }
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${style[status]}`}
+    >
+      {label[status]}
+    </span>
+  )
+}
+
 /**
  * A DNS record an owner has to create at their registrar.
  *
  * Each value carries its own copy button so a non-technical owner never has to
  * transcribe a long string by hand, and the fields are labelled in the words a
- * DNS form uses (Type / Name / Value) rather than being raw lines.
+ * DNS form uses (Type / Name / Value) rather than being raw lines. When a
+ * health-check verdict is supplied, it is shown as a chip on the row.
  */
 export function DnsRecordRow({
   kind,
   record,
   showHelp = true,
+  status,
 }: {
   kind: keyof typeof DNS_HELP
   record: DomainDnsRecord
   showHelp?: boolean
+  status?: DnsCheckStatus
 }) {
   const help = DNS_HELP[kind]
   const value =
@@ -197,7 +226,10 @@ export function DnsRecordRow({
   return (
     <div className="rounded-md border border-input bg-muted px-3 py-2.5">
       <div className="mb-1.5 flex items-center justify-between gap-2">
-        <span className="text-[12px] font-medium text-foreground">{help.label}</span>
+        <span className="flex items-center gap-2 text-[12px] font-medium text-foreground">
+          {help.label}
+          {status && <DnsCheckBadge status={status} />}
+        </span>
         {showHelp && (
           <InfoNote label={help.label} title={help.why} where={help.where} />
         )}
