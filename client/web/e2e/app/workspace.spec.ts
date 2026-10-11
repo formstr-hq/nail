@@ -184,6 +184,28 @@ async function stubApp(page: import('@playwright/test').Page) {
       body: JSON.stringify({ invoice: 'lnbc1e2e', paymentHash: PAYMENT_HASH, amount: 20, seats: 1, pricePerSeatSats: 20 }),
     }),
   )
+  // DNS-over-HTTPS: the client-side DNS health check queries this. Answers
+  // match the expected records so the check passes; DKIM tracks the live key.
+  await page.route('**/dns-query**', (route) => {
+    const url = new URL(route.request().url())
+    const name = url.searchParams.get('name') ?? ''
+    const type = url.searchParams.get('type') ?? ''
+    const answers: string[] = []
+    if (name === 'acme.com' && type === 'MX') answers.push('10 mails.stg.mailstr.app.')
+    if (name === 'acme.com' && type === 'TXT') answers.push('"v=spf1 mx ~all"')
+    if (name === 'dkim._domainkey.acme.com' && type === 'TXT') {
+      answers.push(`"${verified ? DKIM_LIVE : DNS.dkim.value}"`)
+    }
+    if (name === '_dmarc.acme.com' && type === 'TXT') answers.push(`"${DNS.dmarc.value}"`)
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/dns-json',
+      body: JSON.stringify({
+        Status: 0,
+        Answer: answers.map((data) => ({ name, type: type === 'MX' ? 15 : 16, data })),
+      }),
+    })
+  })
 }
 
 test.beforeEach(async ({ page }) => {
@@ -239,8 +261,12 @@ test('workspace setup: add → DNS → verify → assign addresses', async ({ pa
   await createAccount(page)
   await completeOnboarding(page)
 
-  // Open the full-page Workspace setup from the sidebar.
-  await page.getByRole('button', { name: 'Workspace', exact: true }).click()
+  // Workspace is reachable only from Settings now (the sidebar entry was
+  // removed): Settings → Workspace → Open workspace setup.
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await settings.getByRole('button', { name: 'Workspace' }).click()
+  await settings.getByRole('button', { name: /open workspace setup/i }).click()
   await expect(page.getByRole('heading', { name: 'Workspace' })).toBeVisible()
   await expect(page).toHaveURL(/\/mails\/workspace$/)
 
@@ -267,8 +293,10 @@ test('workspace setup: add → DNS → verify → assign addresses', async ({ pa
   // owner always sees the whole path.
   await expect(page.getByRole('list', { name: /setup progress/i })).toBeVisible()
 
-  // Setup no longer dead-ends: the forward button carries the owner to the tab
-  // that finishes the next step (Participants).
+  // The forward step is gated on the DNS health check: run it, confirm the
+  // records are reported correct, then continue to the next step.
+  await page.getByRole('button', { name: /check my dns/i }).click()
+  await expect(page.getByText(/all the mail records below look correct/i)).toBeVisible()
   await page.getByRole('button', { name: /continue to participants/i }).click()
   await expect(page.getByRole('tab', { name: /participants/i })).toHaveAttribute(
     'aria-selected',

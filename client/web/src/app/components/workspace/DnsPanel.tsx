@@ -3,8 +3,9 @@ import { Button } from '@/app/components/ui/Button'
 import { CheckIcon } from '@/app/components/ui/icons'
 import { Field } from '@/app/components/settings/Field'
 import type { DomainDnsRecords, DomainStatus } from '@/app/lib/api/workspace'
+import type { DnsCheckReport, DnsRecordKey } from '@/app/lib/mail/dnsCheck'
 import { DnsRecordRow, VerifyStatus } from './presenters'
-import { MAIL_RECORD_KEYS } from './workspaceUi'
+import { DNS_HELP, MAIL_RECORD_KEYS } from './workspaceUi'
 
 /**
  * The DNS panel, written for someone who has never added a DNS record.
@@ -12,13 +13,13 @@ import { MAIL_RECORD_KEYS } from './workspaceUi'
  * The shape follows what the owner actually has to do:
  *
  *  - **Before verification** (pending): a short "what to do" line, then the one
- *    record to add (with copy buttons). Nothing else — the mail records do not
- *    exist yet and would only confuse.
+ *    record to add (with copy buttons).
  *  - **After verification** (active): the proof record is gone (its job is
- *    done), and the four records that keep mail flowing are shown with a
- *    one-line explanation each.
+ *    done), and the four records that keep mail flowing are shown.
  *
- * Every value has a copy button so no long string has to be typed by hand.
+ * A "Check my DNS" action (driven by the parent) resolves the mail records over
+ * DNS-over-HTTPS and marks each one `Correct` / `Missing` / `Incorrect`, so an
+ * owner sees *which* record is wrong instead of mail silently failing.
  */
 export function DnsPanel({
   domain,
@@ -30,6 +31,9 @@ export function DnsPanel({
   onVerify,
   onRotate,
   loading,
+  report,
+  checking,
+  onCheck,
 }: {
   domain: string
   dns: DomainDnsRecords | null
@@ -40,9 +44,14 @@ export function DnsPanel({
   onVerify: () => void
   onRotate: () => void
   loading: boolean
+  report?: DnsCheckReport | null
+  checking?: boolean
+  onCheck?: () => void
 }) {
   const active = status === 'active'
   const [revealEarly, setRevealEarly] = useState(false)
+  const statusFor = (key: DnsRecordKey) => report?.records.find((r) => r.key === key)?.status
+  const issues = report?.records.filter((r) => r.status !== 'ok' && r.status !== 'skip') ?? []
 
   return (
     <Field label="DNS records" hint={`The DNS settings for ${domain}.`}>
@@ -65,7 +74,7 @@ export function DnsPanel({
             (where you bought the domain) so mail can be sent and received.
           </p>
           {MAIL_RECORD_KEYS.map((key) => (
-            <DnsRecordRow key={key} kind={key} record={dns[key]} />
+            <DnsRecordRow key={key} kind={key} record={dns[key]} status={statusFor(key)} />
           ))}
         </div>
       ) : (
@@ -80,7 +89,7 @@ export function DnsPanel({
 
           {revealEarly ? (
             MAIL_RECORD_KEYS.map((key) => (
-              <DnsRecordRow key={key} kind={key} record={dns[key]} />
+              <DnsRecordRow key={key} kind={key} record={dns[key]} status={statusFor(key)} />
             ))
           ) : (
             <div className="rounded-md border border-dashed border-input px-3 py-2.5">
@@ -114,6 +123,33 @@ export function DnsPanel({
           >
             I made a mistake — give me a new code
           </button>
+        </div>
+      )}
+
+      {dns && onCheck && (
+        <div className="mt-4 border-t border-input/60 pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[11.5px] leading-relaxed text-subtle">
+              {report
+                ? report.ok
+                  ? 'All the mail records below look correct.'
+                  : `${issues.length} issue${issues.length === 1 ? '' : 's'} found — see below.`
+                : 'Published your records? Check that mail will route correctly.'}
+            </p>
+            <Button size="sm" variant="secondary" onClick={onCheck} disabled={checking}>
+              {checking ? 'Checking…' : 'Check my DNS'}
+            </Button>
+          </div>
+          {issues.length > 0 && (
+            <ul className="mt-2 flex list-disc flex-col gap-1 pl-4 text-[11px] leading-relaxed text-muted-foreground">
+              {issues.map((r) => (
+                <li key={r.key}>
+                  <span className="font-medium text-foreground">{DNS_HELP[r.key].label}:</span>{' '}
+                  {r.detail ?? 'Not set up correctly.'}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
 

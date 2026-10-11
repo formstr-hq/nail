@@ -256,7 +256,6 @@ function MailApp() {
             onOpenRelays={() => openSettings("relays")}
             onAddAccount={() => setAddingAccount(true)}
             onBuyAddress={() => openBuy()}
-            onWorkspace={openWorkspace}
             aliases={selfAddresses}
             status={status}
           />
@@ -287,10 +286,6 @@ function MailApp() {
                 }}
                 onBuyAddress={() => {
                   openBuy()
-                  setNavOpen(false)
-                }}
-                onWorkspace={() => {
-                  openWorkspace()
                   setNavOpen(false)
                 }}
                 aliases={selfAddresses}
@@ -349,7 +344,9 @@ function MailApp() {
           deep-linkable and Android back pops it (see handleBack). */}
       {workspaceOpen && (
         <div className="fixed inset-0 z-50 bg-background">
-          <WorkspacePage onBack={() => navigate(-1)} />
+          {/* Workspace is opened from Settings, so history-back would land in
+              the settings modal; the explicit "Back to mail" targets the app. */}
+          <WorkspacePage onBack={() => navigate(MAIL_APP_PREFIX)} />
         </div>
       )}
 
