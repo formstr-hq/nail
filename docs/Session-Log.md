@@ -1893,3 +1893,29 @@ Verified: backend `tsc` clean, `jest` 123 (+2: pinned resolver used by default;
 Deployed: backend `d0f4cd7` (resolver fix) — container can resolve the record
 via the pinned resolver; client `9366e6a` bundle `App-pEWHNFv2.js`. `hllo.live`
 is active/verified.
+
+## 2026-10-14 — Release 0.3.0: workspace mainline lands on canonical `main`
+
+Docs + version only; no functional code authored in this entry. Context
+consulted per rule 15: the 2026-10-05 workspace entry and the 2026-09-21
+prod-readiness entry.
+
+### What changed
+
+1. **Canonical `main` fast-forwarded `bd70940 → 5298446`** from the
+   `npub1qu7dsd…` ngit repo (workspace dashboard/setup page, DoH DNS-record
+   checks gating setup, flat per-seat billing with custom seats, Workspace
+   moved under Settings). `bd70940` is an ancestor of `5298446`, so the
+   fast-forward carried the workspace mainline with no merge; the Oct 9
+   `feat/custom-domains` variant (`6d5b18a`) is superseded by this line.
+2. **Version:** `versionCode 4 → 5`, `versionName "0.2.2" → "0.3.0"`,
+   `client/package.json` `0.3.0`. The release tag defaults to
+   `v<client/package.json version>` → `v0.3.0`.
+
+### Release
+
+Built and published from chhotu with `formstr-infra` (`./build.sh nail`):
+fresh clone of `nostr://infinityx2@mailstr.app/relay.ngit.dev/nail` at the new
+main, NIP-82 release publish (APK to Blossom; AAB on the GitHub mirror only),
+then `main` force-pushed to the `formstr-hq/nail` GitHub mirror with the tag
+and release.
