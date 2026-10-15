@@ -1,207 +1,214 @@
-# Implementation Plan: Fiat In-App Purchases (App Store + Play) for Mailstr, with Permanent Mailboxes
+# Implementation Plan: Fiat Payments (Stripe + App Store + Play) for Mailstr, with Permanent Mailboxes
 
-> Status: **Approved plan, awaiting implementation.** Everything below was verified against the
-> codebase at planning time (Sep 2026); paths updated after the `client/` restructure. Repo layout:
-> `formstr-backend` (payment backend, sibling repo at `../formstr-backend`), `client/web/` (merged
-> frontend), `client/` (Capacitor native shell around `client/web/`'s build).
+> Status: **Revision 2 — awaiting approval, nothing implemented.** Rev 1 (Sep 2026) planned IAP only.
+> Rev 2 (Oct 13 2026) adds **Stripe**, consolidates the payment UI/logic into one module in nail (`lib/payments`), re-bases the migrations on the schema as it is today, and links a
+> [UI wireframe](./wireframes/payments.html). Repos: `formstr-backend` (sibling, branch `fiat_payments`,
+> currently == `main`), `nail/client/web/` (frontend), `nail/client/` (Capacitor shell).
+
+## Revision 2 — what changed and why
+
+| # | Change | Reason (evidence) |
+|---|--------|-------------------|
+| 1 | Stripe added as a third fiat rail (Checkout Sessions + webhook) | Stripe account onboarded and activated. |
+| 2 | Payment UI + client logic consolidated into `lib/payments` + `components/payments` in nail (no shared package) | `SignupWizard` is 428 lines and owns invoice request, QR and socket; adding two more rails there would breach the 500-line alarm and the container/presenter rules. |
+| 3 | **Channel matrix** replaces "store build vs. everything else" | See Goals. Open builds (web + direct APK) now show **Lightning + Card**; store builds IAP only. |
+| 4 | **`invoices.lnInvoice` is NOT renamed** (rev 1 renamed it to `paymentInvoice`) | `GET /api/invoices` returns `SELECT *`; `InvoiceRecord.lnInvoice` is consumed by `formstr-analytics/.../PendingPaymentsTable.tsx` and the storage console (`types.ts`). A rename silently breaks both. Add `paymentRef` instead (see 1a). |
+| 5 | Rev 1's "make `expirationDate` nullable" is dropped | `mails.expirationDate` / `pendingMails.expirationDate` were created with `table.dateTime(...)` — already nullable in Postgres. Only the data update remains. |
+| 6 | Migration list rebuilt against the real tree (§1a) | Since rev 1: `domains`, `domain_members`, `domain_member_addresses`, `pendingDomainOrders` (workspace seats) landed on `main`; `pendingStoragePlan`/`storagePlans` + `invoices.price/price_unit` exist **unmerged** on `blossom-storage-plans`. |
+| 7 | Pending-order tables gain `provider`; reconcile crons must filter on it | Both reconcile crons treat every `pendingMails`/`pendingDomainOrders` row as a zap awaiting a relay receipt. Stripe rows would be queried against relays forever. |
+| 8 | `storeProducts` is seeded by script, not migration | Bundle ids differ per environment (`com.formstr.mail` vs `.debug`/staging); a migration seed would be wrong on one of them. |
+| 9 | Order validation extracted once, used by Lightning, Stripe and store paths | Three callers now; rev 1 said "mirror `generateMailsInvoiceHandler`" which would be a fourth copy. |
 
 ## Goals
 
-1. Add fiat payments via **Apple In-App Purchase** and **Google Play Billing** for mailbox purchases in the native app.
-2. **Store builds exclude Lightning entirely** (required by Apple 3.1.1 / Google Play billing policy anyway): the Play Store build and the iOS App Store build get IAP only — no Lightning UI, copy, or sats. **Web and the direct Android APK keep Lightning unchanged** (the APK ships outside Play — e.g. Zapstore/sideload — so store billing policy doesn't apply there). The direct APK must contain **no Google services at all**.
-3. Make mailboxes **permanent** — for store payments *and* the existing Lightning flow (currently every purchase sets a 3-month `expirationDate`).
-4. Scope: **mail product only**. Forms stays Lightning-only on web (backend is built so forms can adopt store payments later).
-5. Integration approach: **direct store APIs** — a Capacitor IAP plugin on the client, receipt/transaction verification on formstr-backend via Google Play Developer API + Apple App Store Server API. No RevenueCat.
+1. Fiat payments for mailboxes: **Stripe** (card/wallets) on open builds, **Apple IAP / Google Play Billing** in store builds.
+2. **Channel matrix** (single source of truth: `lib/payments/channels.ts`):
 
-## Current state (verified)
+   | Build | Lightning | Card (Stripe) | Apple/Google IAP |
+   |---|---|---|---|
+   | Web | ✓ (default) | ✓ | – |
+   | Direct APK (Zapstore/sideload) | ✓ (default) | ✓ (hosted Checkout) | – |
+   | Play Store build | – | – | ✓ Google |
+   | iOS App Store build | – | – | ✓ Apple |
+
+   Store builds contain **no Lightning and no Stripe** (Apple 3.1.1 / Play billing policy for digital goods). The direct APK has **no Google services at all** — which is also why it cannot offer Play Billing; "all payments" for it means Lightning + Card (**assumption — confirm**, Open Question 1).
+3. Mailboxes become **permanent** for every rail.
+4. Store (IAP) behaviour is **unchanged from rev 1** — only its code moves into `lib/payments`.
+5. Products on the rail: mail (all rails), **workspace seats** (Stripe + Lightning; not IAP — a seat quantity doesn't fit a fixed store SKU), forms and storage stay Lightning-only for now. The Stripe design is product-agnostic, so each is a later adapter, not a redesign (Open Question 2).
+6. Direct store/Stripe APIs; no RevenueCat.
+
+## Current state (verified Oct 13 2026)
 
 ```
-Web (lightning):
-  landing SignupWizard ──POST /api/generate-invoice/mail (NIP-98)──▶ paymentController
-      │                                                                │
-      │                                     resolves LUD16 zap endpoint, builds NIP-57
-      │                                     zap request, gets BOLT11 invoice,
-      │                                     stores pendingMails row (paymentHash,
-      │                                     lnInvoice, expirationDate = +3 months)
-      ▼                                                                │
-  InvoiceQR (QR + lightning: URI)                                      ▼
-      │                                          paymentManager.listenForPayment(hash)
-      │ WS /ws?hash=…                                            ws/zapListener
-      │                                          (kind-9735 zap receipts on relays)
-      ◀──── {status:"paid"} ────── handleZapReceipt ──▶ provisionMailPurchase ──▶ invoices ledger
-                                   (+ cron reconcilePendingMails every 15 min as backstop)
-
-Mobile (Android only today):
-  client/ = Capacitor native shell bundling landing at '/' + client at '/mails/'
-  (scripts/build-web.mjs assembles www/), CapacitorHttp enabled, no iOS project yet.
-  Purchases deep-link from client SettingsModal → landing ?buy=1 → same Lightning wizard.
+Lightning (all three products share this shape):
+  client ──POST /api/generate-invoice/mail | /api/workspace/generate-invoice (NIP-98)──▶ paymentController
+        pending row (pendingMails | pendingDomainOrders | pendingForm; paymentHash = zap-request pubkey)
+        paymentManager.listenForPayment(hash) ──▶ zapReceiptHandler ──▶ provision* ──▶ invoices ledger
+        cron */15: reconcilePendingMails / reconcilePendingDomainOrders (relay lookup by paymentHash)
+  client WS /ws?hash=… ◀── {status:"paid"}
 ```
 
-Key files:
-- Backend: `src/controllers/paymentController.ts`, `src/handlers/zapReceiptHandler.ts`, `src/services/mailProvisioning.ts`, `src/ws/webSocketManager.ts`, `src/models/{pendingMail,mails,nip05,invoices}.ts`, `src/controllers/utils.ts` (`getExpirationFromNow`), `migrations/`
-- Landing: `client/web/src/components/SignupWizard.tsx`, `client/web/src/components/InvoiceQR.tsx`, `client/web/src/lib/{api,platform,config}.ts`
-- Client: `client/web/src/app/components/SettingsModal.tsx` (buy deep-link + Lightning hint copy)
-- Native shell: `client/{package.json,capacitor.config.ts,scripts/build-web.mjs,android/}`
+- Mail pay UI: `SignupWizard` (steps `login → resolving → name → pay → keys → done`), `InvoiceQR`, hosted in the mail client by `BuyAddressModal` (`.landing` scope pins the light palette).
+- Mail expiry is stored, never enforced (`cleanupCrons.ts` only expires forms). Workspace members don't get `mails` rows.
+- `invoices.paymentHash` is NOT NULL UNIQUE; `lnInvoice` nullable text; `/api/invoices` leaks `*`.
+- `src/index.ts` registers `express.json()` globally — a Stripe webhook needs the raw body and must be mounted **before** it.
 
-Note: mail `expirationDate` is stored but **never enforced** (no cron deletes expired mails; `getMailboxHandler` ignores it). `cleanupCrons.ts` only expires *forms*. So going permanent is mostly "stop setting it" + a data migration.
+## Migration ledger (as of today)
+
+| Migration | State |
+|---|---|
+| `20260406162239_mails` … `20260820120000_nip05_unique_domain` | on `main` (mails, invoices, nip05, pendingMails, nip05.domain, users, invoices.lnInvoice, unique(nip05,domain)) |
+| `20260826120000_pgp_keys` | on `main` (nip05.wkd_hash, pgp_pubkey_b64) |
+| `20260924140000_domains`, `20260925120000_domain_verification`, `20260925130000_domain_members`, `20260925140000_pending_domain_orders` | on `main` (workspaces/seats) |
+| `20261002130000_pending_storage_plans` | **only on `blossom-storage-plans`** — adds `pendingStoragePlan`, `storagePlans`, `invoices.price`, `invoices.price_unit` |
+| New, this plan: `20261014100000` … `20261014130000` | below |
+
+**Sequencing dependency:** merge `blossom-storage-plans` first (this plan then records `price`/`price_unit` for Stripe/store rows and `pendingStoragePlan` gets the same `provider` treatment in a follow-up). If it can't merge first, move `price`/`price_unit` into our M2 and delete them from the storage migration — never both. (Open Question 3.)
 
 ---
 
-## Phase 0 — Store consoles & accounts (no code)
+## Phase 0 — Consoles & accounts (no code)
 
-1. **Google Play Console**
-   - Confirm app `com.formstr.mail` exists (create listing if not).
-   - Create one-time product (non-consumable/managed): id `mailbox_base` (naming consistent with tier ids), title "Mailbox", description, pricing (fiat price set here; store shows localized price).
-   - Create a **service account**, grant it the *Financial data* role / link to Play Console (Monetization setup → API access), download JSON key.
-   - Add license testers (internal testing track) for sandboxed purchases.
-2. **App Store Connect**
-   - App record for `com.formstr.mail` (bundle id must be registered in the developer account).
-   - Sign **Paid Applications Agreement** + banking/tax — IAP products cannot be tested without it.
-   - Create non-consumable IAP: product id `com.formstr.mail.mailbox.base`, pricing, localized metadata, review screenshot.
-   - Create **sandbox tester** account(s).
-   - Generate App Store Server API key (.p8): Key ID + Issuer ID.
-3. Note pricing/parity decision: Lightning price stays in sats (backend-driven); store prices are managed in the consoles. No forced parity — the wizard shows the store's local price in IAP mode.
+1. **Stripe** (account already onboarded/activated)
+   - Create a **restricted API key** (Checkout Sessions: write; PaymentIntents/Charges: read) for test mode and live mode — not the root secret key.
+   - Register the webhook endpoint `https://<api>/api/stripe/webhook` for `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`, `checkout.session.expired` (+ `charge.refunded`, `charge.dispute.created` for alerting, Phase 5). Save the signing secret per environment.
+   - Dashboard: enable card + wallets; branding (logo/colors) for Checkout; statement descriptor; decide **Stripe Tax** (Open Question 4) and Radar defaults.
+   - Local dev: `stripe listen --forward-to localhost:5000/api/stripe/webhook`.
+   - Fiat price is configuration (env, same philosophy as `MAIL_PRICE_SATS`): no Stripe Price objects, inline `price_data`.
+2. **Google Play Console** — unchanged from rev 1 (app `com.formstr.mail`, one-time product `mailbox_base`, service account + Financial data role, license testers).
+3. **App Store Connect** — unchanged from rev 1 (app record, Paid Applications Agreement, non-consumable `com.formstr.mail.mailbox.base`, sandbox testers, App Store Server API key).
+4. Pricing: Lightning stays sats, Stripe is `MAIL_PRICE_FIAT` (minor units) in `STRIPE_CURRENCY`, stores price in consoles. No forced parity.
 
 ---
 
 ## Phase 1 — Backend (formstr-backend)
 
-### 1a. Migrations (three new files in `migrations/`)
+Policy reminders (`AGENTS.md`): feature branch, each migration in its **own commit**, `npx tsc --noEmit` + `npx jest`, explicit approval before any deploy runs them, state target remote before pushing.
 
-1. **Mail permanent** (`…_mail_permanent.ts`)
-   - `mails.expirationDate` → nullable, then `UPDATE mails SET "expirationDate" = NULL` (grandfathers every existing mailbox as permanent).
-   - `pendingMails.expirationDate` → nullable (column stops being written).
-2. **Invoices provider + column rename** (`…_invoices_provider.ts`)
-   - Rename `invoices.lnInvoice` → **`paymentInvoice`** (knex `renameColumn`; also rename `pendingMails.lnInvoice` → `paymentInvoice` for consistency) and update every code reference: `models/invoices.ts` (`InvoiceRecord`), `handlers/zapReceiptHandler.ts`, `services/mailProvisioning.ts`, `scripts/backfillInvoiceLnInvoice.ts`, `scripts/reconcileMailInvoice.ts`.
-   - Add `provider` string NOT NULL default `'lightning'` (`'lightning' | 'apple' | 'google'`).
-   - No other new columns: `paymentHash` keeps its Lightning/zap meaning and becomes **nullable** (store payments have none). The store's transaction reference (Apple `transactionId`, Google `orderId`) goes in the renamed **`paymentInvoice` column** — it's the payment's invoice/receipt reference whatever the rail. Add a **partial unique index on `paymentInvoice` WHERE NOT NULL** so one transaction can never be recorded twice (BOLT11s are already unique, so zap rows are unaffected). The existing backfill script (`getInvoicesMissingPaymentInvoice`) is untouched — store rows always have `paymentInvoice` set.
-3. **Store product catalog** (`…_store_products.ts`): table `storeProducts` — `id` (pk), `platform` (`'apple'|'google'`), `appIdentifier` (Google packageName / Apple bundleId the product lives in), `storeProductId` (id as created in the console), `grantsProduct` (`'mail'`), `grantsTier` (`'base'`), `active` bool, unique (platform, storeProductId). Seeded with the two mailbox rows from Phase 0. Future apps/products = new rows, no code changes. (Verification credentials stay in env — they're per developer *account*, shared across apps.)
+### 1a. Migrations (four new files, all additive except M1's data update)
+
+1. **`20261014100000_mail_permanent.ts`** — data only: `UPDATE mails SET "expirationDate" = NULL`. Columns already nullable. **This is the one destructive step**: historical dates are lost and `down()` cannot restore them (take a `pg_dump -t mails` before deploy; `down()` is a documented no-op). Nothing reads or enforces the date, analytics returns null.
+2. **`20261014110000_invoices_provider.ts`** — on `invoices`:
+   - add `provider` text NOT NULL default `'lightning'` (`'lightning'|'stripe'|'apple'|'google'`; every existing row is correctly Lightning via the default);
+   - add `paymentRef` text NULL — the rail's own transaction reference: Stripe `payment_intent` id, Apple `transactionId`, Google `orderId`. **Partial unique index** `ON invoices("paymentRef") WHERE "paymentRef" IS NOT NULL` so a transaction can never be ledgered twice;
+   - `paymentHash` → DROP NOT NULL (store payments have no order key; Stripe rows keep their order key there). The existing UNIQUE constraint stays;
+   - `lnInvoice` untouched. Code that scans for rows missing `lnInvoice` (`getInvoicesMissingLnInvoice`, `backfillInvoiceLnInvoice.ts`) gains `.where({ provider: 'lightning' })` — otherwise Stripe/store rows (no bolt11 by nature) are picked up forever.
+3. **`20261014120000_pending_orders_provider.ts`** — on `pendingMails` and `pendingDomainOrders`:
+   - add `provider` text NOT NULL default `'lightning'`;
+   - `lnInvoice` → DROP NOT NULL (Stripe orders have none);
+   - add `providerRef` text NULL (Stripe Checkout Session id) with a partial unique index where not null;
+   - `paymentHash` stays NOT NULL UNIQUE and is the **order key** for every rail: the zap-request pubkey for Lightning, a server-generated 32-byte random hex for Stripe (it is already just an opaque correlation key — see `randomSha256` in `utils/zaps.ts`).
+   - `pendingStoragePlan` (unmerged) gets the identical change in the storage branch's follow-up.
+4. **`20261014130000_store_products.ts`** — table `storeProducts` exactly as rev 1 (`platform apple|google`, `appIdentifier`, `storeProductId`, `grantsProduct`, `grantsTier`, `active`, unique `(platform, storeProductId)`). **No seed in the migration**; `scripts/seedStoreProducts.ts` upserts per-environment rows from env.
+
+Style note: this schema mixes camelCase (older tables, `paymentHash`) and snake_case (`domains`, `price_unit`). New columns on existing tables follow that table's style (`provider`, `paymentRef`, `providerRef`); the new table follows the newer snake style where it has multi-word columns.
+
+Migration verification: `npm run migrate` on a scratch DB cloned from a dump of staging, then `down` for M2–M4, then up again; assert `provider='lightning'` for all legacy ledger rows.
 
 ### 1b. Stop expiring mailboxes
+`paymentController.generateMailsInvoiceHandler` and `mailController.createMailboxHandler`: stop passing `expirationDate`. `getExpirationFromNow()` stays — **forms keep the 3-month expiry**. `zapReceiptHandler`/`provisionMail` just forward the (now null) pending value.
 
-- `src/controllers/paymentController.ts` (both invoice handlers) and `src/controllers/mailController.ts` (`createMailboxHandler`): stop passing `expirationDate` for mail (pass `null`/omit). Keep `getExpirationFromNow()` in `controllers/utils.ts` untouched — **forms keep their 3-month expiry** (`cleanupExpiredForms` still applies to forms).
-- `src/models/mails.ts` / `pendingMail.ts`: make `expirationDate` optional in types (already `?`).
-- Analytics (`src/models/analytics.ts`) reads `expirationDate` — returns `null` for mail now; no change needed.
-- No change to `zapReceiptHandler` / `provisionMailPurchase` expiry threading (they just forward whatever the pending row holds, now `null`).
+### 1c. Shared services
+- `services/orderValidation.ts` (new): `validateMailOrder({ pubkey, nip05, tierId })` → `{ tier } | { error }` — reserved-name check, tier exists/available. Used by the Lightning handler, the Stripe checkout handler and store verify. (Same for workspace: `validateWorkspaceOrder({pubkey, domain, seats})` extracted from `generateWorkspaceInvoiceHandler`: owner-only, not suspended, 1–1000 seats.)
+- `services/mailProvisioning.ts`: extract `provisionMail({ pubkey, nip05, provider, paymentHash?, paymentRef?, lnInvoice?, price?, priceUnit? })`; `provisionMailPurchase(paymentHash)` becomes the thin pending-row wrapper. `createInvoice` records `provider` + `paymentRef`.
+- `workspaceProvisioning.provisionWorkspaceOrder(paymentHash)` already keys on the order key and is idempotent via `markDomainOrderGranted` — reused as is; it does **not** write an `invoices` row today (the zap handler does), so extract that ledger write into the provisioning function for the non-zap callers.
 
-### 1c. Extract shared provisioning
+### 1d. Stripe — `services/stripePayments.ts`, `controllers/stripeController.ts`, `routes/stripeRoutes.ts` (new)
 
-- Refactor `src/services/mailProvisioning.ts`: extract the body of `provisionMailPurchase` into `provisionMail({ pubkey, nip05, paymentHash, paymentInvoice? })` (mailbox row, nip-05 row, ledger insert, welcome mail — all idempotent as today). `provisionMailPurchase(paymentHash)` becomes a thin wrapper that loads the pendingMail row then calls `provisionMail`. Zap path behavior unchanged.
+Deps: `stripe` (official Node SDK, pin `apiVersion`). Env (credentials + prices; Stripe is disabled and `fiat` omitted from tiers when `STRIPE_SECRET_KEY` is unset; once set, missing prices are a startup error like the sats ones): `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_CURRENCY`, `MAIL_PRICE_FIAT`, `WORKSPACE_SEAT_PRICE_FIAT`.
 
-### 1d. Store payment service — `src/services/storePayments.ts` (new)
+- **`POST /api/stripe/checkout`** (NIP-98; `req.nostrPubkey` is the owner, body pubkey must match). Body `{ product: 'mail'|'workspace', tierId, nip05 | domain+seats, uiMode: 'embedded'|'hosted' }`.
+  1. `validate*Order` (1c). Amount is **derived server-side** from the tier/seat price — never from the request.
+  2. `orderKey = randomSha256()`; insert the pending row `{ provider:'stripe', paymentHash: orderKey, lnInvoice: null }`.
+  3. `stripe.checkout.sessions.create({ mode:'payment', ui_mode, client_reference_id: orderKey, metadata:{ product, orderKey }, line_items:[price_data × quantity], expires_at: now+30m, return_url | success_url+cancel_url }, { idempotencyKey: orderKey })`.
+  4. Store `providerRef = session.id`. Respond `{ orderKey, clientSecret | url, amount, currency }`.
+- **`POST /api/stripe/webhook`** — mounted with `express.raw({ type:'application/json' })` **before** `app.use(express.json())` in `src/index.ts`; `stripe.webhooks.constructEvent(raw, signature, STRIPE_WEBHOOK_SECRET)`; no NIP-98 (Stripe-signed).
+  - `checkout.session.completed` with `payment_status==='paid'` (or `async_payment_succeeded`): load the pending row by `client_reference_id`; **verify** `session.id === providerRef`, `amount_total` and `currency` equal the recomputed expectation, `mode==='payment'`; then call the same `provisionMail` / `provisionWorkspaceOrder` with `provider:'stripe'`, `paymentRef = payment_intent`, `price = amount_total`, `priceUnit = currency`.
+  - Provisioning failure → **HTTP 500** so Stripe retries (exponential backoff for ~3 days) — the webhook is its own reconciler. Unknown events → 200. Duplicate deliveries are no-ops (partial unique on `paymentRef`, `markDomainOrderGranted`, nip05 exists check).
+  - `…expired` / `async_payment_failed`: delete the pending row.
+- **`GET /api/orders/:orderKey/status`** → `{ status: 'pending'|'paid'|'expired' }`, unauthenticated: the key is 256-bit random (a capability) and the response carries nothing else. Paid = an `invoices` row with that `paymentHash`; pending = pending row younger than 30 min; else expired. The client polls this (2 s, bounded) after Checkout reports done. Lightning keeps its WebSocket.
+- **`GET /api/payments/config`** → `{ stripe: { enabled, publishableKey } , lightning: { enabled } }` so key rotation and test/live never need a client rebuild.
+- **Cron `scripts/reconcileStripeOrders.ts`** (*/5): for pending rows with `provider='stripe'` older than 2 min, `sessions.retrieve`; paid → provision, expired → delete; anything older than 24 h deleted. Add to `cleanup-crontab`. **Existing `reconcilePendingMails.ts` / `reconcilePendingDomainOrders.ts` add `provider='lightning'` to their row selection.**
+- Refunds/disputes: Phase 5. Until then `charge.refunded` / `charge.dispute.created` are logged loudly and (if mail is configured) emailed to `ADMIN`; no automatic revocation.
 
-- `verifyAndProvision(input: { platform: 'apple'|'google', productId, transactionId|purchaseToken, orderId?, pubkey, nip05, tierId })` — `productId` is resolved against the **DB catalog** (1a.3): the row yields the app identifier (packageName/bundleId) to verify against and what the purchase grants (`grantsProduct`/`grantsTier`). A `tierId` contradicting the catalog row is rejected. Nothing app- or product-specific is hardcoded.
-  1. **Validate purchase intent** (mirror `generateMailsInvoiceHandler`): `pubkey`/`nip05`/`tierId` present, `isReservedName(nip05)` blocked, tier exists/available.
-  2. **Idempotency pre-check**: an `invoices` row with `paymentInvoice = '<store tx reference>'` exists → return `already_provisioned` (client shows success). The partial unique index (1a.2) makes duplicates impossible even under a race.
-  3. **Verify with the store**:
-     - **Android**: `@googleapis/androidpublisher` → `purchases.products.get({ packageName: <from catalog row>, productId, token })`; require `purchaseState == 0` (purchased); **acknowledge** immediately (`purchases.products.acknowledge`) — Play auto-refunds non-consumables not acknowledged within 3 days.
-     - **iOS**: official `app-store-server-library` (npm) — verify the JWS signed transaction with `SignedDataVerifier` (Apple Root CA bundled), `transactionId`, bundleId matching the catalog row, type `NonConsumable`. Environment auto-detect: try production, fall back to sandbox (standard pattern, safe for one-time products).
-  4. **Provision**: call `provisionMail({ pubkey, nip05, paymentInvoice: '<store tx reference>', provider, paymentHash: null })` — reuse idempotency (`already_provisioned`) and unique-violation tolerance already built in.
-  5. **Ledger**: the shared `provisionMail` writes the `invoices` row: `provider = 'apple'|'google'`, `paymentInvoice` = store transaction reference, `paymentHash` = NULL. Lightning rows are untouched (`provider` defaults to `'lightning'`).
-  6. Return `{ status: 'provisioned' | 'already_provisioned', address }`.
+### 1e. Store IAP — as rev 1
+`services/storePayments.ts` + `controllers/storePaymentController.ts` + `POST /api/store/verify` (NIP-98, `req.nostrPubkey` is owner, catalog-resolved product, Apple JWS via `app-store-server-library`, Google `purchases.products.get` + **acknowledge**, idempotent via `paymentRef`, ledger `provider='apple'|'google'`, `paymentHash` NULL). Deps `@googleapis/androidpublisher`, `app-store-server-library`, `google-auth-library`; env `GOOGLE_SERVICE_ACCOUNT_JSON`, `APPLE_KEY_ID`, `APPLE_ISSUER_ID`, `APPLE_PRIVATE_KEY_P8`, `APPLE_VERIFY_ENV`. Mail only. The only deltas from rev 1: uses `paymentRef` (not `paymentInvoice`) and `validateMailOrder`.
 
-### 1e. Controller + route
+### 1f. Tiers endpoint
+`getMailTiers()` / `getWorkspaceTiers()` add optional `fiat: { currency, amountMinor }` (when Stripe enabled) and `store: { apple, google }` (from `storeProducts`). `priceSats` unchanged → old clients unaffected. Clients render by the build's methods; the backend serves every rail to every client (it can't tell a store build from a browser, and store-policy compliance is a client build property).
 
-- `src/controllers/storePaymentController.ts` (new): `verifyStorePaymentHandler` — takes body `{ platform, productId, receipt: { transactionId | purchaseToken, orderId }, pubkey, nip05, tierId }`; **uses `req.nostrPubkey` (NIP-98) as the owner**, rejecting a mismatched `pubkey` in the body (prevents buying for someone else by mistake).
-- `src/routes/storePaymentsRoutes.ts` (new), mounted in `src/index.ts` at `/api/store`: `POST /api/store/verify` behind `validateNostrAuth` + the same CORS options as other routes. (No WebSocket needed — verification is synchronous; the client gets the result in the HTTP response.) Also extend `getTiersHandler` (`GET /api/tiers/mail`): include each tier's store product ids per platform from the catalog (`store: { apple, google }`), so the client never hardcodes store product ids either.
+### 1g. Tests (jest, existing style)
+`stripePayments.test.ts` (mock `stripe`): checkout creates pending row + session with server-derived amount; webhook happy path; bad signature → 400; amount/currency/session-id mismatch rejected; duplicate delivery idempotent; provisioning error → 500; expired session cleans pending row; pubkey mismatch → 403. `storePayments.test.ts` as rev 1. Extend the reconcile-script tests to assert Stripe rows are skipped. Migration test on scratch DB (above).
 
-### 1f. Config, deps, tests
-
-- `.env` additions (credentials only — app/package identifiers come from the `storeProducts` catalog per 1a.3, so onboarding a new app or product needs no env or code changes): `GOOGLE_SERVICE_ACCOUNT_JSON` (inline JSON or path), `APPLE_KEY_ID`, `APPLE_ISSUER_ID`, `APPLE_PRIVATE_KEY_P8` (or path), `APPLE_VERIFY_ENV=auto|production|sandbox`. Document in README.
-- `package.json`: add `@googleapis/androidpublisher`, `app-store-server-library`, `google-auth-library`.
-- Tests (`jest`, mirrors existing style): `storePayments.test.ts` with mocked androidpublisher + apple verifier — happy path, idempotent re-verify, unverified/unpaid purchaseState rejected, reserved name blocked, pubkey mismatch rejected, unknown/inactive catalog productId rejected. Migration tests via `npm run migrate` on a scratch DB.
-
-**Not changing:** zap/Lightning backend code, relays, `paymentManager`, reconcile cron — all remain for the web product.
-
----
-
-## Phase 2 — Landing: IAP branch in the signup wizard
-
-### 2a. Platform detection — `client/web/src/lib/platform.ts`
-
-- Add `isStoreBuild()`: true when `import.meta.env.VITE_STORE_BUILD === '1'` (a **build-time** flag set by build-web.mjs, so the bundle is also correct in a plain browser for local QA). Deliberately **not** based on `isNativeApp()`: the direct Android APK is native but keeps Lightning — only the store builds flip the flag.
-
-### 2b. IAP wrapper — `client/web/src/lib/iap.ts` (new)
-
-- Thin wrapper over `capacitor-iap` (recommended plugin: npm `capacitor-iap`, Capacitor 7 + StoreKit 2 + Play Billing; **verify current API/docs at implementation time**, fallback: capacitor-community plugin or a minimal native bridge):
-  - `fetchProduct(id)` → localized price string
-  - `requestPurchase(id)` → normalized receipt `{ platform, productId, transactionId?, purchaseToken?, orderId? }`
-  - `restorePurchases()` → same normalized receipts
-  - No-op/stub on web (dynamic `import()` inside `isStoreBuild()` guard so web bundles never load the plugin).
-
-### 2c. API — `client/web/src/lib/api.ts`
-
-- Add `verifyStorePurchase(authHeader, body)` → `POST /api/store/verify` (NIP-98 signed, same error handling pattern as `generateMailInvoice`).
-
-### 2d. Wizard — `client/web/src/components/SignupWizard.tsx`
-
-- Steps `login → name → pay → done` stay identical. Only the **pay step** branches on `isStoreBuild()`:
-  - **Store path (new `StorePay.tsx` component):** fetch product from the plugin → show localized store price → "Purchase" button → `requestPurchase` (native payment sheet) → `verifyStorePurchase` with NIP-98 → on `provisioned`/`already_provisioned` → `done`. No invoice, no QR, no WebSocket, no polling.
-  - **Web path:** unchanged `InvoiceQR` + `paymentSocket`.
-- Tier selection: in store mode, tiers render from the backend as today but price labels come from the store; tier → store product mapping comes from the tiers endpoint (`store` field, DB-driven per 1e) — nothing hardcoded client-side, so future tiers/apps need only console rows + catalog entries.
-- **"Restore purchases"** link on the store pay step (App Review requires it): calls plugin restore → verify endpoint → jumps to `done` (backend returns `already_provisioned`).
-- Error handling: user-canceled purchase (silent retry), store errors, verification failure (retry button — the purchase token stays valid for re-verification).
-
-### 2e. Copy / compliance
-
-- `client/web/src/pages/PrivacyPolicy.tsx`: update payment wording — Lightning on web and the direct Android APK; App Store / Google Play billing in the store builds; we never receive card/billing details (true for all paths; Lightning zap receipts remain public events, disclosed as today).
-- `client/web/src/app/components/SettingsModal.tsx` line ~617 hint ("how Lightning payments work"): make payment-method neutral ("how payments work") — it's shown in the native bundle too.
-- Welcome mail template (`formstr-backend/src/mailer/templates/welcome.md`): no expiry mention today — no change.
+**Not changing:** zap listener, relays, `paymentManager`, forms/storage payment paths.
 
 ---
 
-## Phase 3 — Mobile app wiring (both platforms)
+## Phase 2 — Frontend payments module (nail, `client/web/src/lib/payments/`)
 
-### 3a. Android — two Gradle flavors, direct APK has zero Google
+The payment logic stays **inside nail** (no shared package in this revision). It is still pulled out of `SignupWizard` into one cohesive module so the wizard stays thin (repo rules 2, 3, 8) and so a later extraction to common-packages, if wanted, is a move rather than a rewrite.
 
-- `client/package.json`: add `capacitor-iap` (bundled but only dynamically imported in store builds); scripts: `build:web` (Lightning, unchanged) and `build:web:store` (`VITE_STORE_BUILD=1`).
-- **Flavors:** `flavorDimensions "distribution"` in `app/build.gradle` with `direct` and `play` flavors. `scripts/toggle-iap.mjs` (new) runs after every `cap sync` and removes/re-adds the capacitor-iap lines from `capacitor.settings.gradle` + `capacitor.build.gradle`, so the two flavors genuinely differ at the native level.
-- **Direct APK (keeps Lightning, zero Google):** `npm run build:web && npm run sync && node scripts/toggle-iap.mjs --off && ./gradlew assembleDirectRelease` — ships with **no Play Billing library, no Google Play Services, no google-services plugin, no Firebase**. The existing conditional google-services apply stays off (never commit `google-services.json`); the notifier keeps WorkManager polling (no push). Zapstore/sideload distribution otherwise unchanged.
-- **Play AAB (store build, Lightning excluded):** `npm run build:web:store && npm run sync && ./gradlew bundlePlayRelease` — the only flavor containing the IAP plugin. Sequence discipline matters: always rebuild web before each artifact so the Play AAB never carries the Lightning bundle (build script prints which variant it assembled; guard release bundling to fail if `www/` was built without the store flag).
-- Release signing config for Play (keystore via env vars / `keystore.properties`, not committed), establish a versionCode scheme. ProGuard: add plugin keep rules if the plugin docs require (verify). Test via internal testing track with license testers (sandbox billing, no real charge).
+```
+client/web/src/lib/payments/
+  channels.ts     CHANNEL_METHODS matrix + methodsForBuild() (+ test)
+  client.ts       tiers, payments config, lightning invoice, stripe checkout, store verify, order status
+  status.ts       pollOrderStatus (bounded), watchLightning (existing WS)
+  iap.ts          dynamic import of the Capacitor IAP plugin (fetchProduct / requestPurchase / restore)
+client/web/src/components/payments/
+  PaymentSheet.tsx   picks the method UI; renders MethodPicker when >1 method
+  MethodPicker.tsx   segmented control (wireframe §2), Lightning first
+  LightningPay.tsx   today's InvoiceQR, moved unchanged
+  StripePay.tsx      Embedded Checkout (hosted via @capacitor/browser in a native shell)
+  StorePay.tsx       purchase + Restore purchases
+```
 
-### 3b. iOS (new)
+- **Lightning first, everywhere.** `CHANNEL_METHODS` orders open builds `['lightning','stripe']`; the picker lists Lightning first and **defaults to it** (a remembered choice, `zustand/persist` key `mailstr.pay.method`, overrides the default). Price rows show sats first, fiat second.
+- **Dead-code elimination is the compliance mechanism.** `PaymentSheet` receives its methods from `lib/payments/methods.ts`, which composes them behind the build-time constant (`import.meta.env.VITE_STORE_BUILD`) with **dynamic imports per rail**, so Rollup drops the Lightning/QR and Stripe chunks from store bundles (rev 1 §3d requirement, preserved). A runtime switch would defeat this.
+- Lightning's invoice and Stripe's session are requested **lazily on selection**: opening the sheet on Lightning never creates a Stripe session, and choosing Card never creates a Lightning invoice or relay listener.
+- Stripe: `@stripe/stripe-js` + `@stripe/react-stripe-js` (rule 13, proven libs), loaded only inside `StripePay`; publishable key from `/api/payments/config`.
+- Tests: vitest for `channels`, `client`, `status`; component tests for the picker and each rail against a mocked client; Playwright e2e for the wizard (Phase 5).
 
-- `client/package.json`: add `@capacitor/ios`; `npx cap add ios` (requires macOS + Xcode; Apple Developer Program account). Set bundle id `com.formstr.mail`, combined `www/` bundle built with `build:web:store` (iOS is store-only — always the IAP bundle).
-- StoreKit 2 comes through the plugin — no native code needed; add the `.storekit` configuration file for local Xcode testing, then sandbox-device testing.
-- App Store submission assets: privacy policy URL (landing serves it), support URL, screenshots, privacy "nutrition labels" (data collected = pubkey + purchase record, as per the privacy policy).
+## Phase 3 — Wizard integration
 
-### 3c. Build script
+1. `lib/platform.ts`: `isStoreBuild()` (`VITE_STORE_BUILD === '1'`, build-time, **not** `isNativeApp()`).
+2. `SignupWizard.tsx` (428 lines, over the 300 target): the pay step becomes `<PaymentSheet product="mail" order={{ tierId, nip05 }} onPaid={() => setStep('keys')} />`; delete `requestInvoice`, `invoice` state, `generateMailInvoice`, `paymentSocket`, `MailInvoice` from `lib/api.ts` and the old `InvoiceQR` (rule 14). Extract the login effect into `useSignupLogin` in the same change to get under the size alarm.
+3. `NameStep`: price row per wireframe §1 (**sats first, then fiat** on open builds; store price only in store builds); the CTA stops naming a method and stops saying "Preparing invoice…".
+4. `BuyAddressModal` / `.landing` scoping unchanged.
+5. `SettingsModal` hint + `PrivacyPolicy.tsx`: payment-method-neutral wording; disclose Stripe as processor (we never receive card data), Lightning zap receipts stay public, store billing in store builds.
+6. Per repo rule 15, log the ADR ("DCE-based channel exclusion") in `docs/Session-Log.md`.
+7. Other apps that copy this UI today (storage console, forms support button) are untouched; they keep their own copies until someone decides to share the module.
 
-- `client/scripts/build-web.mjs`: accept a `--store` flag (or `STORE_BUILD=1` env) that adds `VITE_STORE_BUILD: '1'` to the landing build env; the default build stays Lightning. `package.json` wraps both as `build:web` / `build:web:store`.
+## Phase 4 — Mobile wiring
 
-### 3d. What "store builds exclude Lightning" means concretely
+- **Build flag/script**: as rev 1 §3c (`build:web` open, `build:web:store`).
+- **Android flavors** (`direct`, `play`) and `toggle-iap.mjs`: as rev 1 §3a. `direct` ships **no Play Billing, no Play Services, no Firebase**; Stripe there is hosted Checkout in a Custom Tab (just the system browser) — needs `@capacitor/browser` and a `com.formstr.mail://pay-return` (or https app-link) intent filter. Stripe's Android SDK is **not** used (keeps the zero-Google guarantee provable).
+- **iOS**: as rev 1 §3b, store-only bundle.
+- Compliance check in the build: the store bundle must not contain `lightning:`, `qrcode`, `js.stripe.com`, `@stripe`; the direct APK must not contain `com.android.billingclient` / Google services (apkanalyzer).
 
-- In a store bundle (`VITE_STORE_BUILD=1`): the wizard's pay step renders `StorePay` only; `InvoiceQR` and `paymentSocket` are excluded via the platform check (lazy `import()`, so the QR-code dep isn't in the store bundle); no sats anywhere — tiers show store fiat prices.
-- The direct Android APK and web bundles keep everything Lightning as today — same code path, flag simply not set.
-- No Lightning/zap code exists client-side anyway (it's all backend), and the backend keeps zap code for web/APK — nothing removed there.
+## Phase 5 — Verification
 
----
+1. Backend: `npx tsc --noEmit`, `npx jest`; migrations up/down/up on a staging dump (§1a).
+2. **Stripe, test mode**: `stripe listen`; test cards `4242…` (success), `4000 0000 0000 9995` (decline), 3DS card; `stripe trigger` for refund/dispute logging. Webhook retry: kill backend mid-delivery, confirm Stripe redelivers and the result is one mailbox, one ledger row.
+3. **Lightning regression (web)**: full flow still works with the picker present; legacy ledger rows read `provider='lightning'`; `/api/invoices` response still has `lnInvoice`; both existing reconcile crons skip Stripe rows.
+4. Wizard e2e (Playwright, mock backend): picker shows Lightning (default) then Card on open build, store-only on store build; Lightning invoice not created until selected; success path through `GET /api/orders/:key/status`.
+5. Android: `play` internal-track purchase + restore; `direct` APK: Lightning, Stripe hosted round-trip with the app killed mid-checkout (order status resumes); apkanalyzer check. iOS sandbox + TestFlight.
+6. Idempotency: replay webhook / store verify → single ledger row, single nip05.
 
-## Phase 4 — Verification
-
-1. **Backend unit tests** (Phase 1f) green: `npm test` in formstr-backend.
-2. **Lightning regression (web):** local backend + landing dev servers — full flow: tiers → invoice → (test zap via staging price) → provisioned; mailbox shows permanent (no expiry) in `GET /api/mails/mailbox`; existing DB after migration shows `expirationDate = NULL`.
-3. **Android E2E:** Play internal-track build (`play` flavor) → sign up → claim name → Play sheet → purchase (tester account) → verify → provisioned → welcome mail → client shows address. Kill app mid-flow → restore purchases path. **Direct-APK regression:** assemble the `direct` flavor, confirm the Lightning wizard still works and confirm the APK contains no `com.android.billingclient` / Google services classes (apkanalyzer check).
-4. **iOS E2E:** sandbox tester → same flow; Xcode StoreKit config for fast iteration; then TestFlight.
-5. **Idempotency:** replay verify call → `already_provisioned`, single `invoices` row, single nip-05.
-6. **Cron:** `reconcilePendingMails` untouched (web path only); confirm store payments never create pendingMails rows.
-
----
-
-## Phase 5 (follow-up, out of scope today)
-
-- **Refund handling:** Google RTDN (Pub/Sub push) + App Store Server Notifications V2 → revoke mailbox/nip-05 on refund. Needed eventually for both stores' policies.
-- Store payments for **forms** (needs a native forms app or web store-payment surface; provider abstraction already supports it).
-- Multi-tier store products when storage/attachment tiers ship.
+## Phase 6 (follow-up, out of scope)
+Refund handling across rails (Stripe `charge.refunded`/disputes, Google RTDN, App Store Server Notifications V2 → revoke mailbox/seats); Stripe for forms/storage (storage is a 30-day renewing plan — decide one-off vs Subscriptions); Stripe Tax if chosen; multi-tier store SKUs.
 
 ## Dependency order
+Phase 0 → merge `blossom-storage-plans` → Phase 1 → Phase 2 (can start against mocks once the §1d/§1e contracts are agreed) → Phase 3 → Phase 4 → Phase 5.
 
-Phase 0 (consoles) → Phase 1 (backend) → Phase 2 (landing) → Phase 3 (mobile) → Phase 4. Phase 2's UI can be built against Phase 1 locally in parallel with Phase 0 account setup.
+## Open questions
+1. **Direct APK "all payments"** = Lightning + Card (store billing impossible outside Play). Correct?
+2. **Stripe scope v1**: recommend mail + workspace seats. OK, or mail only?
+3. **Storage branch ordering**: merge `blossom-storage-plans` first (recommended), or fold `price`/`price_unit` into M2?
+4. **Stripe Tax / currencies**: single currency (`STRIPE_CURRENCY`) at launch, tax off unless you want it on?
+5. **Mailbox date wipe (M1)**: OK to null existing `mails.expirationDate`, with a pre-deploy table dump?
 
 ## Key risks
-
-- **Plugin choice:** `capacitor-iap` must support Capacitor 7 / current Play Billing + StoreKit 2 — verify at implementation start; fallback is a thin custom native bridge (Phase 2b isolates this behind one wrapper module).
-- **Apple review:** Paid Applications agreement + IAP metadata must be complete before sandbox/testflight testing works.
-- **Android acknowledge window:** non-consumables must be acknowledged within 3 days or Play refunds — done in the verify path.
-- **Restores are Apple/Google-account-scoped, not nostr-key-scoped:** restoring on a different nostr key provisions that key (documented behavior, matches "mailbox tied to your key").
+- **Embedded Checkout inside the Capacitor WebView** is unverified → hosted Checkout is the fallback already designed in; decide after a device test.
+- **Webhook ordering**: browser may report done before the webhook lands → status polling, bounded at 2 minutes then "still confirming — you'll get your mailbox shortly" (cron + Stripe retries finish the job).
+- **Plugin choice** for IAP, **Apple review prerequisites**, **Android acknowledge window**, **restores are store-account-scoped** — unchanged from rev 1.
+- **Policy**: Stripe must never ship in a store bundle; enforced by DCE + bundle grep (Phase 4), not by convention.
