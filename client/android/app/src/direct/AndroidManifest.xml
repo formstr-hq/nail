@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Direct (Zapstore / sideloaded) APK only. Hosted card Checkout runs in the
+  system browser and comes back through this deep link; Stripe tells the
+  backend about the payment itself (webhook), the link only brings the buyer
+  back to the app. Not present in the Play build.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity android:name="com.formstr.mail.MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.formstr.mail" android:host="pay-return" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

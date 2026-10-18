@@ -55,8 +55,10 @@ jobs:
         id: task
         env:
           BT: ${{ inputs.build_type }}
-        # assembleDebug / assembleRelease — Gradle wants the type capitalised.
-        run: echo "name=assemble${BT^}" >> "$GITHUB_OUTPUT"
+        # assembleDirectDebug / assembleDirectRelease — the direct (Zapstore /
+        # sideload) flavor; Gradle wants the type capitalised. The Play flavor is
+        # built separately from a store bundle (see client/README.md).
+        run: echo "name=assembleDirect${BT^}" >> "$GITHUB_OUTPUT"
 
       - name: Assemble APK
         working-directory: client/android

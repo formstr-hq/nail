@@ -25,6 +25,22 @@ android {
             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Two distributions of the same app, with different payment rails:
+    //   direct  the Zapstore / sideloaded APK: Lightning + card (hosted
+    //           Checkout). No Google services and no Play Billing at all.
+    //   play    the Play Store build: in-app purchases only. No Lightning, no card.
+    // The web bundle and the native plugins must match the flavor: build with
+    // `pnpm run build` for direct and `pnpm run build:store` for play (the
+    // tasks below refuse to package a bundle of the other kind).
+    flavorDimensions "distribution"
+    productFlavors {
+        direct {
+            dimension "distribution"
+        }
+        play {
+            dimension "distribution"
+        }
+    }
     buildTypes {
         debug {
             // Debug builds install alongside the production app instead of
@@ -43,6 +59,21 @@ android {
         jvmTarget = "21"
     }
 }
+
+// Distribution guards: a Lightning/card bundle must never be packaged as a
+// store build (and the reverse). scripts/check-store-bundle.mjs reads
+// www/.build-channel, scans the whole bundle and the native project.
+def clientDir = rootProject.projectDir.parentFile
+tasks.register('checkStoreBundle', Exec) {
+    workingDir clientDir
+    commandLine 'node', 'scripts/check-store-bundle.mjs', '--mode', 'store'
+}
+tasks.register('checkOpenBundle', Exec) {
+    workingDir clientDir
+    commandLine 'node', 'scripts/check-store-bundle.mjs', '--mode', 'open'
+}
+tasks.matching { it.name ==~ /^pre(Direct)\w*Build$/ }.configureEach { dependsOn 'checkOpenBundle' }
+tasks.matching { it.name ==~ /^pre(Play)\w*Build$/ }.configureEach { dependsOn 'checkStoreBundle' }
 
 repositories {
     flatDir{
