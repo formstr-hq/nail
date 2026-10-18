@@ -1943,3 +1943,35 @@ Docs only; no code changed. Files: `docs/fiat-iap-plan.md` (rewritten as rev 2),
 ### Open
 
 Five questions at the end of the plan (direct-APK scope, Stripe v1 scope, storage-branch ordering, tax/currency, mailbox-date wipe).
+
+---
+
+## 2026-10-18 — Fiat plan: sats-pegged card quotes, Stripe Managed Payments, store-bundle rule
+
+Docs only; no code. Files: `docs/fiat-iap-plan.md`, `docs/wireframes/payments.html`.
+
+### Decisions (ADR-style)
+1. **Prices are fixed in sats; fiat for Stripe is a stateless signed quote** (sats × BTC/<currency> from a two-source median feed, plus a gross-up so the net after Stripe's fees equals the converted amount). No rate or sats price is stored; `invoices.price` / `price_unit` hold the amount charged. Flow: pick currency → quote → accept → invoice → pay → webhook checks the paid amount against the invoice.
+2. **Card payments use Stripe Managed Payments** (Stripe is merchant of record for tax). Consequences recorded in the plan: no `adaptive_pricing` / `automatic_tax` / `payment_method_types`, tax-exclusive pricing with a tax code, higher fees (re-verify), Stripe-initiated refunds, buyer-facing "sold through Link".
+3. **Lightning and Stripe code must never ship in store bundles**: six layers (build-constant composition, no Lightning vocabulary in shared code, post-build denylist scan, release gating, `X-Pay-Channel` tripwire, tests).
+4. Migration verification is a two-step local tool (`snapshot`, then `check`) for this migration set only, never checked in. Deploy B gains M13 (NOT NULL on `status` / `provider`). Store seat packs are 1 / 10 / 50.
+
+### Open
+Currency list vs Managed Payments' always-on Adaptive Pricing; auto-deactivation on refunds; confirm Managed Payments fee numbers, embedded Checkout support and tax code.
+
+---
+
+## 2026-10-18 — Fiat payments implemented (backend Deploy A + Stripe + store IAP + nail client)
+
+Code in `formstr-backend` branch `fiat_payments` and in `client/` here. Nothing deployed or pushed.
+
+### Decisions (ADR-style)
+1. **DCE-based payment-method exclusion.** Which payment methods a build offers is chosen on the build-time constant `VITE_STORE_BUILD` (`lib/payments/methods.ts`, `PriceTag`, `PriceCurrencySwitch`, `billing.tsx`), each method behind a dynamic `import()` inside the branch that wants it, so the store bundle never contains Lightning or card code. Shared code names no rail: tiers carry the backend's price fields opaquely (`MailTier.pricing`) and only the rail modules read them. Backed by an ESLint `no-restricted-imports` ban on static rail imports, `scripts/check-store-bundle.mjs` (denylist scan of the whole bundle + native project, with a justified allowlist for nostr-tools' dead zap helpers), Gradle `pre{Direct,Play}*Build` gates, CI on both bundle kinds, and the backend's `X-Pay-Channel: store` 403.
+2. **Unified invoices table with product status** (backend): see `docs/fiat-iap-plan.md` and the backend migrations M1-M10.
+3. **Purchase plugin: `cordova-plugin-purchase`** (the plan's `capacitor-iap` is unpublished). It is gated per flavor by `includePlugins` in `capacitor.config.ts` rather than by editing Gradle files, so the direct APK has no Play Billing (verified: 0 `billingclient` classes). Its unverified assumptions (the `approved` event shape, StoreKit 2 transaction ids) are confined to `lib/payments/store/iap.ts`.
+4. **Embedded Checkout never redirects** (`redirect_on_completion: "never"` + `onComplete`); the native app uses hosted Checkout in the system browser and returns by deep link. The client always waits for the backend (`/api/orders/:id/status`) rather than its own belief.
+5. A charged store purchase that the backend cannot provision is **not finished/consumed**, so the store can refund it.
+
+### Not verified here
+Real Stripe Managed Payments sandbox (fees, tax, embedded Checkout), Apple/Google sandbox purchases, an on-device run, iOS (needs macOS).
+
