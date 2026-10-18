@@ -28,7 +28,7 @@ const routes = [
     path: "/privacy-policy",
     title: "Privacy Policy — Mail by Formstr",
     description:
-      "How Mail by Formstr handles your data: pseudonymous Nostr public keys, encrypted mail, no trackers, no analytics, no plaintext archive. Lightning-zap payment receipts are public on Nostr relays.",
+      "How Mail by Formstr handles your data: pseudonymous Nostr public keys, encrypted mail, no trackers, no analytics, no plaintext archive. How payments are handled and what stays public.",
     // Legal pages stay indexable but de-prioritized vs. the landing.
     robots: "index, follow, max-image-preview:large, max-snippet:-1",
     ogType: "article",

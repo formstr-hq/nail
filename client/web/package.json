@@ -17,6 +17,8 @@
     "@fontsource/ibm-plex-mono": "^5.3.0",
     "@formstr/local-relay": "^0.6.2",
     "@formstr/signer": "^0.3.2",
+    "@stripe/react-stripe-js": "^7.0.0",
+    "@stripe/stripe-js": "^10.1.0",
     "@tailwindcss/typography": "^0.5.19",
     "linkifyjs": "^4.3.3",
     "lucide-react": "^0.563.0",

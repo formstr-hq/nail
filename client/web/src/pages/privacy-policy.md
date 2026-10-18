@@ -47,7 +47,11 @@ Email between the sender and our bridge travels as ordinary email. Like every ma
 
 ## Payments
 
-Signup is paid via a Bitcoin Lightning invoice settled as a Nostr zap. Zap receipts are public events on Nostr relays and contain your public key and the amount — this is inherent to how zaps work and serves as pseudonymous, verifiable proof of your claim. We do not receive or store card numbers, bank details, or billing addresses; we never learn your legal identity through payment.
+You can pay in two ways, and we collect only what each needs.
+
+**Bitcoin Lightning.** Signup is paid via a Lightning invoice settled as a Nostr zap. Zap receipts are public events on Nostr relays and contain your public key and the amount — this is inherent to how zaps work and serves as pseudonymous, verifiable proof of your claim. We never learn your legal identity through a Lightning payment.
+
+**Card.** Card purchases are sold through Stripe Managed Payments: Stripe (operating as Link) is the merchant of record. Stripe collects your name, billing address and card details at checkout, calculates and collects any tax that applies, sends your receipt, and handles refunds and disputes under its own privacy policy. We never receive or store your card details or billing address; we receive only confirmation that a payment of a given amount succeeded. Because Stripe may refund a payment on its own within 60 days, a refunded purchase may be deactivated.
 
 ---
 
@@ -59,7 +63,7 @@ To keep you signed in and remember your preferences, the Mailstr apps save a sma
 
 ## Third-Party Services
 
-Your encrypted messages are published to Nostr relays — independent, community-run servers governed by their own policies. They store ciphertext they cannot read. Lightning payments are processed over the Lightning Network; the nodes involved are operated by third parties.
+Your encrypted messages are published to Nostr relays — independent, community-run servers governed by their own policies. They store ciphertext they cannot read. Lightning payments are processed over the Lightning Network; the nodes involved are operated by third parties. Card payments are processed by Stripe.
 
 ---
 

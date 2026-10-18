@@ -79,13 +79,6 @@ export interface SeatView {
   available: number
 }
 
-/** Flat per-seat price and the allowed purchase range (public). */
-export interface SeatPrice {
-  pricePerSeatSats: number
-  minSeats: number
-  maxSeats: number
-}
-
 /** Verification outcome, mirroring the backend's discriminated result. */
 export type VerifyOutcome =
   | { status: 'verified'; onboarding?: DomainOnboarding }
@@ -295,34 +288,4 @@ export function revokeMemberAddress(
     `/api/domains/${encodeURIComponent(domain)}/addresses/${nip05Id}`,
     { method: 'DELETE' },
   )
-}
-
-/** The flat per-seat price and allowed quantity range (public — no auth). */
-export async function fetchSeatPrice(): Promise<SeatPrice> {
-  const res = await fetch(apiUrl('/api/workspace/seat-price'))
-  if (!res.ok) throw new Error(`Could not load the seat price (${res.status})`)
-  return (await res.json()) as SeatPrice
-}
-
-export interface SeatInvoice {
-  invoice: string
-  paymentHash: string
-  amount: number
-  seats: number
-  pricePerSeatSats: number
-}
-
-/**
- * Start a seat purchase. Returns a Lightning invoice — the caller watches the
- * payment websocket on `paymentHash`, exactly as the mail purchase flow does.
- */
-export function createSeatInvoice(
-  active: ActiveSigner,
-  domain: string,
-  seats: number,
-): Promise<SeatInvoice> {
-  return authed<SeatInvoice>(active, '/api/workspace/generate-invoice', {
-    method: 'POST',
-    body: { domain, seats },
-  })
 }

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { createAccount, completeOnboarding } from './helpers'
+import { createAccount, completeOnboarding, stubCardOff } from './helpers'
 
 const BRIDGE_PK = 'a'.repeat(64)
 const PAYMENT_HASH = 'f'.repeat(64)
@@ -170,6 +170,7 @@ async function stubApp(page: import('@playwright/test').Page) {
       }),
     })
   })
+  await stubCardOff(page)
   await page.route('**/api/workspace/seat-price', (route) =>
     route.fulfill({
       status: 200,
@@ -329,7 +330,6 @@ test('workspace setup: add → DNS → verify → assign addresses', async ({ pa
 
   // Billing is flat per-seat with a custom quantity, not fixed packs: the live
   // total tracks the entered seat count (20 sats/seat).
-  await expect(page.getByText(/20 sats per seat/i)).toBeVisible()
   await page.getByLabel('Seats to buy').fill('3')
   await expect(page.getByText('60 sats')).toBeVisible()
 

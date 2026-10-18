@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { stubCardOff } from './app/helpers'
 
 /**
  * The signup name step renders the plans from GET /api/tiers/mail (an array).
@@ -7,6 +8,7 @@ import { test, expect } from '@playwright/test'
  * tiers and assert both render and the buyable one drives the CTA.
  */
 test('name step renders backend tiers with includes/excludes and coming-soon', async ({ page }) => {
+  await stubCardOff(page)
   await page.route('**/api/tiers/mail', (route) =>
     route.fulfill({
       status: 200,
@@ -49,5 +51,7 @@ test('name step renders backend tiers with includes/excludes and coming-soon', a
   await expect(page.getByText('Attachments')).toBeVisible() // base: not included
   await expect(page.getByText(/coming soon/i)).toBeVisible() // Mail Plus badge
   // The buyable tier drives the CTA (dash-agnostic).
-  await expect(page.getByRole('button', { name: /get mail .* 2,100 sats/i })).toBeVisible()
+  // Card is off, so the price is the sats price; the CTA no longer names an amount or a method.
+  await expect(page.getByText('2,100')).toBeVisible()
+  await expect(page.getByRole('button', { name: /^get mail$/i })).toBeVisible()
 })

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { createAccount, completeOnboarding } from './helpers'
+import { createAccount, completeOnboarding, stubCardOff } from './helpers'
 
 // Any valid 64-char hex works as the bridge's resolved pubkey — it just has to
 // be non-null so the app treats the local domain as reachable.
@@ -90,6 +90,7 @@ test('sidebar buy row opens the wizard in place and a purchase updates the alias
   page,
 }) => {
   await stubNip05(page, false)
+  await stubCardOff(page)
   // Tier list for the embedded wizard — registered before goto, since the
   // wizard fetches tiers as soon as it mounts at the address step.
   await page.route('**/api/tiers/mail', (route) =>
@@ -140,7 +141,7 @@ test('sidebar buy row opens the wizard in place and a purchase updates the alias
   await page.getByPlaceholder('you').fill('zoe')
   await expect(page.getByText(/zoe@mailstr.app is available/i)).toBeVisible()
 
-  await page.getByRole('button', { name: /get mail .* 2,100/i }).click()
+  await page.getByRole('button', { name: /^get mail$/i }).click()
   // The fake socket's "paid" push fires ~50ms after the watcher connects, so
   // the QR step can be skipped before a snapshot catches it — wait on the
   // success step instead.
@@ -160,6 +161,7 @@ test('sidebar buy row opens the wizard in place and a purchase updates the alias
 
 test('buying over Settings does not discard its unsaved edits', async ({ page }) => {
   await stubNip05(page, false)
+  await stubCardOff(page)
   await page.route('**/api/tiers/mail', (route) =>
     route.fulfill({
       status: 200,

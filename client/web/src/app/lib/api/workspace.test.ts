@@ -8,8 +8,6 @@ import {
   revokeMember,
   revokeMemberAddress,
   removeDomain,
-  createSeatInvoice,
-  fetchSeatPrice,
 } from './workspace'
 
 /**
@@ -209,35 +207,5 @@ describe('removeDomain', () => {
     await expect(removeDomain(active, 'acme.com')).rejects.toThrow(
       'still has addresses assigned',
     )
-  })
-})
-
-describe('createSeatInvoice', () => {
-  it('posts the domain and seat count', async () => {
-    const spy = mockFetch(() =>
-      json({ invoice: 'lnbc1...', paymentHash: 'h', amount: 180, seats: 10, pricePerSeatSats: 18 }),
-    )
-    const res = await createSeatInvoice(active, 'acme.com', 10)
-    expect(JSON.parse(String(spy.mock.calls[0][1]?.body))).toEqual({
-      domain: 'acme.com',
-      seats: 10,
-    })
-    expect(res.amount).toBe(180)
-    expect(res.pricePerSeatSats).toBe(18)
-  })
-})
-
-describe('fetchSeatPrice', () => {
-  it('is unauthenticated and returns the flat price and range', async () => {
-    const spy = mockFetch(() => json({ pricePerSeatSats: 20, minSeats: 1, maxSeats: 1000 }))
-    const price = await fetchSeatPrice()
-    expect(price).toEqual({ pricePerSeatSats: 20, minSeats: 1, maxSeats: 1000 })
-    // No Authorization header: this endpoint is public.
-    expect(spy.mock.calls[0][1]).toBeUndefined()
-  })
-
-  it('reports a failure rather than a silent default', async () => {
-    mockFetch(() => json({}, 500))
-    await expect(fetchSeatPrice()).rejects.toThrow(/500/)
   })
 })

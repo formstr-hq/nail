@@ -67,6 +67,14 @@ function MailApp() {
   const [navOpen, setNavOpen] = useState(false)
 
   const { account, active } = useAccountStore()
+
+  // Store builds: finish any purchase that was charged but never confirmed
+  // (the app was killed mid-verify). Dynamic import inside a build-time guard,
+  // so the open build never contains the store code.
+  useEffect(() => {
+    if (import.meta.env.VITE_STORE_BUILD !== '1' || !active) return
+    void import('@/lib/payments/store/sweep').then((m) => m.runStoreSweep(active))
+  }, [active])
   const { load, settings, loaded: settingsLoaded, eventExists: settingsEventExists } =
     useSettingsStore()
   const { selectedId, setSelected, syncError, setSyncError } = useMailStore()
