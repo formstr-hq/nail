@@ -84,6 +84,10 @@ function MailApp() {
 
   const composeDraft = useComposeOverlay((s) => s.draft)
   const composeMinimized = useComposeOverlay((s) => s.minimized)
+  // Remount the composer when a NEW draft replaces the open one (e.g. Reply
+  // while a minimized draft exists). Without this the fields kept the previous
+  // draft's To/Subject/Body while the draft prop underneath had changed.
+  const composeRevision = useComposeOverlay((s) => s.revision)
   const startBlankCompose = useComposeOverlay((s) => s.startBlank)
   const openCompose = useCallback(
     (draft: Draft) => useComposeOverlay.getState().open(draft),
@@ -317,6 +321,7 @@ function MailApp() {
 
       {composeDraft && (
         <ComposeModal
+          key={composeRevision}
           onClose={closeCompose}
           ctx={ctx}
           bridgeError={bridgeError}

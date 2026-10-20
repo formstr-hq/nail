@@ -170,16 +170,50 @@ describe('ComposeModal happy path', () => {
     return userTypedAndAssert(to)
   })
 
-  it('blocks an npub From for a known legacy recipient with a switch CTA', async () => {
-    const user = userEvent.setup()
+  // The npub bridge address cannot send (no NIP-05 row, no PGP key), so it
+  // must never appear as a From option — not even as the default.
+  it('never offers the npub as a From', () => {
     render(<ComposeModal {...PROPS} />)
-    const select = document.querySelector('select')!
-    const npubOption = Array.from((select as HTMLSelectElement).options).find((o) => o.value.startsWith('npub'))
-    expect(npubOption).toBeTruthy()
-    await user.selectOptions(select as HTMLSelectElement, npubOption!.value)
+    const select = document.querySelector('select') as HTMLSelectElement
+    const values = Array.from(select.options).map((o) => o.value)
+    expect(values).toContain('me@mailstr.app')
+    expect(values.some((v) => v.startsWith('npub'))).toBe(false)
+    expect(select.value).toBe('me@mailstr.app')
+  })
 
-    await user.type(screen.getByPlaceholderText('npub, name@domain, or an email address'), 'someone@gmail.com')
-    expect(await screen.findByText(/your npub can’t reach them/i)).toBeInTheDocument()
+  it('disables Send when the account has no usable From', () => {
+    render(
+      <ComposeModal
+        {...PROPS}
+        selfAddresses={['npub1' + 'q'.repeat(58) + '@mailstr.app']}
+        ownedAliases={[]}
+      />,
+    )
+    const select = document.querySelector('select') as HTMLSelectElement
+    expect(Array.from(select.options).map((o) => o.value)).toEqual([''])
+    expect(screen.getByText('No sending address')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^send$/i })).toBeDisabled()
+  })
+
+  // A reply is sent as the mailbox the original message was delivered to.
+  // The sidebar's inbox filter must not win over it.
+  it('pins a reply’s From to the delivered-to address over the active inbox', () => {
+    useMailStore.setState({ inboxFilter: 'bob@mailstr.app' })
+    render(
+      <ComposeModal
+        {...PROPS}
+        selfAddresses={[...SELF, 'bob@mailstr.app']}
+        ownedAliases={['me@mailstr.app', 'bob@mailstr.app']}
+        draft={{
+          to: 'friend@mailstr.app',
+          subject: 'Re: Hi',
+          body: 'A reply!',
+          from: 'me@mailstr.app',
+          inReplyTo: 'x',
+        }}
+      />,
+    )
+    expect(document.querySelector('select')).toHaveValue('me@mailstr.app')
   })
 })
 

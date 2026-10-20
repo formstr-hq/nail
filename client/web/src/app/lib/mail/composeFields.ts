@@ -1,4 +1,3 @@
-import { BRIDGE_DOMAIN } from '@/app/lib/nostr/constants'
 import { isNpub, splitAddress } from '@protocol'
 import { isKnownLegacyDomain } from '@/app/lib/nostr/nip05'
 import type { ResolveContext } from '@/app/lib/mail/resolve'
@@ -40,50 +39,74 @@ export function parseRecipients(to: string): string[] {
   return out
 }
 
-/** The user's npub address (`<npub>@<bridge domain>`), or '' when signed out. */
-export function defaultNpubAddress(accountNpub: string | undefined): string {
-  return accountNpub ? `${accountNpub}@${BRIDGE_DOMAIN}` : ''
+/**
+ * Can this address actually send mail? The npub mailbox is receive-only in
+ * every path that matters: the bridge rejects it as a sender for external
+ * recipients (no NIP-05 row) and it cannot hold a PGP key, so offering it in
+ * the From picker only produces a bounce or an unencrypted send. The composer
+ * filters it out completely instead of letting the user pick a dead sender.
+ */
+export function isSendableAddress(address: string | undefined): boolean {
+  if (!address) return false
+  return !isNpub(address.trim()) && !isNpubSender(address)
+}
+
+/** The self address matching `address` (case-insensitively), if it is one that
+ *  can send. Returns the owned spelling so the select value matches an option. */
+function ownedSendable(address: string | undefined, selfAddresses: string[]): string | undefined {
+  if (!address) return undefined
+  const match = selfAddresses.find((a) => a.toLowerCase() === address.toLowerCase())
+  return match && isSendableAddress(match) ? match : undefined
 }
 
 /**
- * App-wide From, fully derived from the inbox the user is viewing (the
- * sidebar's active alias), falling back to the saved sender address, then an
- * owned alias, then the npub. Deriving it — rather than seeding a `useState`
- * once at mount — is the fix for the composer/sidebar handle mismatch:
- * `selfAddresses` (owned addresses), `settings.senderAddress`, and
- * `inboxFilter` all resolve/change *after* the composer opens, and a frozen
- * seed left the From showing a different handle than the sidebar. An explicit
- * pick writes through to `inboxFilter` (the select's onChange, silent
- * setter), so this expression tracks the user's choice too and the two never
- * disagree. It is the npub that used to silently bounce off the bridge; the
- * composer's guard blocks that. An alias is preferred over the npub as the bare
- * default because the npub bounces at the bridge for legacy recipients while
- * an alias works for both — an explicit npub pick (switcher → inboxFilter, or
- * saved sender) still wins via the branches above.
+ * The composer's From.
+ *
+ * A reply pins the account address the original message was delivered to
+ * (`preferredFrom`) — that is the identity the correspondent wrote to, and it
+ * must win over whatever inbox happens to be selected in the sidebar. Without
+ * a reply pin, the From follows the active inbox, then the saved sender, then
+ * an owned alias, then any other sendable self address. The npub is never a
+ * candidate: it cannot send through the bridge and cannot hold a key, so a
+ * user who only has an npub gets no From until they buy an alias.
  */
 export function deriveFromAddress(input: {
+  preferredFrom?: string
   inboxFilter: string | null
   selfAddresses: string[]
   senderAddress?: string
   ownedAliases: string[]
-  defaultAddress: string
 }): string {
+  const preferred = ownedSendable(input.preferredFrom, input.selfAddresses)
+  if (preferred) return preferred
+
+  const sendable = input.selfAddresses.filter(isSendableAddress)
   if (input.inboxFilter) {
-    const match = input.selfAddresses.find((a) => a.toLowerCase() === input.inboxFilter)
+    const match = sendable.find((a) => a.toLowerCase() === input.inboxFilter)
     if (match) return match
   }
-  if (input.senderAddress) return input.senderAddress
-  if (input.ownedAliases.length > 0) return input.ownedAliases[0]
-  return input.defaultAddress || input.selfAddresses[0] || ''
+  if (input.senderAddress) {
+    // Prefer the owned spelling so the select's value matches its option.
+    const match = sendable.find(
+      (a) => a.toLowerCase() === input.senderAddress!.toLowerCase(),
+    )
+    if (match) return match
+    if (isSendableAddress(input.senderAddress)) return input.senderAddress
+  }
+  const alias = input.ownedAliases.find(isSendableAddress)
+  if (alias) return alias
+  return sendable[0] ?? ''
 }
 
 /**
- * Selected alias first, the rest in selfAddresses order (npub next, then
- * owned aliases) — so the dropdown leads with the active sender.
+ * Selected alias first, the rest in selfAddresses order — so the dropdown
+ * leads with the active sender. The npub is filtered out: it is not a usable
+ * From (see isSendableAddress).
  */
 export function deriveFromOptions(selfAddresses: string[], fromAddress: string): string[] {
-  const rest = selfAddresses.filter((a) => a.toLowerCase() !== fromAddress.toLowerCase())
-  return fromAddress ? [fromAddress, ...rest] : rest
+  const sendable = selfAddresses.filter(isSendableAddress)
+  const rest = sendable.filter((a) => a.toLowerCase() !== fromAddress.toLowerCase())
+  return isSendableAddress(fromAddress) ? [fromAddress, ...rest] : rest
 }
 
 /**
