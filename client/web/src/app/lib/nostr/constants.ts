@@ -14,7 +14,7 @@ export const KIND_SETTINGS = 30078
 
 // NIP-Metadata (kind 34578, addressable): per-entity metadata whose content is
 // NIP-44 ciphertext to the author's own key. We use one event per mail to hold
-// its read/archived/trashed state. The `d` tag is a keyed HMAC of the gift-wrap
+// its read state and filed folder. The `d` tag is a keyed HMAC of the gift-wrap
 // id (see mailMeta.ts) so the coordinate never reveals which mail it refers to,
 // and we deliberately omit the optional `["t", …]` sub-type tag so these events
 // are indistinguishable from any other kind-34578 metadata on the relay.

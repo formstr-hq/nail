@@ -86,12 +86,12 @@ export function useMailActions() {
   return {
     markRead: useCallback((id: string) => apply(id, { read: true }), [apply]),
     markUnread: useCallback((id: string) => apply(id, { read: false }), [apply]),
-    archive: useCallback((id: string) => apply(id, { archived: true, trashed: false }), [apply]),
-    unarchive: useCallback((id: string) => apply(id, { archived: false }), [apply]),
-    trash: useCallback((id: string) => apply(id, { trashed: true, archived: false }), [apply]),
-    // Restore drops both filing flags, so a mail returns to the Inbox whether it
-    // was archived or trashed.
-    restore: useCallback((id: string) => apply(id, { archived: false, trashed: false }), [apply]),
+    archive: useCallback((id: string) => apply(id, { folder: 'archive' }), [apply]),
+    unarchive: useCallback((id: string) => apply(id, { folder: undefined }), [apply]),
+    trash: useCallback((id: string) => apply(id, { folder: 'trash' }), [apply]),
+    // Restore drops the folder, so the mail returns to its natural mailbox —
+    // Inbox, or Sent when the user authored it — whether it was archived or trashed.
+    restore: useCallback((id: string) => apply(id, { folder: undefined }), [apply]),
 
     /**
      * Permanent delete. The mail vanishes locally at once (tombstoned so no

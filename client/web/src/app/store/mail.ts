@@ -3,7 +3,7 @@ import { persist, type PersistStorage } from 'zustand/middleware'
 import type { Email, EmailFolder, MailFlags } from '@/app/types/mail'
 
 /**
- * Per-mail state (read / archived / trashed), keyed by gift-wrap id.
+ * Per-mail state (read / filed folder), keyed by gift-wrap id.
  *
  * This is the local, always-fast mirror of the kind-34578 metadata events that
  * carry mail state across devices (see lib/nostr/mailMeta.ts and the useMailMeta
@@ -87,6 +87,29 @@ function foldLegacyReadState(state: Record<string, MailFlags>): Record<string, M
     // Ignore a malformed legacy value.
     return state
   }
+}
+
+/**
+ * Fold the pre-folder filing shape into `folder`. Old builds stored a mail's
+ * filing as `archived`/`trashed` booleans; the state event now carries a single
+ * folder id. Runs on hydration so a device upgraded in place keeps its filing.
+ */
+function foldLegacyFiling(state: Record<string, MailFlags>): Record<string, MailFlags> {
+  let changed = false
+  const out: Record<string, MailFlags> = {}
+  for (const [id, flags] of Object.entries(state)) {
+    const legacy = flags as MailFlags & { archived?: boolean; trashed?: boolean }
+    if (legacy.archived || legacy.trashed) {
+      changed = true
+      const rest = { ...legacy }
+      delete rest.archived
+      delete rest.trashed
+      out[id] = { ...rest, folder: legacy.trashed ? 'trash' : 'archive' }
+    } else {
+      out[id] = flags
+    }
+  }
+  return changed ? out : state
 }
 
 /**
@@ -182,9 +205,9 @@ const mailStorage: PersistStorage<{
   },
 }
 
-/** True when the mail is filed away (archived or trashed), so it leaves Inbox. */
+/** True when the mail is explicitly filed somewhere other than the Inbox. */
 export function isFiled(flags: MailFlags | undefined): boolean {
-  return !!(flags?.archived || flags?.trashed)
+  return !!flags?.folder && flags.folder !== 'inbox'
 }
 
 interface MailState {
@@ -193,7 +216,7 @@ interface MailState {
   /** kind-34578 metadata event ids already decoded this session, so a relay
    *  replay never pays a second signer round-trip (mirrors `seenIds`). */
   seenMetaIds: Set<string>
-  mailState: Record<string, MailFlags> // read/archived/trashed/deleted by gift-wrap id
+  mailState: Record<string, MailFlags> // read/folder/deleted by gift-wrap id
   /** Wrap-author ephemeral keys captured at unwrap; powers NIP-09 delete. */
   wrapKeys: Record<string, string>
   /** Gift-wrap ids permanently deleted on this device; never shown again. */
@@ -341,9 +364,9 @@ export const useMailStore = create<MailState>()(
             mailState[ref] = flags
             const email = emails[ref]
             if (email && email.read !== !!flags.read) emails[ref] = { ...email, read: !!flags.read }
-            // Archived/trashed are deliberately NOT mirrored onto the email
-            // entry: `mailState` is the single source of truth for filing, and
-            // `EmailList` derives the folder from these flags via isFiled (D2).
+            // The folder is deliberately NOT mirrored onto the email entry:
+            // `mailState` is the single source of truth for filing, and
+            // `EmailList` derives the folder from these flags (D2).
           }
           if (!changed) return s
           return { mailState, emails, deletedIds, wrapKeys, selectedId, selectionClearedReason }
@@ -460,7 +483,7 @@ export const useMailStore = create<MailState>()(
         }
         return {
           ...current,
-          mailState: foldLegacyReadState(slices.mailState ?? {}),
+          mailState: foldLegacyFiling(foldLegacyReadState(slices.mailState ?? {})),
           wrapKeys: slices.wrapKeys ?? current.wrapKeys,
           deletedIds: new Set(slices.deletedIds ?? []),
         }

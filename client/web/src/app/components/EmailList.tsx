@@ -1,4 +1,4 @@
-import { useMailStore, isFiled } from '@/app/store/mail'
+import { useMailStore } from '@/app/store/mail'
 import { useAccountStore } from '@/app/store/account'
 import { useMailActions } from '@/app/hooks/useMailActions'
 import { useSenderIdentity } from '@/app/hooks/useSenderIdentity'
@@ -177,14 +177,15 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
           // reflects the inbox the user picked.
           if (!matchesAlias(e, inboxFilter, effectiveFrom.get(e.id))) return false
           const flags = mailState[e.id]
-          // Trash wins over archive: a mail flagged both (e.g. archived, then
-          // deleted) belongs in Trash, matching how restore clears both.
-          if (folder === 'trash') return !!flags?.trashed
-          if (folder === 'archive') return !!flags?.archived && !flags?.trashed
-          // Spam stays server-side, surfaced via labels — not a client metadata flag.
-          if (folder === 'spam') return e.labels.includes('spam')
-          if (isFiled(flags)) return false
-          // Sent = the self-copy we wrap to ourselves; Inbox = everything else
+          const filed = flags?.folder
+          const spam = e.labels.includes('spam')
+          // Spam stays server-side and surfaces only under Spam.
+          if (folder === 'spam') return spam
+          if (spam) return false
+          // An explicit folder wins over the natural mailbox; `inbox` is the
+          // implicit default and is not stored.
+          if (filed && filed !== 'inbox') return folder === filed
+          // Sent = the self-copy we wrap to ourselves; Inbox = everything else.
           if (folder === 'sent') return e.senderPubkey === myPubkey
           return e.senderPubkey !== myPubkey
         })

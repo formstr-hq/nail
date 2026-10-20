@@ -17,7 +17,7 @@ import { KIND_GIFTWRAP, KIND_MAIL_META, KIND_SETTINGS } from './constants'
  * cache-eviction timer:
  *
  *  - `KIND_GIFTWRAP` (1059) — the mail/DM ciphertext itself (the offline mailbox).
- *  - `KIND_MAIL_META` (34578) — read/archived/trashed state carried across devices.
+ *  - `KIND_MAIL_META` (34578) — read/folder state carried across devices.
  *  - `KIND_SETTINGS` (30078) — the account's mail settings.
  *
  * PROTECTING THEM AFFECTS THE LOCAL STORE ONLY. Prune never publishes to

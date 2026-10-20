@@ -154,7 +154,7 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
 
         <span className="flex-1" />
 
-        {flags?.trashed ? (
+        {flags?.folder === 'trash' ? (
           <>
             <Button onClick={fileAway(restore)} title="Move back to Inbox">
               <InboxIcon className="h-3.5 w-3.5" />
@@ -172,11 +172,11 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
         ) : (
           <>
             <Button
-              onClick={fileAway(flags?.archived ? unarchive : archive)}
-              title={flags?.archived ? 'Move back to Inbox' : 'Archive'}
+              onClick={fileAway(flags?.folder === 'archive' ? unarchive : archive)}
+              title={flags?.folder === 'archive' ? 'Move back to Inbox' : 'Archive'}
             >
               <ArchiveIcon className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{flags?.archived ? 'Unarchive' : 'Archive'}</span>
+              <span className="hidden sm:inline">{flags?.folder === 'archive' ? 'Unarchive' : 'Archive'}</span>
             </Button>
             <Button onClick={fileAway(trash)} title="Move to Trash">
               <TrashIcon className="h-3.5 w-3.5" />

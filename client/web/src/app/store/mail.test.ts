@@ -76,12 +76,12 @@ describe('delete forever, locally', () => {
     const s = useMailStore.getState()
     s.addEmail(email())
     s.saveWrapKey(ID, 'f'.repeat(64))
-    s.setFlag(ID, { trashed: true })
+    s.setFlag(ID, { folder: 'trash' })
 
     const merged = useMailStore.getState().markDeleted(ID)
 
     expect(merged.deleted).toBe(true)
-    expect(merged.trashed).toBe(true) // prior flags preserved in the meta write
+    expect(merged.folder).toBe('trash') // prior flags preserved in the meta write
     const after = useMailStore.getState()
     expect(after.emails[ID]).toBeUndefined()
     expect(after.wrapKeys[ID]).toBeUndefined()

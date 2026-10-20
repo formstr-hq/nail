@@ -122,8 +122,18 @@ export type EmailFolder = 'inbox' | 'sent' | 'trash' | 'archive' | 'spam'
  */
 export interface MailFlags {
   read?: boolean
-  archived?: boolean
-  trashed?: boolean
+  /**
+   * The folder the mail is filed in, by id. Absent means its natural mailbox:
+   * Sent when the user authored it, Inbox otherwise. `folder: 'inbox'` is the
+   * implicit default and is not stored. Folder definitions live in settings;
+   * the ids in use today are the reserved `EmailFolder` names.
+   */
+  folder?: string
+  /**
+   * Labels the message carries, by id. Unlike `folder`, a message may carry
+   * any number. Definitions live in settings alongside the folders.
+   */
+  labels?: string[]
   /**
    * Permanently deleted. The kind-5 deletion is a separate, best-effort purge
    * of the wrap from relays (see lib/nostr/delete.ts); THIS flag is the
