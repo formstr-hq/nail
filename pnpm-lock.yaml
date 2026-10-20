@@ -52,8 +52,8 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
       '@formstr/local-relay':
-        specifier: ^0.6.2
-        version: 0.6.2(typescript@5.9.3)
+        specifier: ^0.6.4
+        version: 0.6.4(typescript@5.9.3)
       '@formstr/signer':
         specifier: ^0.3.2
         version: 0.3.2(nostr-signer-capacitor-plugin@0.0.5(@capacitor/core@7.6.9))(typescript@5.9.3)
@@ -497,8 +497,8 @@ packages:
   '@fontsource/ibm-plex-mono@5.3.0':
     resolution: {integrity: sha512-eTgnZjZEGk1QtD3ZstF+Vclo2HLAni8YMy34/DxllwZvyz1lR/1RF/xTiAquOBO7MvqBx8D2Ig2WCPMVfdZu7Q==}
 
-  '@formstr/local-relay@0.6.2':
-    resolution: {integrity: sha512-KEBSLMOAFO52CdBNPTvQ5Zt+ZrFM8aug1dOVdt7mfWPEkpdI+IpQc0XoZ9krhNqNMvEsP69Dk75I51pj5+B4KQ==}
+  '@formstr/local-relay@0.6.4':
+    resolution: {integrity: sha512-Mc+nUOEyVMCFjs3tz026LeQvQtbmAUX4gsWV4N+uE7H+u3VWfTXby2mmg8OFTnsPu85GOWzd7t39Oqnj+azr2w==}
 
   '@formstr/signer@0.3.2':
     resolution: {integrity: sha512-XtMmJuI2oELoPaqxCSACay78qDiFQLjwFFCTGTLjElaXLHbghBmrF0vxgu2tSWQEzXITi3VLHpG2ndHCGfVy9g==}
@@ -2830,7 +2830,7 @@ snapshots:
 
   '@fontsource/ibm-plex-mono@5.3.0': {}
 
-  '@formstr/local-relay@0.6.2(typescript@5.9.3)':
+  '@formstr/local-relay@0.6.4(typescript@5.9.3)':
     dependencies:
       nostr-tools: 2.25.2(typescript@5.9.3)
     transitivePeerDependencies:
