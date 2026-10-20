@@ -44,22 +44,27 @@ function targetFromOverride(input: string): BridgeTarget {
   return { target: address, label: trimmed, isDefault: false }
 }
 
+/** The domain a bridge is looked up on for `address` (`_smtp@<domain>`). */
+export function bridgeDomainOf(address: string | undefined): string {
+  return (address && splitAddress(address)?.domain?.toLowerCase()) || BRIDGE_DOMAIN
+}
+
 /**
  * Every bridge to verify against for this user, deduped case-insensitively.
  *
- * Built from the signed-in user's own address domain (never resolved here —
- * resolution is asynchronous and belongs to the probe runner) plus the
- * Settings overrides, default first so the primary bridge's state lands early.
+ * The platform bridge first (it serves every hosted address, so it lands
+ * early), then one `_smtp@<domain>` per domain the user owns an address on —
+ * the composer's From picks which of them carries a message — then the
+ * Settings overrides. Never resolved here: resolution is asynchronous and
+ * belongs to the probe runner.
  */
-export function bridgeTargets(senderAddress: string, overrides?: string[]): BridgeTarget[] {
-  const ownDomain = splitAddress(senderAddress)?.domain ?? BRIDGE_DOMAIN
-  const targets: BridgeTarget[] = [
-    {
-      target: `${BRIDGE_NIP05_NAME}@${ownDomain}`,
-      label: ownDomain,
-      isDefault: true,
-    },
-  ]
+export function bridgeTargets(domains: string[], overrides?: string[]): BridgeTarget[] {
+  const all = [BRIDGE_DOMAIN, ...domains.map((d) => d.trim().toLowerCase()).filter(Boolean)]
+  const targets: BridgeTarget[] = all.map((domain) => ({
+    target: `${BRIDGE_NIP05_NAME}@${domain}`,
+    label: domain,
+    isDefault: true,
+  }))
   for (const override of overrides ?? []) {
     if (!override?.trim()) continue
     targets.push(targetFromOverride(override))
@@ -121,21 +126,60 @@ export async function resolveBridgeProbes(
 }
 
 /**
- * Which bridge this user's outbound legacy mail relays through, given the
- * current probe states.
+ * The probes that can carry mail sent from `fromAddress`, in preference order.
  *
  * Precedence mirrors the old single-override rule: when the user configured
- * overrides, only a resolved override may send — falling back to the default
- * would quietly relay through a bridge they did not choose. With no override,
- * the default bridge is the outbound one. Null means external mail cannot be
- * sent right now (still resolving, or failed).
+ * overrides, only an override may send — falling back to the default would
+ * quietly relay through a bridge they did not choose. Otherwise the bridge of
+ * the From's own domain, then the platform bridge: a workspace domain is
+ * served by the hosted bridge, which itself rejects a From it does not serve.
+ * With no From, any default (the old single-sender behaviour).
  */
-export function outboundBridge(probes: BridgeProbe[]): string | null {
+function candidates(probes: BridgeProbe[], fromAddress?: string): BridgeProbe[] {
   const overrides = probes.filter((p) => !p.isDefault)
-  if (overrides.length > 0) {
-    const resolved = overrides.find((p) => p.status === 'resolved')
-    return resolved?.status === 'resolved' ? resolved.pubkey : null
+  if (overrides.length > 0) return overrides
+  const defaults = probes.filter((p) => p.isDefault)
+  if (!fromAddress) return defaults.slice(0, 1)
+  const own = `${BRIDGE_NIP05_NAME}@${bridgeDomainOf(fromAddress)}`
+  const platform = `${BRIDGE_NIP05_NAME}@${BRIDGE_DOMAIN}`
+  return [own, platform]
+    .filter((t, i, all) => all.indexOf(t) === i)
+    .map((t) => defaults.find((p) => p.target.toLowerCase() === t))
+    .filter((p): p is BridgeProbe => Boolean(p))
+}
+
+/**
+ * Which bridge outbound legacy mail from `fromAddress` relays through, given
+ * the current probe states. Null means external mail cannot be sent from it
+ * right now (still resolving, or failed).
+ *
+ * A preferred candidate that is still resolving holds the answer at null
+ * rather than falling through: a later bridge could route the same From
+ * differently once the preferred one lands.
+ */
+export function outboundBridge(probes: BridgeProbe[], fromAddress?: string): string | null {
+  for (const p of candidates(probes, fromAddress)) {
+    if (p.status === 'resolved') return p.pubkey
+    if (p.status === 'resolving') return null
   }
-  const fallback = probes.find((p) => p.isDefault)
-  return fallback?.status === 'resolved' ? fallback.pubkey : null
+  return null
+}
+
+/**
+ * The outbound-bridge state for one From, as the composer must show it: the
+ * bridge to use, whether that is still being worked out, and — once settled
+ * with none — the bridges that failed, so the error can say which.
+ */
+export function senderBridge(
+  probes: BridgeProbe[],
+  fromAddress?: string,
+): { bridgePubkey: string | null; resolving: boolean; failed: BridgeProbe[] } {
+  const relevant = candidates(probes, fromAddress)
+  const bridgePubkey = outboundBridge(probes, fromAddress)
+  // Before the first pass lands there are no probes — that is "still
+  // resolving", not "failed", so the composer must not flash an error.
+  const resolving =
+    !bridgePubkey && (relevant.length === 0 || relevant.some((p) => p.status === 'resolving'))
+  const failed = bridgePubkey || resolving ? [] : relevant.filter((p) => p.status === 'failed')
+  return { bridgePubkey, resolving, failed }
 }

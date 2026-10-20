@@ -65,8 +65,8 @@ function ownedSendable(address: string | undefined, selfAddresses: string[]): st
  * A reply pins the account address the original message was delivered to
  * (`preferredFrom`) — that is the identity the correspondent wrote to, and it
  * must win over whatever inbox happens to be selected in the sidebar. Without
- * a reply pin, the From follows the active inbox, then the saved sender, then
- * an owned alias, then any other sendable self address. The npub is never a
+ * a reply pin, the From follows the active inbox, then an owned alias, then
+ * any other sendable self address. The npub is never a
  * candidate: it cannot send through the bridge and cannot hold a key, so a
  * user who only has an npub gets no From until they buy an alias.
  */
@@ -74,7 +74,6 @@ export function deriveFromAddress(input: {
   preferredFrom?: string
   inboxFilter: string | null
   selfAddresses: string[]
-  senderAddress?: string
   ownedAliases: string[]
 }): string {
   const preferred = ownedSendable(input.preferredFrom, input.selfAddresses)
@@ -84,14 +83,6 @@ export function deriveFromAddress(input: {
   if (input.inboxFilter) {
     const match = sendable.find((a) => a.toLowerCase() === input.inboxFilter)
     if (match) return match
-  }
-  if (input.senderAddress) {
-    // Prefer the owned spelling so the select's value matches its option.
-    const match = sendable.find(
-      (a) => a.toLowerCase() === input.senderAddress!.toLowerCase(),
-    )
-    if (match) return match
-    if (isSendableAddress(input.senderAddress)) return input.senderAddress
   }
   const alias = input.ownedAliases.find(isSendableAddress)
   if (alias) return alias

@@ -3,7 +3,7 @@ import type { ActiveSigner } from '@formstr/signer'
 import { fetchDmRelays } from './relays'
 import { getLocalRelay, queryLocal } from './localRelay'
 import { withSignerTimeout } from './signer'
-import { BRIDGE_DOMAIN, KIND_SETTINGS } from './constants'
+import { KIND_SETTINGS } from './constants'
 
 const SETTINGS_D_TAG = 'mail-settings'
 
@@ -40,7 +40,6 @@ async function stage<T>(label: string, fn: () => Promise<T>): Promise<T> {
 }
 
 export interface MailSettings {
-  senderAddress?: string   // e.g. alice@mailstr.app
   signature?: string       // appended to outgoing emails
   bridgeDomains?: string[] // preferred bridge domains
   onboardedAt?: number     // ms epoch the user finished relay onboarding; its
@@ -185,15 +184,6 @@ export async function loadSettingsDetailed(
       withSignerTimeout('nip44Decrypt', () => active.nip44Decrypt(pubkey, latest.content)),
     )
     const settings = JSON.parse(plaintext) as MailSettings
-
-    // Heal a senderAddress persisted as a bare localpart (an early build let
-    // the Settings picker save just `abhay` instead of `abhay@mailstr.app`).
-    // Left bare, it fails the `splitAddress`-based ownership check in send.ts
-    // and blocks sending entirely. The only domain names are registered on is
-    // BRIDGE_DOMAIN, so that's the correct qualification.
-    if (settings.senderAddress && !settings.senderAddress.includes('@')) {
-      settings.senderAddress = `${settings.senderAddress}@${BRIDGE_DOMAIN}`
-    }
 
     return { settings, eventExists: true, version: latest.created_at }
   } catch (e) {

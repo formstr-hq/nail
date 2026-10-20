@@ -101,6 +101,17 @@ export function clearProbeCache(): void {
 }
 
 /**
+ * Drop the cached outcome for one address so the next probe fetches again.
+ * The bridge Retry path needs this: a single timed-out `_smtp` lookup is
+ * cached as a negative for a day, and re-probing would just replay it.
+ */
+export function forgetNip05(address: string): void {
+  const parts = splitAddress(address)
+  if (!parts) return
+  cache.delete(`${parts.localpart}@${parts.domain}`)
+}
+
+/**
  * The cached outcome for `address`, if one is fresh — no fetch, no side
  * effect. Render-time consumers (sender-proof derivation) use this to answer
  * synchronously on repeat renders and only kick off `probeNip05` on a miss,
