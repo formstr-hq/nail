@@ -139,11 +139,14 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
       </div>
 
       <footer className="flex items-center gap-2 border-t border-border px-5 py-3 md:px-6">
-        <Button variant="primary" onClick={() => onCompose(replyDraft(email))}>
+        {/* The effective sender, not the raw header: a spoofed From must never
+            become the reply's recipient or be quoted as the author. `self`
+            pins the From to the mailbox this message was delivered to. */}
+        <Button variant="primary" onClick={() => onCompose(replyDraft(email, from, selfAddresses))}>
           <ReplyIcon className="h-3.5 w-3.5" />
           Reply
         </Button>
-        <Button onClick={() => onCompose(replyAllDraft(email, selfAddresses))}>
+        <Button onClick={() => onCompose(replyAllDraft(email, selfAddresses, from))}>
           <ReplyAllIcon className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Reply all</span>
         </Button>

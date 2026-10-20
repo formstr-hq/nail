@@ -12,6 +12,13 @@ interface ComposeOverlay {
   /** `null` means no compose window; a Draft (possibly empty) means one is open. */
   draft: Draft | null;
   minimized: boolean;
+  /**
+   * Bumped whenever a NEW draft replaces the current one. The composer is
+   * keyed on this so its field state resets: React keeps the same component
+   * instance across `open()`, so without a remount a reply opened over a
+   * minimized draft rendered the previous draft's To/Subject/Body.
+   */
+  revision: number;
   open: (draft: Draft) => void;
   /**
    * "Write" restores an already-open composer (possibly minimized) rather than
@@ -27,10 +34,12 @@ const BLANK: Draft = { to: "", subject: "", body: "" };
 export const useComposeOverlay = create<ComposeOverlay>((set, get) => ({
   draft: null,
   minimized: false,
-  open: (draft) => set({ draft, minimized: false }),
+  revision: 0,
+  open: (draft) =>
+    set((s) => ({ draft, minimized: false, revision: s.revision + 1 })),
   startBlank: () => {
     if (get().draft) set({ minimized: false });
-    else set({ draft: BLANK, minimized: false });
+    else set((s) => ({ draft: BLANK, minimized: false, revision: s.revision + 1 }));
   },
   setMinimized: (minimized) => set({ minimized }),
   close: () => set({ draft: null, minimized: false }),

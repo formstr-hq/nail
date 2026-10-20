@@ -9,12 +9,12 @@ const ALIAS = 'alice@mailstr.app'
  * composer is already open. The old code seeded From once at mount and froze
  * it, so switching inbox left the two showing different handles.
  *
- * Also pins the alias-default contract: with an owned alias and no saved
- * sender, "All mail" defaults the From to the alias (not the npub) — the npub
- * bounces at the bridge for legacy recipients, so an alias is the safer
- * default. An explicit npub pick still wins by switching to the npub inbox.
+ * Also pins the alias-only contract: the npub is never offered as a From (the
+ * bridge rejects it for external recipients and it cannot hold a PGP key), so
+ * with an owned alias "All mail" defaults to that alias and switching the
+ * sidebar to the npub inbox does not put the dead sender back in the picker.
  */
-test('composer From follows the sidebar inbox after the composer is open', async ({ page }) => {
+test('composer From never falls back to the npub', async ({ page }) => {
   // Stub the owned-addresses lookup so the account has an alias beyond its npub,
   // which is what makes the sidebar show a per-inbox switcher.
   await page.route('**/get-nip05', (route) =>
@@ -38,11 +38,14 @@ test('composer From follows the sidebar inbox after the composer is open', async
   await expect(fromSelect).toBeVisible()
   await expect(fromSelect).toHaveValue(ALIAS)
 
+  // The npub bridge address is not a usable sender, so it is absent from the
+  // picker from the start.
+  await expect(fromSelect.locator('option[value^="npub"]')).toHaveCount(0)
+
   // Switch the sidebar to the npub inbox — the other inbox row besides "All
   // mail" and the alias. Clicking away minimizes the docked composer, so
-  // restore it with Write — the *same* composer instance, whose From must now
-  // reflect the npub. A frozen mount-time seed would still read the alias
-  // here; the reactive derivation tracks the change.
+  // restore it with Write. The From stays on the alias: there is no npub
+  // sender to fall back to, and the composer is still the same instance.
   const npubRow = sidebar
     .locator('nav[aria-label="Inboxes"] button')
     .filter({ hasNotText: ALIAS })
@@ -50,5 +53,5 @@ test('composer From follows the sidebar inbox after the composer is open', async
   await npubRow.click()
   await write.click()
   await expect(fromSelect).toBeVisible()
-  await expect(fromSelect).not.toHaveValue(ALIAS)
+  await expect(fromSelect).toHaveValue(ALIAS)
 })

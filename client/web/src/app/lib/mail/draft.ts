@@ -5,6 +5,15 @@ export interface Draft {
   to: string
   subject: string
   body: string
+  /**
+   * The account address that should be selected as From when this draft opens.
+   *
+   * A reply pins the address the original message was delivered to. That is
+   * the mailbox the correspondent actually wrote to, so it — not the sidebar's
+   * currently active inbox — must be the sender. Absent for a new message or a
+   * forward, where the composer derives the From normally.
+   */
+  from?: string
   inReplyTo?: string
   references?: string[]
 }
@@ -47,6 +56,25 @@ function threadRefs(email: Email): string[] | undefined {
   return chain.length ? chain : undefined
 }
 
+/**
+ * The account address this message was delivered to — the From a reply should
+ * use. `To`/`Cc` are checked first because they are the recipient headers a
+ * received message carries; the `From` header is the fallback for a message
+ * from the user's own Sent folder, whose To list names correspondents instead.
+ *
+ * Only addresses the account actually owns are considered, and the spelling
+ * from the message is preserved so the composer can match a self option.
+ */
+function deliveredTo(email: Email, self: string[]): string | undefined {
+  if (self.length === 0) return undefined
+  const mine = new Set(self.map((a) => a.trim().toLowerCase()).filter(Boolean))
+  for (const { address } of [...email.to, ...(email.cc ?? []), email.fromHeader]) {
+    const trimmed = address.trim()
+    if (trimmed && mine.has(trimmed.toLowerCase())) return trimmed
+  }
+  return undefined
+}
+
 /** `> ` quoting, with an attribution line above it. */
 function quote(email: Email, sender: MailAddress): string {
   const when = new Date(email.timestamp * 1000).toLocaleString()
@@ -59,12 +87,17 @@ function quote(email: Email, sender: MailAddress): string {
   return `\n\nOn ${when}, ${who} wrote:\n${quoted}\n`
 }
 
-export function replyDraft(email: Email, sender?: MailAddress): Draft {
+export function replyDraft(
+  email: Email,
+  sender?: MailAddress,
+  self: string[] = [],
+): Draft {
   const who = senderOf(email, sender)
   return {
     to: who.address,
     subject: prefixOnce(email.subject, 'Re'),
     body: quote(email, who),
+    from: deliveredTo(email, self),
     inReplyTo: email.messageId,
     references: threadRefs(email),
   }
@@ -91,7 +124,7 @@ export function replyAllDraft(email: Email, self: string[], sender?: MailAddress
     recipients.push(address)
   }
 
-  return { ...replyDraft(email, who), to: recipients.join(', ') }
+  return { ...replyDraft(email, who, self), to: recipients.join(', ') }
 }
 
 /**
