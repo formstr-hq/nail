@@ -7,11 +7,8 @@ import { protocolSigner } from '@/app/lib/nostr/protocol-signer'
 import {
   signatureBlock,
   parseRecipients,
-  defaultNpubAddress,
   deriveFromAddress,
   deriveFromOptions,
-  hasKnownLegacyRecipient,
-  isNpubSender,
 } from '@/app/lib/mail/composeFields'
 import type { ResolveContext } from '@/app/lib/mail/resolve'
 import type { Draft } from '@/app/lib/mail/draft'
@@ -24,7 +21,6 @@ import { ComposerMinimized, ComposerHeader, DiscardBanner } from '@/app/componen
 import { RecipientField, SubjectField } from '@/app/components/compose/RecipientField'
 import {
   ErrorBanner,
-  NpubGuardBanner,
   DiscoveryBanner,
   EncryptedBanner,
   AliasFix,
@@ -76,7 +72,6 @@ export function ComposeModal({
   const { account, active } = useAccountStore()
   const { settings } = useSettingsStore()
   const inboxFilter = useMailStore((s) => s.inboxFilter)
-  const setInboxFilter = useMailStore((s) => s.setInboxFilter)
   const contacts = useContacts(selfAddresses)
 
   // The signature is a stored setting that nothing used to apply. Prefilling
@@ -96,23 +91,30 @@ export function ComposeModal({
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const [confirmingDiscard, setConfirmingDiscard] = useState(false)
+  // A local From pick always wins over the derived default. Keeping it here
+  // (rather than mirroring it into the sidebar's inbox filter) means composing
+  // from an alias never changes which inbox the user is reading — and a reply's
+  // pinned From is not undone by unrelated sidebar navigation.
+  const [pickedFrom, setPickedFrom] = useState<string | null>(null)
 
   const toRef = useRef<HTMLInputElement>(null)
   const bodyRef = useRef<HTMLTextAreaElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  const defaultAddress = defaultNpubAddress(account?.npub)
+  // A reply pins the account address the original message was delivered to;
+  // only an explicit pick in this composer can override it.
+  const preferredFrom = pickedFrom ?? draft?.from
 
   const fromAddress = useMemo(
     () =>
       deriveFromAddress({
+        preferredFrom,
         inboxFilter,
         selfAddresses,
         senderAddress: settings.senderAddress,
         ownedAliases,
-        defaultAddress,
       }),
-    [inboxFilter, selfAddresses, settings.senderAddress, defaultAddress, ownedAliases],
+    [preferredFrom, inboxFilter, selfAddresses, settings.senderAddress, ownedAliases],
   )
   const fromOptions = useMemo(
     () => deriveFromOptions(selfAddresses, fromAddress),
@@ -120,8 +122,6 @@ export function ComposeModal({
   )
 
   const recipients = useMemo(() => parseRecipients(to), [to])
-  const npubBlocked =
-    isNpubSender(fromAddress) && hasKnownLegacyRecipient(recipients, ctx.localDomains)
   const hasAlias = ownedAliases.length > 0
 
   const encryption = useComposerEncryption({
@@ -218,8 +218,9 @@ export function ComposeModal({
 
   async function handleSend() {
     // A subject is not required — RFC 2822 allows an empty one, and the reader
-    // shows "(no subject)". Only a recipient is mandatory.
-    if (!account || !active || !to.trim()) return
+    // shows "(no subject)". Only a recipient and a usable From are mandatory:
+    // sending with no From would only fail ownership in send.ts.
+    if (!account || !active || !to.trim() || !fromAddress) return
     const toList = parseRecipients(to)
     setSending(true)
     setError('')
@@ -272,13 +273,12 @@ export function ComposeModal({
     }
   }
 
-  // One-click fix for the bridge-sender bounce: the From is derived from the
-  // active inbox, so switching to an owned alias is expressed the same way the
-  // From <select> does it. Clearing the error lets the banner fall away once
-  // the sender is legal again.
+  // One-click fix for the bridge-sender bounce: switch this composer to an
+  // owned alias without changing the inbox the user is reading. Clearing the
+  // error lets the banner fall away once the sender is legal again.
   function switchToAlias() {
     if (ownedAliases.length === 0) return
-    setInboxFilter(ownedAliases[0], true)
+    setPickedFrom(ownedAliases[0])
     setError('')
   }
 
@@ -286,7 +286,7 @@ export function ComposeModal({
     return <ComposerMinimized subject={subject} onRestore={() => setMinimized(false)} />
   }
 
-  const canSend = Boolean(to.trim()) && !sending && !npubBlocked
+  const canSend = Boolean(to.trim()) && Boolean(fromAddress) && !sending
 
   return (
     <div
@@ -358,8 +358,6 @@ export function ComposeModal({
           />
         )}
 
-        {npubBlocked && <NpubGuardBanner fix={<AliasFix alias={ownedAliases[0]} onSwitch={switchToAlias} onBuyAddress={onBuyAddress} />} />}
-
         {bridgeResolving && !bridgeError && <BridgeResolvingBanner />}
 
         {bridgeError && <BridgeUnavailableBanner message={bridgeError} />}
@@ -378,10 +376,11 @@ export function ComposeModal({
           fromAddress={fromAddress}
           fromOptions={fromOptions}
           onFromChange={(address) => {
-            // The From is derived from inboxFilter, so a pick is expressed by
-            // updating the filter — which mirrors the choice into the sidebar
-            // highlight (app-wide) without clearing the open message.
-            setInboxFilter(address, true)
+            // Local to this composer: choosing the sender must not switch the
+            // inbox being read, and a reply's pinned From must not change just
+            // because the sidebar moved.
+            setPickedFrom(address)
+            setError('')
           }}
           hasAlias={hasAlias}
           onBuyAddress={onBuyAddress}

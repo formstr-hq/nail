@@ -57,26 +57,36 @@ export function ComposerFooter(props: {
         <div className="eyebrow">From</div>
         <select
           value={fromAddress}
-          // The closed select shows the selected address verbatim, and an
-          // npub (npub1…@domain) is far wider than a phone's From column —
-          // without truncation it overflows the box and draws over the Send
-          // button. truncate clips it with an ellipsis in Chromium's WebView
-          // (Capacitor); the dropdown options below still show the full
-          // address, and title carries it for long-press/hover.
-          title={fromAddress}
+          disabled={fromOptions.length === 0}
+          // The closed select shows the selected address verbatim, and a long
+          // alias is wider than a phone's From column — without truncation it
+          // overflows the box and draws over the Send button. truncate clips it
+          // with an ellipsis in Chromium's WebView (Capacitor); the dropdown
+          // options below still show the full address, and title carries it for
+          // long-press/hover.
+          title={fromAddress || 'Add an address to send from'}
           onChange={(e) => onFromChange(e.target.value)}
-          className="mt-0.5 w-full max-w-full truncate bg-transparent font-mono text-[10.5px] text-foreground focus:outline-none"
+          className="mt-0.5 w-full max-w-full truncate bg-transparent font-mono text-[10.5px] text-foreground focus:outline-none disabled:text-subtle"
         >
-          {fromOptions.map((a) => (
-            <option key={a} value={a} className="font-mono">
-              {a}
+          {fromOptions.length === 0 ? (
+            // The npub is never a usable From, so an account with no alias has
+            // nothing to send from. Say so instead of showing a dead sender.
+            <option value="" disabled>
+              No sending address
             </option>
-          ))}
+          ) : (
+            fromOptions.map((a) => (
+              <option key={a} value={a} className="font-mono">
+                {a}
+              </option>
+            ))
+          )}
         </select>
-        {/* No purchased alias yet: the npub works for mailstr.app mail, but
-            anything external needs an alias. Opens the in-app buy flow — it
-            used to new-tab to "/", where the landing's returning-owner
-            redirect would bounce an owner straight back to the inbox. */}
+        {/* No purchased alias yet: the npub is not a usable sender, so there
+            is nothing to send from until the user gets an alias. Opens the
+            in-app buy flow — it used to new-tab to "/", where the landing's
+            returning-owner redirect would bounce an owner straight back to
+            the inbox. */}
         {!hasAlias && (
           <button
             type="button"
