@@ -71,8 +71,7 @@ function MailApp() {
     useSettingsStore()
   const { selectedId, setSelected, syncError, setSyncError } = useMailStore()
   const { addresses } = useOwnedAddresses()
-  const { ctx, bridgeError, resolving: bridgeResolving, retry: retryBridge } =
-    useResolveContext(addresses)
+  const { forSender, retry: retryBridge } = useResolveContext(addresses)
   const { status, retry } = useInbox()
   // Keep read/archived/trashed state synced across devices via kind-34578 events.
   const { refresh: refreshMeta } = useMailMeta()
@@ -323,9 +322,8 @@ function MailApp() {
         <ComposeModal
           key={composeRevision}
           onClose={closeCompose}
-          ctx={ctx}
-          bridgeError={bridgeError}
-          bridgeResolving={bridgeResolving}
+          resolveFor={forSender}
+          onRetryBridge={retryBridge}
           draft={composeDraft}
           selfAddresses={selfAddresses}
           ownedAliases={addresses}

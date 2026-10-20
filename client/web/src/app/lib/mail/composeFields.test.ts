@@ -66,7 +66,6 @@ describe('deriveFromAddress', () => {
   const base = {
     inboxFilter: '',
     selfAddresses: [`${NPUB}@mailstr.app`, 'alice@mailstr.app'],
-    senderAddress: undefined as string | undefined,
     ownedAliases: ['alice@mailstr.app'],
   }
 
@@ -104,23 +103,14 @@ describe('deriveFromAddress', () => {
   })
 
   // The npub bridge address has no NIP-05 row and cannot hold a key, so it is
-  // never a legal sender — not even as a saved default or an inbox filter.
-  it('never selects the npub, even when it is the filter or saved sender', () => {
+  // never a legal sender — not even as an inbox filter or a reply pin.
+  it('never selects the npub, even when it is the filter or reply pin', () => {
     expect(
       deriveFromAddress({ ...base, inboxFilter: `${NPUB}@mailstr.app` }),
     ).toBe('alice@mailstr.app')
     expect(
-      deriveFromAddress({ ...base, senderAddress: `${NPUB}@mailstr.app` }),
-    ).toBe('alice@mailstr.app')
-    expect(
       deriveFromAddress({ ...base, preferredFrom: `${NPUB}@mailstr.app` }),
     ).toBe('alice@mailstr.app')
-  })
-
-  it('falls back to the saved sender address', () => {
-    expect(deriveFromAddress({ ...base, senderAddress: 'bob@mailstr.app' })).toBe(
-      'bob@mailstr.app',
-    )
   })
 
   it('ends with the first sendable self address when nothing else is available', () => {

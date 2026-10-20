@@ -1,8 +1,7 @@
 import { BRIDGE_DOMAIN } from '@/app/lib/nostr/constants'
 import { Button } from '@/app/components/ui/Button'
 import { AlertIcon, PlusIcon } from '@/app/components/ui/icons'
-import { Field, inputClass } from '@/app/components/settings/Field'
-import { CUSTOM_SENDER } from '@/app/hooks/useSenderDraft'
+import { Field } from '@/app/components/settings/Field'
 
 export interface AddressesSectionProps {
   hasAccount: boolean
@@ -12,15 +11,9 @@ export interface AddressesSectionProps {
   reloadAddresses: () => void
   /** Open the in-app buy-address modal (no more new-tab deep link). */
   onBuyAddress: () => void
-  /** Fixed select options: owned addresses + the npub bridge address. */
-  senderOptions: string[]
-  senderMode: string
-  senderAddress: string
-  onSenderModeChange: (value: string) => void
-  onSenderAddressChange: (value: string) => void
 }
 
-/** The Addresses pane: owned NIP-05 names plus the From/sender picker. */
+/** The Addresses pane: the owned NIP-05 names. The composer picks the From. */
 export function AddressesSection(props: AddressesSectionProps) {
   const {
     hasAccount,
@@ -29,12 +22,7 @@ export function AddressesSection(props: AddressesSectionProps) {
     addressesError,
     reloadAddresses,
     onBuyAddress,
-    senderMode,
-    senderAddress,
-    onSenderModeChange,
-    onSenderAddressChange,
   } = props
-  const placeholder = `you@${BRIDGE_DOMAIN}`
 
   return (
     <>
@@ -88,29 +76,6 @@ export function AddressesSection(props: AddressesSectionProps) {
           </p>
         </Field>
       )}
-
-      <Field label="Sender address" hint="Shown as the From address on mail you send.">
-        <select
-          value={senderMode}
-          onChange={(e) => onSenderModeChange(e.target.value)}
-          className={inputClass}
-        >
-          {props.senderOptions.map((addr) => (
-            <option key={addr} value={addr}>
-              {addr}
-            </option>
-          ))}
-          <option value={CUSTOM_SENDER}>Custom…</option>
-        </select>
-        {senderMode === CUSTOM_SENDER && (
-          <input
-            value={senderAddress}
-            onChange={(e) => onSenderAddressChange(e.target.value)}
-            placeholder={placeholder}
-            className={inputClass}
-          />
-        )}
-      </Field>
     </>
   )
 }

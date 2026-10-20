@@ -4,7 +4,6 @@ import { useSettingsStore } from '@/app/store/settings'
 import { useThemeStore } from '@/app/store/theme'
 import { useDevStore } from '@/app/store/dev'
 import { useOwnedAddresses } from '@/app/hooks/useOwnedAddresses'
-import { useBridgeAddress, useSenderDraft } from '@/app/hooks/useSenderDraft'
 import { fetchDmRelayList, publishDmRelays } from '@/app/lib/nostr/relays'
 import { Button, IconButton } from '@/app/components/ui/Button'
 import { XIcon, AlertIcon, BackIcon, ChevronRightIcon } from '@/app/components/ui/icons'
@@ -47,13 +46,6 @@ export function SettingsModal({
     error: addressesErrorRaw,
     reload: reloadAddresses,
   } = useOwnedAddresses()
-
-  const bridgeAddress = useBridgeAddress()
-  const senderDraft = useSenderDraft({
-    addresses,
-    bridgeAddress,
-    savedSenderAddress: settings.senderAddress,
-  })
 
   const [signature, setSignature] = useState(settings.signature ?? '')
   const [saving, setSaving] = useState(false)
@@ -118,7 +110,6 @@ export function SettingsModal({
       }
       await save(
         {
-          senderAddress: senderDraft.senderAddress || undefined,
           signature: signature || undefined,
         },
         account.pubkey,
@@ -235,11 +226,6 @@ export function SettingsModal({
                   addressesError={addressesErrorRaw ?? ''}
                   reloadAddresses={reloadAddresses}
                   onBuyAddress={onBuyAddress}
-                  senderOptions={senderDraft.senderOptions}
-                  senderMode={senderDraft.senderMode}
-                  senderAddress={senderDraft.senderAddress}
-                  onSenderModeChange={senderDraft.handleSenderModeChange}
-                  onSenderAddressChange={senderDraft.setSenderAddress}
                 />
               )}
 

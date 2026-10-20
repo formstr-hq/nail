@@ -10,7 +10,7 @@ import {
   deriveFromAddress,
   deriveFromOptions,
 } from '@/app/lib/mail/composeFields'
-import type { ResolveContext } from '@/app/lib/mail/resolve'
+import type { SenderResolve } from '@/app/hooks/useResolveContext'
 import type { Draft } from '@/app/lib/mail/draft'
 import { useContacts } from '@/app/hooks/useContacts'
 import { useComposerEncryption, noEncryptReason } from '@/app/hooks/compose/useComposerEncryption'
@@ -31,14 +31,12 @@ import { ComposerFooter } from '@/app/components/compose/ComposerFooter'
 
 interface ComposeModalProps {
   onClose: () => void
-  ctx: ResolveContext
-  /** Non-null once bridge resolution settled with no usable outbound bridge —
-   *  external recipients cannot be delivered this session; surfaced instead of
-   *  only logged (D4). */
-  bridgeError?: string | null
-  /** True while any bridge probe is still in flight — distinct from a failed
-   *  resolution, so the composer doesn't claim unavailability prematurely. */
-  bridgeResolving?: boolean
+  /** The routing context for a From. The bridge follows the From the
+   *  composer shows, never a saved setting, so the two cannot disagree. A
+   *  settled failure is surfaced instead of only logged (D4). */
+  resolveFor: (fromAddress: string) => SenderResolve
+  /** Re-run the bridge lookup — the unavailable banner's CTA. */
+  onRetryBridge: () => void
   draft?: Draft
   /** The user's own addresses, so the recipient picker never suggests them. */
   selfAddresses: string[]
@@ -58,9 +56,8 @@ interface ComposeModalProps {
 
 export function ComposeModal({
   onClose,
-  ctx,
-  bridgeError,
-  bridgeResolving,
+  resolveFor,
+  onRetryBridge,
   draft,
   selfAddresses,
   ownedAliases,
@@ -111,11 +108,11 @@ export function ComposeModal({
         preferredFrom,
         inboxFilter,
         selfAddresses,
-        senderAddress: settings.senderAddress,
         ownedAliases,
       }),
-    [preferredFrom, inboxFilter, selfAddresses, settings.senderAddress, ownedAliases],
+    [preferredFrom, inboxFilter, selfAddresses, ownedAliases],
   )
+  const { ctx, resolving: bridgeResolving, bridgeError } = resolveFor(fromAddress)
   const fromOptions = useMemo(
     () => deriveFromOptions(selfAddresses, fromAddress),
     [selfAddresses, fromAddress],
@@ -360,7 +357,7 @@ export function ComposeModal({
 
         {bridgeResolving && !bridgeError && <BridgeResolvingBanner />}
 
-        {bridgeError && <BridgeUnavailableBanner message={bridgeError} />}
+        {bridgeError && <BridgeUnavailableBanner message={bridgeError} onRetry={onRetryBridge} />}
 
         {discovering && !encrypt && <DiscoveryBanner />}
 

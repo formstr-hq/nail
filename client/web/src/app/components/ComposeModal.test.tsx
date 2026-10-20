@@ -37,7 +37,8 @@ const SELF = ['me@mailstr.app', 'npub1' + 'q'.repeat(58) + '@mailstr.app']
 
 const PROPS = {
   onClose: vi.fn(),
-  ctx: CTX,
+  resolveFor: () => ({ ctx: CTX, resolving: false, bridgeError: null }),
+  onRetryBridge: vi.fn(),
   selfAddresses: SELF,
   ownedAliases: ['me@mailstr.app'],
   minimized: false,
