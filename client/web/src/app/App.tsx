@@ -29,6 +29,8 @@ import { reloadOwnedAddresses } from '@/app/hooks/useOwnedAddresses'
 
 import { OnboardingModal } from '@/app/components/OnboardingModal'
 import { BrandGlyph, PenIcon, InboxIcon, AlertIcon } from '@/app/components/ui/icons'
+import { AppDeskProvider } from '@/app/components/AppDeskProvider'
+import { MailBrandMark } from '@/app/components/MailBrandMark'
 import { IconButton } from '@/app/components/ui/Button'
 
 /** Settings modal route param: a section id, or "menu" for the mobile menu. */
@@ -244,7 +246,7 @@ function MailApp() {
         <IconButton title="Open folders" onClick={() => setNavOpen(true)}>
           <InboxIcon className="h-4 w-4" />
         </IconButton>
-        <BrandGlyph size={18} />
+        <MailBrandMark size={18} />
         <span className="flex-1 text-sm font-semibold tracking-tight">Mail</span>
         <IconButton title="Write a message" onClick={startCompose}>
           <PenIcon className="h-4 w-4" />
@@ -429,5 +431,9 @@ export default function App() {
     )
   }
 
-  return account && active ? <MailApp /> : <LoginPage />
+  return (
+    <AppDeskProvider>
+      {account && active ? <MailApp /> : <LoginPage />}
+    </AppDeskProvider>
+  )
 }

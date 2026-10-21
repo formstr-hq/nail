@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useAccountStore } from '@/app/store/account'
-import { BrandGlyph } from '@/app/components/ui/icons'
+import { MailBrandMark } from '@/app/components/MailBrandMark'
 import { SignerLogin } from './login/SignerLogin'
 import { UnlockForm } from './login/UnlockForm'
 import { ResumeFailed } from './login/ResumeFailed'
@@ -35,7 +35,7 @@ export function LoginPage() {
     <div className="mail-app bg-graph safe-y flex min-h-[100dvh] items-center justify-center bg-background px-4">
       <div className="flex w-full max-w-sm flex-col gap-6 py-10">
         <div className="flex flex-col items-center gap-2 text-center">
-          <BrandGlyph size={38} />
+          <MailBrandMark size={38} />
           <h1 className="text-xl font-semibold tracking-tight">Mail by Form*</h1>
           <p className="text-[12.5px] text-muted-foreground">Email that travels over Nostr</p>
         </div>

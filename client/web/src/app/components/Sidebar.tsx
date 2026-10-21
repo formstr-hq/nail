@@ -5,7 +5,8 @@ import { AccountSwitcher } from '@/app/components/AccountSwitcher'
 import { matchesAlias } from '@/app/lib/mail/aliasFilter'
 import type { EmailFolder } from '@/app/types/mail'
 import type { InboxStatus } from '@/app/hooks/useInbox'
-import { BrandGlyph, PenIcon, SettingsIcon, InboxIcon, AtSignIcon, PlusIcon } from '@/app/components/ui/icons'
+import { PenIcon, SettingsIcon, InboxIcon, AtSignIcon, PlusIcon } from '@/app/components/ui/icons'
+import { MailBrandMark } from '@/app/components/MailBrandMark'
 import calendarAppIcon from '@/app/assets/calendar-app-icon.png'
 import { Button, IconButton } from '@/app/components/ui/Button'
 import { ThemeToggle } from '@/app/components/ui/ThemeToggle'
@@ -93,7 +94,7 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onB
   return (
     <aside className="flex h-full w-full flex-col border-r border-border bg-surface-nav">
       <div className="flex items-center gap-2 px-4 pb-3 pt-4">
-        <BrandGlyph size={24} />
+        <MailBrandMark size={24} />
         <span className="text-base font-semibold tracking-tight">Mail</span>
         <span className="flex-1" />
         <ThemeToggle />

@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { StoredAccount } from '@formstr/signer'
 import { useAccountStore } from '@/app/store/account'
 import { useProfile } from '@/app/hooks/useProfile'
+import { useAppDesk } from '@formstr/common-ui'
+import { LayoutGrid } from 'lucide-react'
 import { Avatar } from '@/app/components/ui/Avatar'
 import { IconButton } from '@/app/components/ui/Button'
 import {
@@ -125,6 +127,8 @@ export function AccountSwitcher({ onAddAccount }: { onAddAccount: () => void }) 
   const profile = useProfile(account?.pubkey)
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const openDesk = useAppDesk()
 
   if (!account) return null
 
@@ -140,8 +144,10 @@ export function AccountSwitcher({ onAddAccount }: { onAddAccount: () => void }) 
       <div className="eyebrow px-1">Signed in as</div>
       <div className="flex items-center gap-1 px-0.5 pt-1">
         <button
+          ref={triggerRef}
           type="button"
           onClick={() => setOpen((v) => !v)}
+          aria-label="Account menu"
           aria-expanded={open}
           className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-accent/60"
         >
@@ -201,6 +207,17 @@ export function AccountSwitcher({ onAddAccount }: { onAddAccount: () => void }) 
               ))}
             </div>
             <div className="my-1 border-t border-border" />
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                if (triggerRef.current) openDesk(triggerRef.current)
+              }}
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[12.5px] text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+              Apps
+            </button>
             <button
               type="button"
               onClick={() => {

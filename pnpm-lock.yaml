@@ -51,6 +51,9 @@ importers:
       '@fontsource/ibm-plex-mono':
         specifier: ^5.3.0
         version: 5.3.0
+      '@formstr/common-ui':
+        specifier: ^0.1.0
+        version: 0.1.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@formstr/local-relay':
         specifier: ^0.6.2
         version: 0.6.2(typescript@5.9.3)
@@ -496,6 +499,12 @@ packages:
 
   '@fontsource/ibm-plex-mono@5.3.0':
     resolution: {integrity: sha512-eTgnZjZEGk1QtD3ZstF+Vclo2HLAni8YMy34/DxllwZvyz1lR/1RF/xTiAquOBO7MvqBx8D2Ig2WCPMVfdZu7Q==}
+
+  '@formstr/common-ui@0.1.0':
+    resolution: {integrity: sha512-IpN/zONr5FHa/7euGCqXTQlu15hr+5VTjzKIE1uYYUbti121jASaGNW/jFD+Jt7I2+jNqiWLaIaPGnM4pPo6oQ==}
+    peerDependencies:
+      react: '>=18'
+      react-dom: '>=18'
 
   '@formstr/local-relay@0.6.2':
     resolution: {integrity: sha512-KEBSLMOAFO52CdBNPTvQ5Zt+ZrFM8aug1dOVdt7mfWPEkpdI+IpQc0XoZ9krhNqNMvEsP69Dk75I51pj5+B4KQ==}
@@ -2829,6 +2838,11 @@ snapshots:
   '@fontsource-variable/inter@5.3.0': {}
 
   '@fontsource/ibm-plex-mono@5.3.0': {}
+
+  '@formstr/common-ui@0.1.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
+    dependencies:
+      react: 19.2.8
+      react-dom: 19.2.8(react@19.2.8)
 
   '@formstr/local-relay@0.6.2(typescript@5.9.3)':
     dependencies:
