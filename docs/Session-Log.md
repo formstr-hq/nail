@@ -1919,3 +1919,40 @@ fresh clone of `nostr://infinityx2@mailstr.app/relay.ngit.dev/nail` at the new
 main, NIP-82 release publish (APK to Blossom; AAB on the GitHub mirror only),
 then `main` force-pushed to the `formstr-hq/nail` GitHub mirror with the tag
 and release.
+
+## 2026-10-21 — Composer From fixes and per-From bridge routing
+
+Follow-up to the compose-sender PR. The composer's From and the bridge it used
+could disagree: the UI derived From from the active inbox / owned alias (and
+replies from the delivered-to address), while bridge resolution was keyed on a
+saved `settings.senderAddress`. A stale or custom sender on another domain made
+sends fail with "Outbound bridge could not be resolved" even when the From
+shown had a perfectly healthy bridge.
+
+### What changed
+
+1. **From picker.** The npub bridge address is never offered as a From: the
+   bridge rejects it for external mail and it cannot hold a PGP key. With no
+   alias the picker shows "No sending address", Send stays disabled, and the
+   buy-alias CTA is the way out.
+2. **Reply identity.** Reply pins From to the account address the original
+   message was delivered to (To/Cc, then From for Sent), overriding the
+   sidebar's active inbox. Reply and Reply all use the effective sender, so a
+   spoofed header cannot become the recipient or quoted author.
+3. **No stale drafts.** The composer remounts when a new draft replaces the
+   open one, so Reply over a minimized draft no longer reuses the previous
+   To/Subject/Body or In-Reply-To.
+4. **From is local to the composer.** Choosing a sender no longer switches the
+   inbox being read, and Send requires a usable From.
+5. **Drop `senderAddress`.** Removed the Settings sender picker (including its
+   free-text Custom mode), `useSenderDraft`, the composer fallback and the
+   `useSelfAddresses` contribution. Old synced values are ignored. Self
+   addresses are the npub mailbox plus owned NIP-05 aliases (workspace
+   addresses included).
+6. **Bridge follows the From.** Resolution now probes the platform bridge plus
+   `_smtp@<domain>` for every owned domain and selects the outbound bridge per
+   From (own domain, then platform); explicit bridge overrides remain
+   exclusive. Retry clears cached negative NIP-05 lookups, and the unavailable
+   banner names the failing bridge and carries a "Try again" CTA.
+
+Version is bumped to `0.3.1` (Android `versionCode 6`) for the next build.
