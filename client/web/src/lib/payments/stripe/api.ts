@@ -1,6 +1,6 @@
-// Card payments: the backend's config, currency list, quotes, checkout and
-// order status. Nothing outside the card method may import this (store
-// bundles must not contain it); lib/payments/methods.ts loads it.
+// Card payments: the backend's config, fixed-price checkout and order status.
+// Nothing outside the card method may import this (store bundles must not
+// contain it); lib/payments/methods.ts loads it.
 import type { Nip98Signer } from '@/lib/nip98'
 import { ApiError, request } from '../http'
 
@@ -9,35 +9,10 @@ export interface PaymentsConfig {
   lightning: { enabled: boolean }
 }
 
-export interface CurrencyInfo {
-  code: string
-  name: string
-  exponent: number
-}
-
-export interface CurrencyList {
-  currencies: CurrencyInfo[]
-  default: string | null
-}
-
-export type QuoteRequest =
-  | { product: 'mail'; currency: string; tierId: string }
-  | { product: 'workspace'; currency: string; seats: number }
-
-export interface Quote {
-  currency: string
-  exponent: number
-  /** Minor units of `currency`, before tax. */
-  amountMinor: number
-  /** ISO time after which checkout refuses this quote. */
-  expiresAt: string
-  quoteToken: string
-  minimumApplied?: boolean
-}
-
 export interface CheckoutRequest {
   product: 'mail' | 'workspace'
-  quoteToken: string
+  /** The price the client displayed, so the backend can detect a config change. */
+  expectedPriceUsd?: number
   uiMode: 'embedded' | 'hosted'
   returnUrl?: string
   tierId?: string
@@ -54,20 +29,13 @@ export interface CheckoutSession {
   currency: string
 }
 
-/** Why checkout refused a quote; the sheet fetches a fresh one and asks again. */
-export type QuoteConflictReason = 'quote_expired' | 'quote_invalid' | 'quote_mismatch' | 'price_changed'
-
-export class QuoteConflict extends Error {
-  reason: QuoteConflictReason
-  constructor(reason: QuoteConflictReason) {
-    super(`The price changed (${reason})`)
-    this.name = 'QuoteConflict'
-    this.reason = reason
+/** Checkout refused because the configured USD price moved since page load. */
+export class PriceChanged extends Error {
+  constructor() {
+    super('The price changed')
+    this.name = 'PriceChanged'
   }
 }
-
-/** Card is offered only when the deployment has it and the rates are fresh. */
-export class CardUnavailable extends Error {}
 
 let configPromise: Promise<PaymentsConfig | null> | null = null
 
@@ -83,35 +51,9 @@ export function fetchPaymentsConfig(): Promise<PaymentsConfig | null> {
 /** For tests. */
 export function resetPaymentsConfigCache(): void {
   configPromise = null
-  currenciesPromise = null
 }
 
-let currenciesPromise: Promise<CurrencyList | null> | null = null
-
-/** The currencies a card can be priced in; null when card is off or the call fails (cached once). */
-export function fetchCurrencies(): Promise<CurrencyList | null> {
-  currenciesPromise ??= request<CurrencyList>('/api/payments/currencies')
-    .then((list) => (list.currencies?.length ? list : null))
-    .catch(() => {
-      currenciesPromise = null
-      return null
-    })
-  return currenciesPromise
-}
-
-/** Unauthenticated. A 503 means the exchange rates are stale: card is unavailable. */
-export async function requestQuote(body: QuoteRequest): Promise<Quote> {
-  try {
-    return await request<Quote>('/api/quotes', { body })
-  } catch (err) {
-    if (err instanceof ApiError && (err.status === 503 || err.status === 404)) {
-      throw new CardUnavailable(err.message)
-    }
-    throw err
-  }
-}
-
-/** Create the order and the Checkout Session for an accepted quote. */
+/** Create the order and the Checkout Session for the fixed USD price. */
 export async function createCheckout(
   signer: Nip98Signer,
   body: CheckoutRequest,
@@ -119,8 +61,8 @@ export async function createCheckout(
   try {
     return await request<CheckoutSession>('/api/stripe/checkout', { body, signer })
   } catch (err) {
-    if (err instanceof ApiError && err.status === 409 && err.reason) {
-      throw new QuoteConflict(err.reason as QuoteConflictReason)
+    if (err instanceof ApiError && err.status === 409 && err.reason === 'price_changed') {
+      throw new PriceChanged()
     }
     throw err
   }

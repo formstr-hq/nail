@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { StrictMode } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -47,8 +48,20 @@ describe('LightningPay', () => {
     expect(await screen.findByText('lnbc1abc')).toBeTruthy()
     expect(api.generateMailInvoice).toHaveBeenCalledWith(signer, { pubkey: 'p', nip05: 'alice@mailstr.app', tierId: 'base' })
 
+    await waitFor(() => expect(sockets.last).not.toBeNull())
     sockets.last!.onmessage!({ data: JSON.stringify({ status: 'paid' }) })
     expect(onResult).toHaveBeenCalledWith({ status: 'paid' })
+  })
+
+  it('requests only one invoice under StrictMode', async () => {
+    api.generateMailInvoice.mockResolvedValue(INVOICE)
+    render(
+      <StrictMode>
+        <LightningPay order={mailOrder} signer={signer} onResult={vi.fn()} onError={vi.fn()} />
+      </StrictMode>,
+    )
+    await screen.findByText('lnbc1abc')
+    expect(api.generateMailInvoice).toHaveBeenCalledTimes(1)
   })
 
   it('requests a seat invoice for a seat order', async () => {
@@ -70,6 +83,7 @@ describe('LightningPay', () => {
     const onResult = vi.fn()
     render(<LightningPay order={mailOrder} signer={signer} onResult={onResult} onError={vi.fn()} />)
     await screen.findByText('lnbc1abc')
+    await waitFor(() => expect(sockets.last).not.toBeNull())
     sockets.last!.onmessage!({
       data: JSON.stringify({ status: 'error', message: 'Payment received but your mail could not be provisioned: taken' }),
     })

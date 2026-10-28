@@ -15,17 +15,16 @@ import type { MethodDefinition } from './types'
 const OPEN_BUILD_METHODS = (): MethodDefinition[] => [
   {
     id: 'lightning',
-    label: 'Lightning',
+    label: 'Pay with Bitcoin',
     Component: lazy(() => import('@/components/payments/LightningPay')),
   },
   {
     id: 'stripe',
-    label: 'Card',
+    label: 'Pay in your local currency',
     available: async () => {
       const api = await import('./stripe/api')
       const config = await api.fetchPaymentsConfig()
-      if (!config?.stripe.enabled || !config.stripe.publishableKey) return false
-      return (await api.fetchCurrencies()) !== null
+      return Boolean(config?.stripe.enabled && config.stripe.publishableKey)
     },
     Component: lazy(() => import('@/components/payments/StripePay')),
   },
@@ -34,7 +33,7 @@ const OPEN_BUILD_METHODS = (): MethodDefinition[] => [
 const STORE_BUILD_METHODS = (): MethodDefinition[] => [
   {
     id: 'store',
-    label: 'In-app purchase',
+    label: 'Pay in your app store',
     Component: lazy(() => import('@/components/payments/StorePay')),
   },
 ]

@@ -28,6 +28,8 @@ export interface MailTier {
   features: string[]; // included on this tier (✓)
   notIncluded: string[]; // explicitly not on this tier (✗), e.g. attachments
   available: boolean; // whether the tier can be purchased
+  /** Fixed card price in USD cents, or null when the backend has none. */
+  priceUsd: number | null;
   /** Store SKU ids for this tier, per platform (null when not sold there). */
   store: { apple: string | null; google: string | null };
   /**
@@ -55,10 +57,14 @@ export function normalizeTier(raw: unknown): MailTier | null {
     notIncluded,
     available,
     store,
+    priceUsd,
+    seatPriceUsd,
     ...pricing
   } = raw as Record<string, unknown>;
   if (typeof id !== "string" || !id) return null;
   const skus = (store ?? {}) as Record<string, unknown>;
+  const fixedUsd = (value: unknown): number | null =>
+    typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
   return {
     id,
     name: typeof name === "string" ? name : "Mail",
@@ -69,6 +75,8 @@ export function normalizeTier(raw: unknown): MailTier | null {
     features: strings(features),
     notIncluded: strings(notIncluded),
     available: available !== false,
+    // Workspace tiers carry `seatPriceUsd`; mail tiers carry `priceUsd`.
+    priceUsd: fixedUsd(priceUsd) ?? fixedUsd(seatPriceUsd),
     store: { apple: sku(skus.apple), google: sku(skus.google) },
     pricing,
   };

@@ -28,30 +28,39 @@ export default function InvoiceQR({
   const [timeLeft, setTimeLeft] = useState(MAX_TIME);
 
   useEffect(() => {
-    const ws = paymentSocket(hash);
+    let ws: WebSocket | null = null;
+    let disposed = false;
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data as string);
-        if (data.status === "paid") {
-          setStatus("paid");
-          ws.close();
-          onPaid();
-        } else if (data.status === "error") {
-          setStatus("error");
-          if (typeof data.message === "string" && data.message) onFailed?.(data.message);
+    // Defer connecting by a tick: React StrictMode's setup/cleanup/setup in dev
+    // otherwise opens two sockets for the same hash before the first close is
+    // processed, and the backend rejects the second one.
+    const connectTimer = setTimeout(() => {
+      if (disposed) return;
+      ws = paymentSocket(hash);
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data as string);
+          if (data.status === "paid") {
+            setStatus("paid");
+            ws?.close();
+            onPaid();
+          } else if (data.status === "error") {
+            setStatus("error");
+            if (typeof data.message === "string" && data.message) onFailed?.(data.message);
+          }
+        } catch {
+          // ignore malformed messages
         }
-      } catch {
-        // ignore malformed messages
-      }
-    };
-    ws.onerror = () => setStatus("error");
+      };
+      ws.onerror = () => setStatus("error");
+    }, 0);
 
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          ws.close();
+          ws?.close();
           setStatus((s) => (s === "pending" ? "expired" : s));
           return 0;
         }
@@ -60,11 +69,13 @@ export default function InvoiceQR({
     }, 1000);
 
     return () => {
-      ws.close();
+      disposed = true;
+      clearTimeout(connectTimer);
+      ws?.close();
       clearInterval(timer);
     };
     // onPaid/onFailed are intentionally not dependencies — reconnecting the payment
-    // socket mid-wait would make the backend reject it as a duplicate.
+    // socket mid-wait would replace the live viewer on the backend.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash]);
 

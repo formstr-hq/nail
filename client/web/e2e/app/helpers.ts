@@ -34,8 +34,8 @@ export async function completeOnboarding(page: Page) {
 }
 
 /**
- * Card payments off: the deployment reports Stripe disabled, so prices show in
- * sats and the pay step offers Lightning only (the pre-card behaviour). Tests
+ * Card payments off: the deployment reports Stripe disabled, so the pay step
+ * offers Lightning only. Prices still show the fixed USD config amount; tests
  * that don't exercise the card flow stub this so they never depend on the
  * real API.
  */
@@ -46,8 +46,5 @@ export async function stubCardOff(page: Page) {
       contentType: 'application/json',
       body: JSON.stringify({ stripe: { enabled: false, publishableKey: null }, lightning: { enabled: true } }),
     }),
-  )
-  await page.route('**/api/payments/currencies', (route) =>
-    route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'off' }) }),
   )
 }

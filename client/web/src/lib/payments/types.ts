@@ -23,6 +23,10 @@ export interface MethodProps {
   signer: Nip98Signer
   /** The mail tier being bought (mail orders only). */
   tier?: import('@/lib/api').MailTier | null
+  /** Fixed USD cents for this order, shown before and at payment. */
+  priceUsd?: number | null
+  /** Lets a method report a refreshed config price after a 409 price_changed. */
+  onPriceUsdChange?: (priceUsd: number) => void
   onResult: (result: PayResult) => void
   /** Show or clear a banner above the method. */
   onError: (message: string | null) => void

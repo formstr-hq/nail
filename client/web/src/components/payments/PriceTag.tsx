@@ -2,11 +2,14 @@ import { Suspense, lazy } from 'react'
 import type { MailTier } from '@/lib/api'
 
 /** What a price is being shown for. */
-export type PriceSubject = { kind: 'mail'; tier: MailTier } | { kind: 'seats'; seats: number }
+export type PriceSubject =
+  | { kind: 'mail'; tier: MailTier }
+  | { kind: 'seats'; seats: number; priceUsd?: number | null }
 
 // Chosen at BUILD time so the store bundle never contains the open-build price
-// code (which reads sats and card quotes) and the open bundle never contains
-// the store one. See lib/payments/methods.ts for why this must be a constant.
+// code (which reads the backend's fixed USD price) and the open bundle never
+// contains the store one. See lib/payments/methods.ts for why this must be a
+// constant.
 const Impl =
   import.meta.env.VITE_STORE_BUILD === '1'
     ? lazy(() => import('./StorePrice'))

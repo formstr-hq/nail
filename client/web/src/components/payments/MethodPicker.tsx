@@ -8,10 +8,13 @@ import type { MethodDefinition } from '@/lib/payments/types'
 export function MethodPicker({
   methods,
   selected,
+  amount,
   onSelect,
 }: {
   methods: readonly MethodDefinition[]
   selected: string
+  /** The order's fixed USD price, shown next to both choices. */
+  amount?: string | null
   onSelect: (id: string) => void
 }) {
   const refs = useRef<Record<string, HTMLButtonElement | null>>({})
@@ -56,6 +59,7 @@ export function MethodPicker({
             ].join(' ')}
           >
             {m.label}
+            {amount && <span className="ml-1.5 font-normal text-gray-500">{amount}</span>}
           </button>
         )
       })}

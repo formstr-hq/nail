@@ -3,6 +3,7 @@ import { Loader2 } from 'lucide-react'
 import type { MailTier } from '@/lib/api'
 import type { Nip98Signer } from '@/lib/nip98'
 import { pickDefaultMethod } from '@/lib/payments/channels'
+import { formatUsd } from '@/lib/payments/money'
 import { availableMethods } from '@/lib/payments/methods'
 import { useMethodPreference } from '@/lib/payments/preferences'
 import type { MethodDefinition, PayOrder, PayResult } from '@/lib/payments/types'
@@ -14,6 +15,8 @@ interface PaymentSheetProps {
   signer: Nip98Signer
   /** The mail tier being bought (mail orders only). */
   tier?: MailTier | null
+  /** Fixed USD cents for the order; falls back to the tier's price. */
+  priceUsd?: number | null
   /** Called once the backend confirms the purchase. */
   onPaid: () => void
 }
@@ -23,13 +26,14 @@ interface PaymentSheetProps {
  * one, and reports when the backend says paid. The wizard and the seats panel
  * both render this and know nothing about individual methods.
  */
-export function PaymentSheet({ order, signer, tier, onPaid }: PaymentSheetProps) {
+export function PaymentSheet({ order, signer, tier, priceUsd, onPaid }: PaymentSheetProps) {
   const [methods, setMethods] = useState<MethodDefinition[] | null>(null)
   const remembered = useMethodPreference((s) => s.method)
   const remember = useMethodPreference((s) => s.setMethod)
   const [chosen, setChosen] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [problem, setProblem] = useState<PayResult | null>(null)
+  const [displayPrice, setDisplayPrice] = useState<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -54,6 +58,7 @@ export function PaymentSheet({ order, signer, tier, onPaid }: PaymentSheetProps)
     [methods, chosen, remembered],
   )
   const selected = methods?.find((m) => m.id === selectedId) ?? null
+  const effectivePrice = displayPrice ?? priceUsd ?? tier?.priceUsd ?? null
 
   const handleResult = (result: PayResult) => {
     if (result.status === 'paid') onPaid()
@@ -80,6 +85,7 @@ export function PaymentSheet({ order, signer, tier, onPaid }: PaymentSheetProps)
         <MethodPicker
           methods={methods}
           selected={selected.id}
+          amount={effectivePrice == null ? null : formatUsd(effectivePrice)}
           onSelect={(id) => {
             setError(null)
             setChosen(id)
@@ -98,7 +104,16 @@ export function PaymentSheet({ order, signer, tier, onPaid }: PaymentSheetProps)
         }
       >
         {/* Keyed by method so switching never reuses another method's state. */}
-        <Method key={selected.id} order={order} signer={signer} tier={tier} onResult={handleResult} onError={setError} />
+        <Method
+          key={selected.id}
+          order={order}
+          signer={signer}
+          tier={tier}
+          priceUsd={effectivePrice}
+          onPriceUsdChange={setDisplayPrice}
+          onResult={handleResult}
+          onError={setError}
+        />
       </Suspense>
     </div>
   )

@@ -2,7 +2,6 @@ import { AtSign, Check, Loader2, X } from 'lucide-react'
 import { config } from '@/lib/config'
 import type { MailTier } from '@/lib/api'
 import { PriceTag } from '@/components/payments/PriceTag'
-import { PriceCurrencySwitch } from '@/components/payments/PriceCurrencySwitch'
 
 export type Availability = 'idle' | 'checking' | 'free' | 'taken' | 'invalid' | 'error'
 
@@ -83,8 +82,6 @@ export function NameStep({
           </span>
         )}
       </p>
-
-      <PriceCurrencySwitch />
 
       <div className="mt-2 flex flex-col gap-2">
         {tiers === null ? (
@@ -169,7 +166,7 @@ export function NameStep({
       {selectedTier && (
         <p className="mt-2 text-center text-xs text-gray-400">
           {selectedTier.billing === 'one-time'
-            ? 'Paid once. No recurring charge.'
+            ? 'Paid once. No recurring charge. Pay with Bitcoin or your local currency on the next step.'
             : `Billed ${selectedTier.billing}.`}
         </p>
       )}

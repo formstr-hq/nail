@@ -55,7 +55,7 @@ export default defineConfig([
   // Store bundles must contain no Lightning and no card code. The bundler can
   // only drop what is never statically imported, so shared code may reach a
   // payment rail ONLY through a dynamic import() inside a build-time branch
-  // (lib/payments/methods.ts, PriceTag.tsx, PriceCurrencySwitch.tsx, ...).
+  // (lib/payments/methods.ts, PriceTag.tsx, ...).
   // This bans the static route; files that belong to a rail are exempt below.
   {
     files: ['src/**/*.{ts,tsx}'],
@@ -84,9 +84,7 @@ export default defineConfig([
                 '@/components/payments/StorePrice',
                 '@/components/payments/StoreSeatPacks',
                 '@/components/payments/OpenPrice',
-                '@/components/payments/OpenCurrencySwitch',
                 '@/components/payments/InvoiceQR',
-                '@/components/payments/CurrencySelect',
               ],
               message:
                 'Payment method components are loaded with a dynamic import() behind VITE_STORE_BUILD (see lib/payments/methods.ts).',
@@ -107,7 +105,7 @@ export default defineConfig([
       'src/lib/payments/lightning/**',
       'src/lib/payments/stripe/**',
       'src/lib/payments/store/**',
-      'src/components/payments/{LightningPay,StripePay,StorePay,StorePrice,StoreSeatPacks,OpenPrice,OpenCurrencySwitch,InvoiceQR,CurrencySelect}.tsx',
+      'src/components/payments/{LightningPay,StripePay,StorePay,StorePrice,StoreSeatPacks,OpenPrice,InvoiceQR}.tsx',
     ],
     rules: { 'no-restricted-imports': 'off' },
   },

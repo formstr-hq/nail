@@ -4,25 +4,18 @@ import { EmbeddedCheckout, EmbeddedCheckoutProvider } from '@stripe/react-stripe
 import { loadStripe } from '@stripe/stripe-js/pure'
 import { isNativeApp } from '@/lib/platform'
 import { checkoutUiMode } from '@/lib/payments/channels'
+import { formatUsd } from '@/lib/payments/money'
+import { currentMailPriceUsd, currentSeatTotalUsd } from '@/lib/payments/pricing'
 import { pollOrderStatus } from '@/lib/payments/status'
 import {
-  CardUnavailable,
-  QuoteConflict,
+  PriceChanged,
   createCheckout,
-  fetchCurrencies,
   fetchOrderStatus,
   fetchPaymentsConfig,
-  requestQuote,
-  type CurrencyInfo,
-  type Quote,
-  type QuoteRequest,
 } from '@/lib/payments/stripe/api'
 import { NATIVE_RETURN_URL, onCheckoutReturn, openCheckoutPage } from '@/lib/payments/stripe/checkoutWindow'
-import { formatMoney, resolveDisplayCurrency } from '@/lib/payments/stripe/money'
-import { useCurrencyPreference } from '@/lib/payments/stripe/preferences'
 import type { MethodProps } from '@/lib/payments/types'
 import { Confirming, StillConfirming } from './PayStatus'
-import { CurrencySelect } from './CurrencySelect'
 
 type Phase =
   | { name: 'choose' }
@@ -32,126 +25,95 @@ type Phase =
   | { name: 'confirming' }
   | { name: 'still' }
 
-function quoteRequestFor(order: MethodProps['order'], tierId: string | undefined, currency: string): QuoteRequest | null {
-  if (order.product === 'mail') return { product: 'mail', currency, tierId: order.tierId ?? tierId ?? '' }
-  if ('seats' in order) return { product: 'workspace', currency, seats: order.seats }
-  return null
-}
-
-/** Mm:ss for a countdown. */
-function clock(ms: number): string {
-  const total = Math.max(0, Math.ceil(ms / 1000))
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
-}
-
-/** Card payments: pick a currency, accept a quoted price, pay in Stripe Checkout. */
-export default function StripePay({ order, signer, onResult, onError }: MethodProps) {
-  const [currencies, setCurrencies] = useState<CurrencyInfo[] | null>(null)
+/**
+ * Card payments: one fixed USD price, one button. Stripe Checkout is created in
+ * USD and Adaptive Pricing shows the buyer their own currency inside Stripe's
+ * page; this component never computes a conversion.
+ */
+export default function StripePay({
+  order,
+  signer,
+  tier,
+  priceUsd,
+  onPriceUsdChange,
+  onResult,
+  onError,
+}: MethodProps) {
   const [publishableKey, setPublishableKey] = useState<string | null>(null)
-  const stored = useCurrencyPreference((s) => s.currency)
-  const setStored = useCurrencyPreference((s) => s.setCurrency)
-  const [currency, setCurrency] = useState<string | null>(null)
-  const [quote, setQuote] = useState<Quote | null>(null)
-  const [refreshNonce, setRefreshNonce] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   const [previousAmount, setPreviousAmount] = useState<string | null>(null)
-  const [now, setNow] = useState(() => Date.now())
   const [phase, setPhase] = useState<Phase>({ name: 'choose' })
-  const abort = useRef(new AbortController())
+  const abort = useRef<AbortController | null>(null)
 
-  // Config and currencies once.
   useEffect(() => {
     let cancelled = false
-    void Promise.all([fetchPaymentsConfig(), fetchCurrencies()]).then(([config, list]) => {
+    void fetchPaymentsConfig().then((config) => {
       if (cancelled) return
-      if (!config?.stripe.enabled || !list) {
+      if (!config?.stripe.enabled || !config.stripe.publishableKey) {
         onError('Card payments are not available right now.')
         return
       }
       setPublishableKey(config.stripe.publishableKey)
-      setCurrencies(list.currencies)
-      // "sats" is a display-only choice; the card needs a real currency.
-      const resolved = resolveDisplayCurrency(stored === 'sats' ? null : stored, list.currencies, navigator.language)
-      setCurrency(resolved === 'sats' ? (list.currencies[0]?.code ?? null) : resolved)
+      onError(null)
     })
-    return () => {
-      cancelled = true
-    }
-    // Only on mount: later preference changes must not reset the buyer's pick.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  const request = useMemo(
-    () => (currency ? quoteRequestFor(order, undefined, currency) : null),
-    [order, currency],
-  )
-
-  // A fresh quote whenever the currency changes, the old one lapsed, or checkout refused it.
-  useEffect(() => {
-    if (!request) return
-    let cancelled = false
-    setQuote(null)
-    requestQuote(request)
-      .then((q) => {
-        if (cancelled) return
-        setQuote(q)
-        setNow(Date.now())
-        onError(null)
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        onError(
-          err instanceof CardUnavailable
-            ? 'Card prices are temporarily unavailable. You can pay with Lightning instead.'
-            : err instanceof Error
-              ? err.message
-              : 'Could not get a price',
-        )
-      })
     return () => {
       cancelled = true
     }
     // onError is a stable setter.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [request, refreshNonce])
+  }, [])
 
-  // Countdown, and re-quote when the offer lapses while the buyer is still deciding.
+  const refreshPrice = useCallback(async () => {
+    const next =
+      order.product === 'mail'
+        ? await currentMailPriceUsd(order.tierId ?? tier?.id ?? '')
+        : 'seats' in order
+          ? await currentSeatTotalUsd(order.seats)
+          : null
+    if (next !== null) onPriceUsdChange?.(next)
+    return next
+  }, [order, tier?.id, onPriceUsdChange])
+
+  // A workspace order can be opened before its price loaded; fetch it once.
   useEffect(() => {
-    if (phase.name !== 'choose' || !quote) return
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [phase.name, quote])
-  const remaining = quote ? new Date(quote.expiresAt).getTime() - now : 0
+    if (priceUsd != null) return
+    refreshPrice().catch(() => onError('Could not load the price. Please try again.'))
+    // Only when the displayed price is missing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [priceUsd])
+
+  // A fresh controller per mount: StrictMode's setup/cleanup/setup cycle would
+  // leave one created in a ref permanently aborted, making the post-payment
+  // poll return instantly and the panel spin forever.
   useEffect(() => {
-    if (phase.name === 'choose' && quote && remaining <= 0) setRefreshNonce((n) => n + 1)
-  }, [phase.name, quote, remaining])
+    const controller = new AbortController()
+    abort.current = controller
+    return () => controller.abort()
+  }, [])
 
-  useEffect(() => () => abort.current.abort(), [])
-
-  const info = currencies?.find((c) => c.code === currency)
-  const price = quote && info ? formatMoney(quote.amountMinor, quote.currency, quote.exponent) : null
+  const price = priceUsd != null ? formatUsd(priceUsd) : null
 
   const settle = useCallback(
     async (sessionId: string, maxMs: number) => {
       setPhase({ name: 'confirming' })
+      const signal = abort.current?.signal
       const state = await pollOrderStatus(() => fetchOrderStatus(sessionId), {
         maxMs,
-        signal: abort.current.signal,
+        signal,
       })
-      if (abort.current.signal.aborted) return
+      if (signal?.aborted) return
       if (state === 'paid') onResult({ status: 'paid' })
       else if (state === 'needs_attention') onResult({ status: 'needs_attention' })
       else if (state === 'expired') {
         onError('The payment session expired. Please try again.')
         setPhase({ name: 'choose' })
-        setRefreshNonce((n) => n + 1)
       } else setPhase({ name: 'still' })
     },
     [onError, onResult],
   )
 
   const accept = async () => {
-    if (!quote || !publishableKey) return
+    if (priceUsd == null || !publishableKey) return
     const native = isNativeApp()
     const mode = checkoutUiMode(native)
     setPhase({ name: 'creating' })
@@ -160,7 +122,7 @@ export default function StripePay({ order, signer, onResult, onError }: MethodPr
     try {
       const session = await createCheckout(signer, {
         product: order.product,
-        quoteToken: quote.quoteToken,
+        expectedPriceUsd: priceUsd,
         uiMode: mode,
         ...(order.product === 'mail'
           ? { tierId: order.tierId, nip05: order.nip05 }
@@ -181,11 +143,11 @@ export default function StripePay({ order, signer, onResult, onError }: MethodPr
       }
     } catch (err) {
       setPhase({ name: 'choose' })
-      if (err instanceof QuoteConflict) {
-        // A buyer is never charged an amount they haven't seen: show the new one and ask again.
+      if (err instanceof PriceChanged) {
+        // A buyer is never charged an amount they haven't seen: refresh it and ask again.
         if (price) setPreviousAmount(price)
         setNotice('The price was updated. Please review it before paying.')
-        setRefreshNonce((n) => n + 1)
+        await refreshPrice().catch(() => {})
       } else {
         onError(err instanceof Error ? err.message : 'Could not start the payment')
       }
@@ -229,7 +191,7 @@ export default function StripePay({ order, signer, onResult, onError }: MethodPr
   }
   if (phase.name === 'still') return <StillConfirming />
 
-  if (!currencies || !currency) {
+  if (!publishableKey || price === null) {
     return (
       <div className="flex items-center justify-center py-8">
         <Loader2 size={18} className="animate-spin text-gray-300" />
@@ -239,42 +201,19 @@ export default function StripePay({ order, signer, onResult, onError }: MethodPr
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <label htmlFor="card-currency" className="text-sm text-gray-600">
-          Pay in
-        </label>
-        <CurrencySelect
-          id="card-currency"
-          currencies={currencies}
-          value={currency}
-          onChange={(code) => {
-            setPreviousAmount(null)
-            setNotice(null)
-            setCurrency(code)
-            setStored(code)
-          }}
-        />
-      </div>
-
       {notice && <p className="text-sm font-semibold text-amber-700">{notice}</p>}
 
       <div className="rounded-xl border border-black/10 bg-white p-4 text-center">
-        {price ? (
-          <>
-            <p className="text-2xl font-bold text-ink">{price}</p>
-            <p className="mt-1 text-xs text-gray-500">
-              plus applicable tax · valid for {clock(remaining)}
-              {previousAmount && previousAmount !== price ? ` · was ${previousAmount}` : ''}
-            </p>
-          </>
-        ) : (
-          <Loader2 size={18} className="mx-auto animate-spin text-gray-300" />
-        )}
+        <p className="text-2xl font-bold text-ink">{price}</p>
+        <p className="mt-1 text-xs text-gray-500">
+          plus applicable tax — charged in your local currency
+          {previousAmount && previousAmount !== price ? ` · was ${previousAmount}` : ''}
+        </p>
       </div>
 
       <button
         type="button"
-        disabled={!price || phase.name === 'creating'}
+        disabled={phase.name === 'creating'}
         onClick={() => void accept()}
         className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition-all enabled:hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-40"
       >
@@ -285,12 +224,13 @@ export default function StripePay({ order, signer, onResult, onError }: MethodPr
         ) : (
           <>
             {isNativeApp() && <ExternalLink size={15} />}
-            {price ? `Accept and pay ${price}` : 'Accept and pay'}
+            Pay
           </>
         )}
       </button>
       <p className="text-center text-xs text-gray-400">
-        Card purchases are sold through Stripe (Link); we never see your card. Tax is calculated at checkout.
+        Card purchases are sold through Stripe (Link); we never see your card. Your bank statement and
+        Stripe's checkout page show the amount in your own currency — we don't compute that number.
       </p>
     </div>
   )

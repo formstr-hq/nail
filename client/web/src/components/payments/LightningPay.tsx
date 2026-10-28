@@ -19,26 +19,33 @@ export default function LightningPay({ order, signer, tier, onResult, onError }:
   // another method never creates one (nor a relay listener).
   useEffect(() => {
     let cancelled = false
-    setInvoice(null)
-    setFailed(false)
-    onError(null)
-    const request =
-      order.product === 'mail'
-        ? generateMailInvoice(signer, { pubkey: order.pubkey, nip05: order.nip05, tierId: order.tierId })
-        : 'seats' in order
-          ? createSeatInvoice(signer, order.domain, order.seats)
-          : Promise.reject(new Error('Seat packs are only sold in the app stores'))
-    request
-      .then((inv) => {
-        if (!cancelled) setInvoice(inv)
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
-        setFailed(true)
-        onError(err instanceof Error ? err.message : 'Invoice request failed')
-      })
+    // Defer the request by a tick. React StrictMode mounts, cleans up and
+    // mounts again in dev; without the timer that produced two invoices and
+    // two relay listeners for one click.
+    const timer = setTimeout(() => {
+      if (cancelled) return
+      setInvoice(null)
+      setFailed(false)
+      onError(null)
+      const request =
+        order.product === 'mail'
+          ? generateMailInvoice(signer, { pubkey: order.pubkey, nip05: order.nip05, tierId: order.tierId })
+          : 'seats' in order
+            ? createSeatInvoice(signer, order.domain, order.seats)
+            : Promise.reject(new Error('Seat packs are only sold in the app stores'))
+      request
+        .then((inv) => {
+          if (!cancelled) setInvoice(inv)
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return
+          setFailed(true)
+          onError(err instanceof Error ? err.message : 'Invoice request failed')
+        })
+    }, 0)
     return () => {
       cancelled = true
+      clearTimeout(timer)
     }
     // The order and signer identify the invoice; onError is a stable setter.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -175,7 +175,7 @@ async function stubApp(page: import('@playwright/test').Page) {
     route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ pricePerSeatSats: 20, minSeats: 1, maxSeats: 1000 }),
+      body: JSON.stringify({ pricePerSeatSats: 20, seatPriceUsd: 99, minSeats: 1, maxSeats: 1000 }),
     }),
   )
   await page.route('**/api/workspace/generate-invoice', (route) =>
@@ -329,9 +329,9 @@ test('workspace setup: add → DNS → verify → assign addresses', async ({ pa
   )
 
   // Billing is flat per-seat with a custom quantity, not fixed packs: the live
-  // total tracks the entered seat count (20 sats/seat).
+  // total tracks the entered seat count ($0.99/seat).
   await page.getByLabel('Seats to buy').fill('3')
-  await expect(page.getByText('60 sats')).toBeVisible()
+  await expect(page.getByText('$2.97')).toBeVisible()
 
   // Delete a pending domain: no confirmation (it routes nothing), a snackbar
   // confirms, and it leaves the list.

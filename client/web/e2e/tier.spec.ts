@@ -19,6 +19,7 @@ test('name step renders backend tiers with includes/excludes and coming-soon', a
           name: 'Mail',
           description: 'Your encrypted mailbox',
           priceSats: 2100,
+          priceUsd: 2100,
           features: ['Encrypted inbox'],
           notIncluded: ['Attachments'],
           available: true,
@@ -28,6 +29,7 @@ test('name step renders backend tiers with includes/excludes and coming-soon', a
           name: 'Mail Plus',
           description: 'More room',
           priceSats: 5000,
+          priceUsd: 5000,
           features: ['More storage'],
           notIncluded: [],
           available: false,
@@ -51,7 +53,7 @@ test('name step renders backend tiers with includes/excludes and coming-soon', a
   await expect(page.getByText('Attachments')).toBeVisible() // base: not included
   await expect(page.getByText(/coming soon/i)).toBeVisible() // Mail Plus badge
   // The buyable tier drives the CTA (dash-agnostic).
-  // Card is off, so the price is the sats price; the CTA no longer names an amount or a method.
-  await expect(page.getByText('2,100')).toBeVisible()
+  // The fixed USD price shows even when card payments are off; the CTA names no method.
+  await expect(page.getByText('$21.00')).toBeVisible()
   await expect(page.getByRole('button', { name: /^get mail$/i })).toBeVisible()
 })

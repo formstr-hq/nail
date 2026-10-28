@@ -4,7 +4,6 @@ import { Button } from '@/app/components/ui/Button'
 import { Field, inputClass } from '@/app/components/settings/Field'
 import { PaymentSheet } from '@/components/payments/PaymentSheet'
 import { PriceTag } from '@/components/payments/PriceTag'
-import { PriceCurrencySwitch } from '@/components/payments/PriceCurrencySwitch'
 import { fetchSeatLimits, type SeatLimits } from '@/lib/payments/seatLimits'
 import type { PayOrder } from '@/lib/payments/types'
 import { withSignerTimeout } from '@/app/lib/nostr/signer'
@@ -26,9 +25,8 @@ function parseInt0(value: string): number | null {
  *
  * Open builds let the buyer choose any quantity and pay with whichever method
  * the build offers; store builds sell fixed packs through the app store. The
- * prices, their bounds and the currencies come from the server (and the store);
- * this panel only collects the quantity and hands the order to the payment
- * sheet.
+ * prices and their bounds come from the server (and the store); this panel
+ * only collects the quantity and hands the order to the payment sheet.
  */
 export function SeatsPanel({
   active,
@@ -58,6 +56,8 @@ export function SeatsPanel({
   const max = limits?.maxSeats ?? 1000
   const parsed = parseInt0(seats)
   const inRange = parsed != null && parsed >= min && parsed <= max
+  const totalUsd =
+    parsed != null && limits?.seatPriceUsd ? limits.seatPriceUsd * parsed : null
 
   async function paid() {
     setPaying(null)
@@ -67,7 +67,7 @@ export function SeatsPanel({
   if (paying) {
     return (
       <Field label="Pay for seats">
-        <PaymentSheet order={paying} signer={signer} onPaid={() => void paid()} />
+        <PaymentSheet order={paying} signer={signer} priceUsd={totalUsd} onPaid={() => void paid()} />
         <button
           type="button"
           onClick={() => setPaying(null)}
@@ -97,7 +97,7 @@ export function SeatsPanel({
           </Suspense>
         </Field>
       ) : (
-        <Field label="Buy seats" hint="One-time payment.">
+        <Field label="Buy seats" hint="One-time payment. Pay with Bitcoin or your local currency.">
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1">
               <span className="text-[11px] text-subtle">Seats to buy</span>
@@ -118,7 +118,7 @@ export function SeatsPanel({
                 <>
                   <span className="text-subtle">Total </span>
                   <span className="font-mono font-medium">
-                    <PriceTag subject={{ kind: 'seats', seats: parsed }} />
+                    <PriceTag subject={{ kind: 'seats', seats: parsed, priceUsd: totalUsd }} />
                   </span>
                 </>
               ) : (
@@ -135,9 +135,6 @@ export function SeatsPanel({
             >
               Buy seats
             </Button>
-          </div>
-          <div className="mt-2">
-            <PriceCurrencySwitch />
           </div>
         </Field>
       )}

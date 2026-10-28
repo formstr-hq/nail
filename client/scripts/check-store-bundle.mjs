@@ -35,15 +35,13 @@ export const DENYLIST = [
   "/api/generate-invoice",
   "/api/workspace/generate-invoice",
   "/api/stripe",
-  "/api/quotes",
-  "/api/payments/currencies",
   "/api/payments/config",
   "/ws?hash",
   "lightning:",
 ];
 
 /** What an open build must still contain. */
-export const OPEN_REQUIRED = ["/api/generate-invoice/mail", "/api/stripe/checkout", "Accept and pay"];
+export const OPEN_REQUIRED = ["/api/generate-invoice/mail", "/api/stripe/checkout", "Pay with Bitcoin"];
 /** What a store build must contain: the store method really is in there. */
 export const STORE_REQUIRED = ["Restore purchases", "/api/store/verify"];
 

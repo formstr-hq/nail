@@ -5,7 +5,7 @@ import { isStoreBuild } from '@/lib/platform'
 /** A non-2xx answer, carrying the backend's own explanation. */
 export class ApiError extends Error {
   status: number
-  /** Machine-readable reason (e.g. a 409 `quote_expired`), when the backend sent one. */
+  /** Machine-readable reason (e.g. a 409 `price_changed`), when the backend sent one. */
   reason?: string
   constructor(status: number, message: string, reason?: string) {
     super(message)

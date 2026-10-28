@@ -129,7 +129,8 @@
 <h1>Payments — wireframe</h1>
 <p class="lede">
   Low-fi, but built from the live tokens and the existing <code>SignupWizard</code> card (<code>max-w-md rounded-2xl bg-paper p-6</code>).
-  Steps stay <b>login → name → pay → keys</b>. Only the <b>name step's price row</b> and the <b>pay step body</b> change; both live in nail's <code>lib/payments</code> module. Prices default to fiat; sats are opt-in via the switcher, while the pay step always shows each method's own charge. Red pins <span class="pin">1</span> mark what is <i>new</i> versus today's UI.
+  Steps stay <b>login → name → pay → keys</b>. Only the <b>name step's price row</b> and the <b>pay step body</b> change; both live in nail's <code>lib/payments</code> module.
+  <b>Revised Oct 25 2026:</b> there is no currency picker anywhere. formstr shows exactly one price itself — the <b>fixed dollar price</b> — everywhere, always, before any payment method is chosen; the buyer only ever chooses a payment <i>method</i> ("Pay with Bitcoin" or "Pay in your local currency"), never a currency. Sats only appears once "Pay with Bitcoin" is actually selected and a BOLT11 invoice is generated. Once "local currency" is picked instead, the same fixed dollar price is charged and Stripe Adaptive Pricing (Card) or the store's own purchase sheet (Apple/Google) handles localisation — formstr never computes or shows a converted number itself. Red pins <span class="pin">1</span> mark what is <i>new</i> versus today's UI.
 </p>
 
 <h2>Which rails each build shows</h2>
@@ -143,45 +144,25 @@
 
 <!-- ============ 1. NAME STEP ============ -->
 <h2>1 · Name step — price row</h2>
-<p class="lede">Same tier card. Open builds show the <b>fiat price by default</b> with a small currency select (fiat list + sats) — no sats up front. Store builds show only the store's localized price and no switcher.</p>
+<p class="lede">Same tier card. <b>The dollar price is the only price formstr itself shows here</b> — no currency select, no sats, nothing fetched from Stripe yet (it's plain config, not a quote). Sats only appears later, on the pay step, once "Pay with Bitcoin" is actually chosen. Store builds show the store's own localized price instead (set once in the console, not computed by us).</p>
 <div class="row">
   <figure>
-    <figcaption><span class="chip">WEB</span><span class="chip">DIRECT APK</span> default: fiat, no sats</figcaption>
+    <figcaption><span class="chip">WEB</span><span class="chip">DIRECT APK</span> dollar price, always</figcaption>
     <div class="stage"><div class="card">
       <div class="head"><div><h3>Pick your address</h3><p class="sub">This becomes your email and your NIP-05 handle.</p></div><span class="x">✕</span></div>
       <div class="field"><span class="in">alice</span><span class="sfx">@mailstr.app</span></div>
       <p class="avail">✓ alice@mailstr.app is available</p>
-      <div class="cur">Show prices in <span class="sel">USD</span> <span class="pin">1</span></div>
       <div class="tier" style="margin-top:8px">
         <div class="top">
           <div><h4>Mail</h4><p class="desc">Your own encrypted mailbox, delivered over Nostr.</p></div>
-          <div class="price"><b>$5.00</b><small>one-time</small></div>
+          <div class="price"><b>$5.00</b><small>one-time <span class="pin">1</span></small></div>
         </div>
         <ul class="feat"><li>Your name@mailstr.app address</li><li>Send &amp; receive mail, stored encrypted to your key</li><li class="no">Attachments</li><li class="no">Extra storage</li></ul>
       </div>
       <button class="btn">Get Mail <span class="pin">2</span></button>
-      <p class="note">Paid once. No recurring charge.</p>
+      <p class="note">Paid once. No recurring charge. Pay with Bitcoin or your local currency on the next step.</p>
     </div></div>
-    <ol class="notes"><li><b>Currency select</b> — display only, open builds only. Lists the backend's currencies plus sats. Default: last choice, else the browser locale's currency, else USD; remembered (<code>mailstr.pay.currency</code>). The price shown is indicative; the binding price is the quote accepted on the pay step.</li><li>CTA no longer names an amount or a method, and no longer says "Preparing invoice…" — the order is created on the pay step.</li></ol>
-  </figure>
-  <figure>
-    <figcaption><span class="chip">WEB</span><span class="chip">DIRECT APK</span> switched to sats</figcaption>
-    <div class="stage"><div class="card">
-      <div class="head"><div><h3>Pick your address</h3><p class="sub">This becomes your email and your NIP-05 handle.</p></div><span class="x">✕</span></div>
-      <div class="field"><span class="in">alice</span><span class="sfx">@mailstr.app</span></div>
-      <p class="avail">✓ alice@mailstr.app is available</p>
-      <div class="cur">Show prices in <span class="sel">sats</span> <span class="pin">1</span></div>
-      <div class="tier" style="margin-top:8px">
-        <div class="top">
-          <div><h4>Mail</h4><p class="desc">Your own encrypted mailbox, delivered over Nostr.</p></div>
-          <div class="price"><b>1,000</b><span>sats</span><small>one-time</small></div>
-        </div>
-        <ul class="feat"><li>Your name@mailstr.app address</li><li>Send &amp; receive mail, stored encrypted to your key</li><li class="no">Attachments</li><li class="no">Extra storage</li></ul>
-      </div>
-      <button class="btn">Get Mail <span class="pin">2</span></button>
-      <p class="note">Paid once. No recurring charge.</p>
-    </div></div>
-    <ol class="notes"><li>Same card after the user taps <b>sats</b>. Sats appear only on request (or on the Lightning pay step, where the invoice amount must be shown).</li></ol>
+    <ol class="notes"><li>No currency select, no sats here — there's nothing to pick before the pay step, and nothing is fetched from Stripe yet. The $5.00 figure is the plain <code>MAIL_PRICE_USD</code> config value, shown whether the buyer ends up paying in Bitcoin or fiat.</li><li>CTA no longer names a method, and no longer says "Preparing invoice…" — the order is created on the pay step, after a payment method is chosen.</li></ol>
   </figure>
   <figure>
     <figcaption><span class="chip">PLAY</span><span class="chip">IOS</span> store price only</figcaption>
@@ -199,10 +180,10 @@
       <button class="btn">Get Mail</button>
       <p class="note">Paid once. No recurring charge.</p>
     </div></div>
-    <ol class="notes"><li>Price string is the store's own (<code>fetchProduct</code>), localized by StoreKit / Play — never our number.</li></ol>
+    <ol class="notes"><li>Price string is the store's own (<code>fetchProduct</code>), localized by StoreKit / Play — never our number. No sats, no USD shown here (store builds carry no Lightning or Stripe code at all).</li></ol>
   </figure>
   <figure>
-    <figcaption><span class="chip">WEB</span><span class="chip">DIRECT APK</span> fallback: Stripe off or rates unavailable</figcaption>
+    <figcaption><span class="chip">WEB</span><span class="chip">DIRECT APK</span> fallback: Stripe not configured</figcaption>
     <div class="stage"><div class="card">
       <div class="head"><div><h3>Pick your address</h3><p class="sub">This becomes your email and your NIP-05 handle.</p></div><span class="x">✕</span></div>
       <div class="field"><span class="in">alice</span><span class="sfx">@mailstr.app</span></div>
@@ -210,26 +191,26 @@
       <div class="tier" style="margin-top:14px">
         <div class="top">
           <div><h4>Mail</h4><p class="desc">Your own encrypted mailbox, delivered over Nostr.</p></div>
-          <div class="price"><b>1,000</b><span>sats</span><small>one-time</small></div>
+          <div class="price"><b>$5.00</b><small>one-time</small></div>
         </div>
         <ul class="feat"><li>Your name@mailstr.app address</li><li>Send &amp; receive mail, stored encrypted to your key</li><li class="no">Attachments</li><li class="no">Extra storage</li></ul>
       </div>
       <button class="btn">Get Mail</button>
       <p class="note">Paid once. No recurring charge.</p>
     </div></div>
-    <ol class="notes"><li>If Stripe isn't configured, the currency list or quote call fails, or quoting returns 503 (stale rates), the price falls back to <b>sats</b>: no currency select, no error banner. Card is hidden on the pay step and Lightning keeps working.</li></ol>
+    <ol class="notes"><li>Identical card either way — the dollar price is config, not a Stripe call, so it shows even when Stripe is off. The only thing that changes is that the pay step's "local currency" option doesn't appear at all; Bitcoin still works.</li></ol>
   </figure>
 </div>
 
 <!-- ============ 2. PAY STEP, OPEN BUILDS ============ -->
 <h2>2 · Pay step — web &amp; direct APK</h2>
-<p class="lede">The title ("One payment, and it's yours") and "Claiming alice@…" subtitle are unchanged. The body gains a method picker; Lightning is today's <code>InvoiceQR</code>, moved into the package untouched.</p>
+<p class="lede">The title ("One payment, and it's yours") and "Claiming alice@…" subtitle are unchanged. The body gains the two-choice method picker, both options showing the <b>same dollar figure</b> until one is actually picked; Lightning is today's <code>InvoiceQR</code>, moved into the package untouched. Nothing is fetched from Stripe until "Pay in your local currency" is selected, and the Bitcoin option only turns into a sats amount once it's selected and a BOLT11 is generated.</p>
 <div class="row">
   <figure>
-    <figcaption><span class="chip">WEB</span><span class="chip">DIRECT APK</span> Lightning selected — the default (existing UI)</figcaption>
+    <figcaption><span class="chip">WEB</span><span class="chip">DIRECT APK</span> Bitcoin selected — the default (existing UI)</figcaption>
     <div class="stage"><div class="card">
       <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
-      <div class="seg"><button class="on">⚡ Lightning <span class="amt">1,000 sats</span></button><button>Card</button></div>
+      <div class="seg"><button class="on">⚡ Bitcoin <span class="amt">1,000 sats</span></button><button>Local currency</button></div>
       <div class="center">
         <p class="muted" style="margin:0 0 10px">Scan the QR with your wallet to pay <b style="color:var(--ink)">1,000 sats</b>.</p>
         <div class="qr"><i></i></div>
@@ -239,52 +220,51 @@
         <p class="fine">Payments usually confirm within minutes, but can take up to an hour to reflect. If yours has not shown up after that, contact us from <b>Settings → Help</b>.</p>
       </div>
     </div></div>
-    <ol class="notes"><li>Pixel-identical to today's <code>InvoiceQR</code>; the invoice is requested lazily when this segment is first selected (so choosing Card never creates a Lightning invoice or a relay listener).</li></ol>
+    <ol class="notes"><li>Pixel-identical to today's <code>InvoiceQR</code>; the invoice is requested lazily when this segment is first selected (so choosing "Local currency" never creates a Lightning invoice or a relay listener).</li></ol>
   </figure>
 
   <figure>
-    <figcaption><span class="chip">WEB</span> Card selected → pick currency, see the price</figcaption>
+    <figcaption><span class="chip">WEB</span> Local currency selected — fixed price, one button</figcaption>
     <div class="stage"><div class="card">
       <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
-      <div class="seg"><button>⚡ Lightning <span class="amt">1,000 sats</span></button><button class="on">Card</button></div>
-      <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--g600)">Pay in <span class="sel">EUR — Euro</span></div>
-      <div class="quote"><div class="big">€5,62</div><div class="meta">plus applicable tax · valid for 9:41 <span class="pin">4</span></div></div>
-      <button class="btn" style="margin-top:0">Accept and pay €5,62</button>
-      <p class="fine">Card purchases are sold through Stripe (Link); we never see your card. Tax is calculated at checkout.</p>
+      <div class="seg"><button>⚡ Bitcoin <span class="amt">$5.00</span></button><button class="on">Local currency</button></div>
+      <div class="quote"><div class="big">$5.00</div><div class="meta">plus applicable tax — charged in your local currency <span class="pin">4</span></div></div>
+      <button class="btn" style="margin-top:0">Pay</button>
+      <p class="fine">Card purchases are sold through Stripe (Link); we never see your card. Your bank statement and Stripe's checkout page show this in your own currency — we don't compute or show that number ourselves.</p>
     </div></div>
-    <ol class="notes"><li><b>Step 1–3 of the card flow:</b> choose a currency from the backend's list → the backend quotes the sats price converted into it (Stripe's fees already included, never itemised) → the buyer accepts. Only then is the order created and Checkout mounted (next screen).</li></ol>
+    <ol class="notes"><li><b>This is the whole card flow now:</b> no currency to pick, no quote to accept — the price shown is the fixed dollar amount from config. Tapping "Pay" creates the order and mounts Checkout directly (next screen); there's nothing in between any more.</li></ol>
   </figure>
   <figure>
-    <figcaption><span class="chip">WEB</span> after accepting → Stripe Embedded Checkout</figcaption>
+    <figcaption><span class="chip">WEB</span> after tapping Pay → Stripe Embedded Checkout</figcaption>
     <div class="stage"><div class="card">
       <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
-      <div class="seg"><button>⚡ Lightning <span class="amt">1,000 sats</span></button><button class="on">Card <span class="amt">€5,62</span></button></div>
+      <div class="seg"><button>⚡ Bitcoin <span class="amt">$5.00</span></button><button class="on">Local currency <span class="amt">$5.00</span></button></div>
       <div class="embed">
-        <div class="lbl">Stripe Embedded Checkout (iframe) — €5,62 <span class="pin">5</span></div>
+        <div class="lbl">Stripe Embedded Checkout (iframe) — localises automatically <span class="pin">5</span></div>
         <div class="ph">Email</div><div class="ph">Card number</div>
         <div class="ph half">MM / YY</div><div class="ph half">CVC</div>
-        <div class="btn sm" style="justify-content:center">Pay €5,62</div>
+        <div class="btn sm" style="justify-content:center">Pay €4,62</div>
       </div>
-      <p class="fine">The amount and currency are exactly what was accepted; the backend checks the payment against the invoice before granting the mailbox.</p>
+      <p class="fine">Checkout was created for $5.00 and Stripe Adaptive Pricing is showing this buyer €4,62 — Stripe's own conversion, inside Stripe's own page. The backend's invoice still records $5.00, which is what the webhook checks against.</p>
     </div></div>
   </figure>
   <figure>
-    <figcaption><span class="chip">WEB</span> quote expired / price changed</figcaption>
+    <figcaption><span class="chip">WEB</span> config price changed before paying</figcaption>
     <div class="stage"><div class="card">
       <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
-      <div class="seg"><button>⚡ Lightning <span class="amt">1,000 sats</span></button><button class="on">Card</button></div>
+      <div class="seg"><button>⚡ Bitcoin <span class="amt">$5.00</span></button><button class="on">Local currency</button></div>
       <p class="alert" style="background:#fffbeb;border-color:#fde68a;color:#92400e">The price was updated. Please review it before paying.</p>
-      <div class="quote"><div class="big">€5,71</div><div class="meta">plus applicable tax · valid for 10:00 · was €5,62</div></div>
-      <button class="btn" style="margin-top:0">Accept and pay €5,71</button>
+      <div class="quote"><div class="big">$5.50</div><div class="meta">plus applicable tax — was $5.00</div></div>
+      <button class="btn" style="margin-top:0">Pay</button>
     </div></div>
-    <ol class="notes"><li>A 409 from checkout (quote expired, or the configured price changed) fetches a fresh quote and asks again. A buyer is never charged an amount they haven't seen.</li><li>If rates are stale (503), the Card segment is hidden and only Lightning is offered.</li></ol>
+    <ol class="notes"><li>A 409 <code>price_changed</code> from checkout (the config price moved between page load and the tap — not a currency rate, since there is none) refetches the tier and shows the new fixed price. A buyer is never charged an amount they haven't seen; this is rare, not an expiring quote on a timer.</li><li>If Stripe isn't configured, "Local currency" doesn't appear at all — only Bitcoin is offered.</li></ol>
   </figure>
 
   <figure>
-    <figcaption><span class="chip">DIRECT APK</span> Card → hosted Checkout in a Custom Tab</figcaption>
+    <figcaption><span class="chip">DIRECT APK</span> Local currency → hosted Checkout in a Custom Tab</figcaption>
     <div class="stage"><div class="card">
       <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
-      <div class="seg"><button>⚡ Lightning <span class="amt">1,000 sats</span></button><button class="on">Card</button></div>
+      <div class="seg"><button>⚡ Bitcoin <span class="amt">$5.00</span></button><button class="on">Local currency</button></div>
       <div class="summary"><span class="addr">alice@mailstr.app</span><span class="amt">$5.00</span></div>
       <button class="btn" style="margin-top:0">Continue to secure checkout ↗ <span class="pin">6</span></button>
       <p class="note">Opens Stripe in your browser. You'll come back here when it's done.</p>
@@ -345,8 +325,8 @@
     <figcaption>Card declined / session expired</figcaption>
     <div class="stage"><div class="card">
       <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
-      <p class="alert">Your card was declined. Try another card or pay with Lightning.</p>
-      <div class="seg"><button>⚡ Lightning <span class="amt">1,000 sats</span></button><button class="on">Card</button></div>
+      <p class="alert">Your card was declined. Try another card or pay with Bitcoin.</p>
+      <div class="seg"><button>⚡ Bitcoin <span class="amt">$5.00</span></button><button class="on">Local currency</button></div>
       <div class="embed"><div class="lbl">Stripe Embedded Checkout (fresh session)</div><div class="ph">Card number</div></div>
     </div></div>
     <ol class="notes"><li>A declined card is handled inside Stripe's iframe; this banner only appears for expired sessions (30 min) or a server-side failure.</li></ol>
@@ -381,14 +361,14 @@
     <div class="stage2"><div class="panel">
       <div class="lbl2">Seats</div><div class="hint">You have used 3 of 5. One seat per address.</div>
       <div class="lbl2" style="margin-top:6px">Buy seats</div>
-      <div class="hint">One-time payment. Pay with Lightning or card.</div>
+      <div class="hint">One-time payment. Pay with Bitcoin or your local currency.</div>
       <div class="row2">
         <div><div style="font-size:11px;color:var(--g500);margin-bottom:3px">Seats to buy</div><div class="inp">10</div></div>
-        <div class="tot"><span style="color:var(--g500)">Total </span><b>$9.80</b> <span class="sel" style="font-size:11px;padding:2px 8px">USD</span></div>
+        <div class="tot"><span style="color:var(--g500)">Total </span><b>$9.90</b></div>
         <span class="btn2">Buy seats</span>
       </div>
     </div></div>
-    <ol class="notes"><li>The total is an indicative quote in the chosen currency (sats if Stripe is off or rates are unavailable, same fallback as the name step). Buying opens the payment sheet from §2 with the seat total.</li></ol>
+    <ol class="notes"><li>The total is always in dollars, same as the name step — no currency select, no sats here. It's <code>WORKSPACE_SEAT_PRICE_USD</code> × seat count. Buying opens the payment sheet from §2 (Bitcoin / local currency) with this total; sats only appears if Bitcoin is picked there, scaled the same way from the sats seat price.</li></ol>
   </figure>
   <figure>
     <figcaption><span class="chip">PLAY</span><span class="chip">IOS</span> fixed packs</figcaption>
@@ -410,11 +390,11 @@
 <h2>Notes</h2>
 <div class="legend">
   <b>Pins</b> —
-  <span class="pin">1</span> currency select, display only (open builds only) ·
+  <span class="pin">1</span> dollar price only here, no currency select, no sats until Bitcoin is actually picked ·
   <span class="pin">2</span> CTA no longer names a method ·
   <span class="pin">3</span> store-localized price ·
-  <span class="pin">4</span> quote lifetime ·
-  <span class="pin">5</span> Stripe-hosted iframe — we style only the surrounding card ·
+  <span class="pin">4</span> fixed dollar price, no quote/expiry ·
+  <span class="pin">5</span> Stripe-hosted iframe — we style only the surrounding card, Adaptive Pricing does the rest ·
   <span class="pin">6</span> APK hosted-checkout hand-off ·
   <span class="pin">7</span> App Review requirement.<br><br>
   <b>Dark mode / in-app modal</b> — the buy flow inside the mail client renders under <code>.landing</code> (BuyAddressModal), which pins the light palette, so this wireframe's single light theme is correct for both surfaces.<br>
