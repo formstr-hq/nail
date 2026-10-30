@@ -542,7 +542,7 @@ rev-3 audit fix pass + ADR-002/003). The rev-3 work was committed first
    verification), root `README.md` (repo table was stale from before the
    merge — now lists `client/web`, `client`, `notifier`), `client/README.md`,
    `docs/ARCHITECTURE.md` (component table + callers + protocol section),
-   `docs/fiat-iap-plan.md` (paths retargeted to the merged layout).
+   `formstr-backend/docs/fiat-iap-plan.md` (paths retargeted to the merged layout).
 8. **`scripts/render-app-icon.py`:** `RES` points at `client/android/...`;
    the dead `client/public` + `landing/public` favicon writes (deleted in the
    merge, guarded by `exists()`) are replaced by the live
@@ -575,7 +575,7 @@ config` resolves.
 - **Context:** ADR-001 merged `mobile/` into the pnpm workspace so one
   lockfile served both. The remaining split (`web/` + `mobile/`) still named
   the native shell by one of its two platforms, while the roadmap
-  (`docs/fiat-iap-plan.md` phase 3b) adds `client/ios`. A flat
+  (`formstr-backend/docs/fiat-iap-plan.md` phase 3b) adds `client/ios`. A flat
   `client/{web,android,ios}` tree makes the shell's platform folders siblings
   under a neutral name and matches the plan the iOS work will follow.
 - **Decision:** `mobile/` is removed as a directory; its contents become
@@ -1922,7 +1922,7 @@ and release.
 
 ## 2026-10-13 — Fiat payments plan rev 2: Stripe, in-nail payments module, migration re-base
 
-Docs only; no code changed. Files: `docs/fiat-iap-plan.md` (rewritten as rev 2),
+Docs only; no code changed. Files: `formstr-backend/docs/fiat-iap-plan.md` (rewritten as rev 2),
 `docs/wireframes/payments.html` (new).
 
 ### Decisions (ADR-style)
@@ -1948,7 +1948,7 @@ Five questions at the end of the plan (direct-APK scope, Stripe v1 scope, storag
 
 ## 2026-10-18 — Fiat plan: sats-pegged card quotes, Stripe Managed Payments, store-bundle rule
 
-Docs only; no code. Files: `docs/fiat-iap-plan.md`, `docs/wireframes/payments.html`.
+Docs only; no code. Files: `formstr-backend/docs/fiat-iap-plan.md`, `docs/wireframes/payments.html`.
 
 ### Decisions (ADR-style)
 1. **Prices are fixed in sats; fiat for Stripe is a stateless signed quote** (sats × BTC/<currency> from a two-source median feed, plus a gross-up so the net after Stripe's fees equals the converted amount). No rate or sats price is stored; `invoices.price` / `price_unit` hold the amount charged. Flow: pick currency → quote → accept → invoice → pay → webhook checks the paid amount against the invoice.
@@ -1967,7 +1967,7 @@ Code in `formstr-backend` branch `fiat_payments` and in `client/` here. Nothing 
 
 ### Decisions (ADR-style)
 1. **DCE-based payment-method exclusion.** Which payment methods a build offers is chosen on the build-time constant `VITE_STORE_BUILD` (`lib/payments/methods.ts`, `PriceTag`, `PriceCurrencySwitch`, `billing.tsx`), each method behind a dynamic `import()` inside the branch that wants it, so the store bundle never contains Lightning or card code. Shared code names no rail: tiers carry the backend's price fields opaquely (`MailTier.pricing`) and only the rail modules read them. Backed by an ESLint `no-restricted-imports` ban on static rail imports, `scripts/check-store-bundle.mjs` (denylist scan of the whole bundle + native project, with a justified allowlist for nostr-tools' dead zap helpers), Gradle `pre{Direct,Play}*Build` gates, CI on both bundle kinds, and the backend's `X-Pay-Channel: store` 403.
-2. **Unified invoices table with product status** (backend): see `docs/fiat-iap-plan.md` and the backend migrations M1-M10.
+2. **Unified invoices table with product status** (backend): see `formstr-backend/docs/fiat-iap-plan.md` and the backend migrations M1-M10.
 3. **Purchase plugin: `cordova-plugin-purchase`** (the plan's `capacitor-iap` is unpublished). It is gated per flavor by `includePlugins` in `capacitor.config.ts` rather than by editing Gradle files, so the direct APK has no Play Billing (verified: 0 `billingclient` classes). Its unverified assumptions (the `approved` event shape, StoreKit 2 transaction ids) are confined to `lib/payments/store/iap.ts`.
 4. **Embedded Checkout never redirects** (`redirect_on_completion: "never"` + `onComplete`); the native app uses hosted Checkout in the system browser and returns by deep link. The client always waits for the backend (`/api/orders/:id/status`) rather than its own belief.
 5. A charged store purchase that the backend cannot provision is **not finished/consumed**, so the store can refund it.
