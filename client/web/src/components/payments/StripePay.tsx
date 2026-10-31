@@ -218,7 +218,7 @@ export default function StripePay({
         className={[
           'inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40',
           order.product === 'workspace'
-            ? 'border border-black/10 bg-white text-ink enabled:hover:bg-black/[0.04]'
+            ? 'border border-black/10 bg-white text-ink enabled:hover:bg-gray-300'
             : 'bg-primary text-white enabled:hover:bg-primary-light',
         ].join(' ')}
       >
