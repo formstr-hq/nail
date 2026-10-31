@@ -96,6 +96,22 @@ describe('StripePay', () => {
     expect(api.fetchOrderStatus).toHaveBeenCalledWith('cs_1')
   })
 
+  it('uses a white, dark-text pay button in the workspace flow', async () => {
+    render(
+      <StripePay
+        order={{ product: 'workspace', domain: 'acme.com', seats: 1 }}
+        signer={signer}
+        priceUsd={500}
+        onResult={vi.fn()}
+        onError={vi.fn()}
+      />,
+    )
+    const pay = await screen.findByRole('button', { name: /^pay$/i })
+    expect(pay.className).toContain('bg-white')
+    expect(pay.className).toContain('text-ink')
+    expect(pay.className).not.toContain('bg-primary')
+  })
+
   it('still settles after StrictMode remounts the panel', async () => {
     api.createCheckout.mockResolvedValue({ sessionId: 'cs_strict', clientSecret: 'secret', amount: 500, currency: 'usd' })
     api.fetchOrderStatus.mockResolvedValue({ status: 'paid' })

@@ -215,7 +215,12 @@ export default function StripePay({
         type="button"
         disabled={phase.name === 'creating'}
         onClick={() => void accept()}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition-all enabled:hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-40"
+        className={[
+          'inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40',
+          order.product === 'workspace'
+            ? 'border border-black/10 bg-white text-ink enabled:hover:bg-black/[0.04]'
+            : 'bg-primary text-white enabled:hover:bg-primary-light',
+        ].join(' ')}
       >
         {phase.name === 'creating' ? (
           <>
