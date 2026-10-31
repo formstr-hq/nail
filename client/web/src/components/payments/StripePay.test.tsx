@@ -73,6 +73,7 @@ describe('StripePay', () => {
     const { onResult } = setup()
 
     expect(await screen.findByText('$5.00')).toBeTruthy()
+    expect(screen.getByText(/tax included/)).toBeTruthy()
     expect(screen.getByText(/charged in your local currency/)).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: /^pay$/i }))

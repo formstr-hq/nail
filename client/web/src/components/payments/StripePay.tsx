@@ -206,7 +206,7 @@ export default function StripePay({
       <div className="rounded-xl border border-black/10 bg-white p-4 text-center">
         <p className="text-2xl font-bold text-ink">{price}</p>
         <p className="mt-1 text-xs text-gray-500">
-          plus applicable tax — charged in your local currency
+          tax included — charged in your local currency
           {previousAmount && previousAmount !== price ? ` · was ${previousAmount}` : ''}
         </p>
       </div>

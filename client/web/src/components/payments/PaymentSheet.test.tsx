@@ -38,11 +38,17 @@ describe('PaymentSheet', () => {
     expect(screen.getByRole('radio', { name: 'One' }).getAttribute('aria-checked')).toBe('true')
   })
 
-  it('shows the fixed USD price next to both method choices', async () => {
-    methods.list = [method('one', 'Pay with Bitcoin'), method('two', 'Pay in your local currency')]
+  it('shows each method\'s price on the line below its label', async () => {
+    methods.list = [
+      { ...method('one', 'Pay with Bitcoin'), price: () => '1,000 sats' },
+      { ...method('two', 'Pay in your local currency'), price: () => '$5.00' },
+    ]
     render(<PaymentSheet order={order} signer={signer} priceUsd={500} onPaid={() => {}} />)
     await screen.findByText('Pay with Bitcoin panel')
-    expect(screen.getAllByText('$5.00')).toHaveLength(2)
+    expect(await screen.findByText('1,000 sats')).toBeTruthy()
+    expect(await screen.findByText('$5.00')).toBeTruthy()
+    expect(screen.getByText('Pay with Bitcoin').nextElementSibling?.textContent).toBe('1,000 sats')
+    expect(screen.getByText('Pay in your local currency').nextElementSibling?.textContent).toBe('$5.00')
   })
 
   it('hides the picker when only one method is offered', async () => {

@@ -228,7 +228,7 @@
     <div class="stage"><div class="card">
       <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
       <div class="seg"><button>⚡ Bitcoin <span class="amt">$5.00</span></button><button class="on">Local currency</button></div>
-      <div class="quote"><div class="big">$5.00</div><div class="meta">plus applicable tax — charged in your local currency <span class="pin">4</span></div></div>
+      <div class="quote"><div class="big">$5.00</div><div class="meta">tax included — charged in your local currency <span class="pin">4</span></div></div>
       <button class="btn" style="margin-top:0">Pay</button>
       <p class="fine">Card purchases are sold through Stripe (Link); we never see your card. Your bank statement and Stripe's checkout page show this in your own currency — we don't compute or show that number ourselves.</p>
     </div></div>
@@ -254,7 +254,7 @@
       <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
       <div class="seg"><button>⚡ Bitcoin <span class="amt">$5.00</span></button><button class="on">Local currency</button></div>
       <p class="alert" style="background:#fffbeb;border-color:#fde68a;color:#92400e">The price was updated. Please review it before paying.</p>
-      <div class="quote"><div class="big">$5.50</div><div class="meta">plus applicable tax — was $5.00</div></div>
+      <div class="quote"><div class="big">$5.50</div><div class="meta">tax included — was $5.00</div></div>
       <button class="btn" style="margin-top:0">Pay</button>
     </div></div>
     <ol class="notes"><li>A 409 <code>price_changed</code> from checkout (the config price moved between page load and the tap — not a currency rate, since there is none) refetches the tier and shows the new fixed price. A buyer is never charged an amount they haven't seen; this is rare, not an expiring quote on a timer.</li><li>If Stripe isn't configured, "Local currency" doesn't appear at all — only Bitcoin is offered.</li></ol>

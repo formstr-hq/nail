@@ -32,10 +32,19 @@ export interface MethodProps {
   onError: (message: string | null) => void
 }
 
+/** What a method needs to state the amount it will charge. */
+export interface MethodPriceContext {
+  order: PayOrder
+  tier?: import('@/lib/api').MailTier | null
+  priceUsd?: number | null
+}
+
 /** A payment method the sheet can offer. */
 export interface MethodDefinition {
   id: MethodId
   label: string
+  /** The amount this method charges, shown under its label in the picker. */
+  price?: (context: MethodPriceContext) => string | null | Promise<string | null>
   /** Resolves false when this deployment can't take the method right now (card off, rates stale). */
   available?: () => Promise<boolean>
   Component: React.ComponentType<MethodProps>

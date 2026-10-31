@@ -3,7 +3,6 @@ import { Loader2 } from 'lucide-react'
 import type { MailTier } from '@/lib/api'
 import type { Nip98Signer } from '@/lib/nip98'
 import { pickDefaultMethod } from '@/lib/payments/channels'
-import { formatUsd } from '@/lib/payments/money'
 import { availableMethods } from '@/lib/payments/methods'
 import { useMethodPreference } from '@/lib/payments/preferences'
 import type { MethodDefinition, PayOrder, PayResult } from '@/lib/payments/types'
@@ -34,6 +33,7 @@ export function PaymentSheet({ order, signer, tier, priceUsd, onPaid }: PaymentS
   const [error, setError] = useState<string | null>(null)
   const [problem, setProblem] = useState<PayResult | null>(null)
   const [displayPrice, setDisplayPrice] = useState<number | null>(null)
+  const [prices, setPrices] = useState<Record<string, string | null>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -59,6 +59,31 @@ export function PaymentSheet({ order, signer, tier, priceUsd, onPaid }: PaymentS
   )
   const selected = methods?.find((m) => m.id === selectedId) ?? null
   const effectivePrice = displayPrice ?? priceUsd ?? tier?.priceUsd ?? null
+  const priceContext = useMemo(
+    () => ({ order, tier, priceUsd: effectivePrice }),
+    [order, tier, effectivePrice],
+  )
+
+  // Each method states its own amount: Bitcoin in sats, card in USD.
+  useEffect(() => {
+    if (!methods) return
+    let cancelled = false
+    void Promise.all(
+      methods.map(async (m) => {
+        if (!m.price) return [m.id, null] as const
+        try {
+          return [m.id, await m.price(priceContext)] as const
+        } catch {
+          return [m.id, null] as const
+        }
+      }),
+    ).then((entries) => {
+      if (!cancelled) setPrices(Object.fromEntries(entries))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [methods, priceContext])
 
   const handleResult = (result: PayResult) => {
     if (result.status === 'paid') onPaid()
@@ -85,7 +110,7 @@ export function PaymentSheet({ order, signer, tier, priceUsd, onPaid }: PaymentS
         <MethodPicker
           methods={methods}
           selected={selected.id}
-          amount={effectivePrice == null ? null : formatUsd(effectivePrice)}
+          prices={prices}
           onSelect={(id) => {
             setError(null)
             setChosen(id)

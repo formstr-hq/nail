@@ -8,13 +8,13 @@ import type { MethodDefinition } from '@/lib/payments/types'
 export function MethodPicker({
   methods,
   selected,
-  amount,
+  prices,
   onSelect,
 }: {
   methods: readonly MethodDefinition[]
   selected: string
-  /** The order's fixed USD price, shown next to both choices. */
-  amount?: string | null
+  /** The amount each method charges, shown under its label. */
+  prices?: Readonly<Record<string, string | null>>
   onSelect: (id: string) => void
 }) {
   const refs = useRef<Record<string, HTMLButtonElement | null>>({})
@@ -54,12 +54,14 @@ export function MethodPicker({
               }
             }}
             className={[
-              'flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-colors',
+              'flex flex-1 flex-col items-center justify-center rounded-lg px-3 py-2 transition-colors',
               active ? 'bg-white text-ink shadow-sm' : 'text-gray-500 hover:text-ink',
             ].join(' ')}
           >
-            {m.label}
-            {amount && <span className="ml-1.5 font-normal text-gray-500">{amount}</span>}
+            <span className="text-sm font-semibold">{m.label}</span>
+            {prices?.[m.id] && (
+              <span className="text-xs font-normal text-gray-500">{prices[m.id]}</span>
+            )}
           </button>
         )
       })}

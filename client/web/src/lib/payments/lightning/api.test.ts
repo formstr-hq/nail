@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { createSeatInvoice, fetchSeatPricing, generateMailInvoice, tierSats } from './api'
+import { createSeatInvoice, fetchSeatPricing, generateMailInvoice, orderSats, tierSats } from './api'
 import { normalizeTier } from '@/lib/api'
 
 const signer = {
@@ -62,5 +62,18 @@ describe('lightning api', () => {
     const tier = normalizeTier({ id: 'base', name: 'Mail', priceSats: 1000, unit: 'sats' })!
     expect(tierSats(tier)).toEqual({ amount: 1000, unit: 'sats' })
     expect(tierSats(normalizeTier({ id: 'x' })!)).toBeNull()
+  })
+
+  it('reads an order total in sats for mail and seats', async () => {
+    const tier = normalizeTier({ id: 'base', name: 'Mail', priceSats: 1000, unit: 'sats' })!
+    expect(
+      await orderSats({ product: 'mail', pubkey: 'p', nip05: 'a@b', tierId: 'base' }, tier),
+    ).toEqual({ amount: 1000, unit: 'sats' })
+
+    mockFetch({ pricePerSeatSats: 90, minSeats: 1, maxSeats: 100 })
+    expect(await orderSats({ product: 'workspace', domain: 'acme.com', seats: 10 })).toEqual({
+      amount: 900,
+      unit: 'sats',
+    })
   })
 })
