@@ -29,6 +29,8 @@ COPY client/web/package.json client/web/
 RUN pnpm install --frozen-lockfile --filter mailstr-web
 
 COPY client/web/ client/web/
+# storeBundle.test.ts type-imports this post-build guard, so `tsc -b` needs it.
+COPY client/scripts/ client/scripts/
 
 # Must land at /app/nostr-bridge so that ../../nostr-bridge/src/protocol
 # resolves from the client/web working directory, matching the vite + tsconfig
