@@ -103,6 +103,25 @@ export function NameStep({
         )}
       </p>
 
+      {PayInPicker && (
+        <div className="mt-4">
+          <label className="mb-1.5 block text-sm font-semibold text-ink">Pay in</label>
+          <Suspense
+            fallback={
+              <div className="rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm text-gray-400">
+                Loading payment options…
+              </div>
+            }
+          >
+            <PayInPicker
+              value={payIn}
+              onChange={onPayInChange}
+              onChoiceChange={onPayInChoiceChange}
+            />
+          </Suspense>
+        </div>
+      )}
+
       <div className="mt-2 flex flex-col gap-2">
         {tiers === null ? (
           <div className="flex items-center justify-center rounded-xl border border-black/10 bg-white p-6">
@@ -181,25 +200,6 @@ export function NameStep({
           })
         )}
       </div>
-
-      {PayInPicker && (
-        <div className="mt-4">
-          <label className="mb-1.5 block text-sm font-semibold text-ink">Pay in</label>
-          <Suspense
-            fallback={
-              <div className="rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm text-gray-400">
-                Loading payment options…
-              </div>
-            }
-          >
-            <PayInPicker
-              value={payIn}
-              onChange={onPayInChange}
-              onChoiceChange={onPayInChoiceChange}
-            />
-          </Suspense>
-        </div>
-      )}
 
       <button
         disabled={availability !== 'free' || !selectedTier || !paymentReady}

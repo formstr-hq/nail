@@ -185,7 +185,7 @@ export default function PayInPicker({ value, onChange, onChoiceChange }: PayInPi
       </button>
 
       {open && (
-        <div className="absolute bottom-full z-20 mb-2 w-full overflow-hidden rounded-xl border border-black/10 bg-white shadow-2xl">
+        <div className="absolute top-full z-20 mt-2 w-full overflow-hidden rounded-xl border border-black/10 bg-white shadow-2xl">
           <div className="border-b border-black/5 p-2">
             <div className="flex items-center gap-2 rounded-lg border border-black/10 bg-black/[0.03] px-2.5 py-2">
               <Search size={14} className="shrink-0 text-gray-400" />

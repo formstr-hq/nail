@@ -34,10 +34,10 @@ export async function completeOnboarding(page: Page) {
 }
 
 /**
- * Card payments off: the deployment reports Stripe disabled, so the pay step
- * offers Lightning only. Prices still show the fixed USD config amount; tests
- * that don't exercise the card flow stub this so they never depend on the
- * real API.
+ * Card payments off: the deployment reports Stripe disabled, so the first
+ * panel offers Bitcoin only and the pay step goes straight to Lightning.
+ * Tests that don't exercise the card flow stub this so they never depend on
+ * the real API.
  */
 export async function stubCardOff(page: Page) {
   await page.route('**/api/payments/config', (route) =>
@@ -45,6 +45,13 @@ export async function stubCardOff(page: Page) {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ stripe: { enabled: false, publishableKey: null }, lightning: { enabled: true } }),
+    }),
+  )
+  await page.route('**/api/payments/currencies', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ base: 'usd', currencies: ['usd'] }),
     }),
   )
 }

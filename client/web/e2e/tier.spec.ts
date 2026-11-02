@@ -52,8 +52,8 @@ test('name step renders backend tiers with includes/excludes and coming-soon', a
   await expect(page.getByText('Encrypted inbox')).toBeVisible() // base: included
   await expect(page.getByText('Attachments')).toBeVisible() // base: not included
   await expect(page.getByText(/coming soon/i)).toBeVisible() // Mail Plus badge
-  // The buyable tier drives the CTA (dash-agnostic).
-  // The fixed USD price shows even when card payments are off; the CTA names no method.
-  await expect(page.getByText('$21.00')).toBeVisible()
+  // The buyable tier drives the CTA (dash-agnostic). With card payments off,
+  // the pay-in choice falls back to Bitcoin, so the tier shows sats.
+  await expect(page.getByText(/2[,.]100 sats/)).toBeVisible()
   await expect(page.getByRole('button', { name: /^get mail$/i })).toBeVisible()
 })
