@@ -110,8 +110,8 @@ export function SeatsPanel({
         label="Buy seats"
         hint={
           price
-            ? `One-time payment in sats. ${price.pricePerSeatSats} sats per seat.`
-            : 'One-time payment in sats.'
+            ? `One-time payment in sats. ${price.pricePerSeatSats} sats per seat. Seats are valid for 1 year.`
+            : 'One-time payment in sats. Seats are valid for 1 year.'
         }
       >
         <div className="flex flex-wrap items-end gap-3">
