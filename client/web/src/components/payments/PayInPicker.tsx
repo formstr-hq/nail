@@ -82,7 +82,9 @@ export default function PayInPicker({ value, onChange, onChoiceChange }: PayInPi
     const allowed = new Set([SATS, ...codes])
     const effective = allowed.has(value) ? value : (codes.includes(USD) ? USD : (codes[0] ?? SATS))
     onChoiceChange(
-      effective === SATS ? { methodId: 'lightning' } : { methodId: 'stripe', currency: effective },
+      effective === SATS
+        ? { methodId: 'lightning' }
+        : { methodId: 'stripe', currency: effective, autoStart: true },
     )
   }, [loading, codes, value, onChoiceChange])
 

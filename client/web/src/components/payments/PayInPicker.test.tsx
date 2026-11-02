@@ -33,7 +33,7 @@ describe('PayInPicker', () => {
 
     const trigger = await screen.findByRole('button', { name: 'Pay in' })
     await waitFor(() => expect(trigger.textContent).toContain('USD'))
-    expect(onChoiceChange).toHaveBeenCalledWith({ methodId: 'stripe', currency: 'usd' })
+    expect(onChoiceChange).toHaveBeenCalledWith({ methodId: 'stripe', currency: 'usd', autoStart: true })
     await user.click(trigger)
 
     expect(screen.getAllByRole('option')[0].textContent).toContain('Bitcoin (Sats)')

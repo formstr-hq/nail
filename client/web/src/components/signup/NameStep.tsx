@@ -11,6 +11,9 @@ import { PriceTag } from '@/components/payments/PriceTag'
 const STORE_BUILD = import.meta.env.VITE_STORE_BUILD === '1'
 const PayInPicker = STORE_BUILD ? null : lazy(() => import('@/components/payments/PayInPicker'))
 const PayInPrice = STORE_BUILD ? null : lazy(() => import('@/components/payments/PayInPrice'))
+const PayInDisclaimer = STORE_BUILD
+  ? null
+  : lazy(() => import('@/components/payments/PayInDisclaimer'))
 
 export type Availability = 'idle' | 'checking' | 'free' | 'taken' | 'invalid' | 'error'
 
@@ -220,6 +223,11 @@ export function NameStep({
                 : `Paid once. No recurring charge. You'll pay by card in ${payIn.toUpperCase()} on the next step.`
             : `Billed ${selectedTier.billing}.`}
         </p>
+      )}
+      {PayInDisclaimer && (
+        <Suspense fallback={null}>
+          <PayInDisclaimer payIn={payIn} />
+        </Suspense>
       )}
     </div>
   )

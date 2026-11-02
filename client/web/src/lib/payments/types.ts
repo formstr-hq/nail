@@ -16,6 +16,8 @@ export interface PaymentChoice {
   methodId: MethodId
   /** Card presentment currency, when the chosen method takes one. */
   currency?: string
+  /** Begin the method immediately instead of asking for another confirmation. */
+  autoStart?: boolean
 }
 
 /** How a method finished. `confirmed` means the backend said paid, never the client's own belief. */
@@ -34,6 +36,8 @@ export interface MethodProps {
   priceUsd?: number | null
   /** Presentment currency chosen before the pay step (card methods only). */
   currency?: string
+  /** Start the method without a second confirmation (the choice was made upstream). */
+  autoStart?: boolean
   /** Lets a method report a refreshed config price after a 409 price_changed. */
   onPriceUsdChange?: (priceUsd: number) => void
   onResult: (result: PayResult) => void

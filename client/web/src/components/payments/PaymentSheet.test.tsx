@@ -150,7 +150,7 @@ describe('PaymentSheet', () => {
       <PaymentSheet
         order={order}
         signer={signer}
-        choice={{ methodId: 'two', currency: 'eur' }}
+        choice={{ methodId: 'two', currency: 'eur', autoStart: true }}
         onPaid={() => {}}
       />,
     )
@@ -158,5 +158,6 @@ describe('PaymentSheet', () => {
     expect(screen.queryByRole('radiogroup')).toBeNull()
     expect(seen).toHaveBeenCalled()
     expect(seen.mock.calls[0][0].currency).toBe('eur')
+    expect(seen.mock.calls[0][0].autoStart).toBe(true)
   })
 })

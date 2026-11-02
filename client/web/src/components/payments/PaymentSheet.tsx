@@ -147,6 +147,7 @@ export function PaymentSheet({ order, signer, tier, priceUsd, choice, onPaid }: 
           tier={tier}
           priceUsd={effectivePrice}
           currency={choice?.currency}
+          autoStart={choice?.autoStart}
           onPriceUsdChange={setDisplayPrice}
           onResult={handleResult}
           onError={setError}
