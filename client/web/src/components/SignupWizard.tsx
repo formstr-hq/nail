@@ -11,6 +11,10 @@ import { KeysStep, DoneStep } from '@/components/signup/KeysStep'
 import { ResolvingStep } from '@/components/signup/ResolvingStep'
 import { useSignupLogin, type Step } from '@/components/signup/useSignupLogin'
 import { PaymentSheet } from '@/components/payments/PaymentSheet'
+import { useCurrencyPreference } from '@/lib/payments/preferences'
+import type { PaymentChoice } from '@/lib/payments/types'
+
+const STORE_BUILD = import.meta.env.VITE_STORE_BUILD === '1'
 
 interface SignupWizardProps {
   /** Name the user typed in the hero input, if it was a name. */
@@ -62,6 +66,9 @@ export default function SignupWizard({
   const [tiers, setTiers] = useState<MailTier[] | null>(null)
   const [selectedTierId, setSelectedTierId] = useState<string | null>(null)
   const [payer, setPayer] = useState<NonNullable<ReturnType<typeof signer.getActiveSigner>> | null>(null)
+  const payIn = useCurrencyPreference((s) => s.currency)
+  const setPayIn = useCurrencyPreference((s) => s.setCurrency)
+  const [payChoice, setPayChoice] = useState<PaymentChoice | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const loginRef = useRef<HTMLDivElement>(null)
@@ -210,6 +217,10 @@ export default function SignupWizard({
             tiers={tiers}
             selectedTierId={selectedTierId}
             onSelectTier={setSelectedTierId}
+            payIn={payIn}
+            onPayInChange={setPayIn}
+            onPayInChoiceChange={setPayChoice}
+            paymentReady={STORE_BUILD || payChoice !== null}
             onContinue={goToPay}
             onRetryCheck={() => {
               setCheckFailed(null)
@@ -223,6 +234,7 @@ export default function SignupWizard({
             order={{ product: 'mail', pubkey, nip05: `${name}@${config.mailDomain}`, tierId: selectedTierId }}
             signer={payer}
             tier={tiers?.find((t) => t.id === selectedTierId) ?? null}
+            choice={STORE_BUILD ? undefined : payChoice}
             onPaid={() => setStep('keys')}
           />
         )}

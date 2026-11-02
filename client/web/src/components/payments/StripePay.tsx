@@ -40,6 +40,7 @@ export default function StripePay({
   signer,
   tier,
   priceUsd,
+  currency: lockedCurrency,
   onPriceUsdChange,
   onResult,
   onError,
@@ -52,8 +53,9 @@ export default function StripePay({
   const rememberedCurrency = useCurrencyPreference((s) => s.currency)
   const setCurrency = useCurrencyPreference((s) => s.setCurrency)
   const [currencies, setCurrencies] = useState<string[]>(['usd'])
-  // A remembered currency the deployment no longer offers falls back to USD.
-  const currency = currencies.includes(rememberedCurrency) ? rememberedCurrency : 'usd'
+  // The first panel may have already chosen the currency. Otherwise fall back
+  // to the remembered card currency, or USD when the deployment dropped it.
+  const currency = lockedCurrency ?? (currencies.includes(rememberedCurrency) ? rememberedCurrency : 'usd')
   const seats = 'seats' in order ? order.seats : undefined
   // The quote is kept with the inputs it was asked for, so a stale one is ignored rather than cleared.
   const quoteKey = [currency, priceUsd, order.product, seats].join(':')
@@ -67,6 +69,8 @@ export default function StripePay({
   const quoteFailed = quoteFresh && quoteState.failed
 
   useEffect(() => {
+    // The first panel already picked the currency; no need for the list.
+    if (lockedCurrency) return
     let cancelled = false
     fetchPaymentCurrencies()
       .then((list) => {
@@ -78,7 +82,7 @@ export default function StripePay({
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [lockedCurrency])
 
   // The backend's FX estimate for a non-USD choice; re-asked when the price or the currency changes.
   useEffect(() => {
@@ -264,7 +268,7 @@ export default function StripePay({
     <div className="flex flex-col gap-4">
       {notice && <p className="text-sm font-semibold text-amber-700">{notice}</p>}
 
-      {currencies.length > 1 && (
+      {!lockedCurrency && currencies.length > 1 && (
         <label className="flex items-center justify-between gap-3 text-sm text-gray-600">
           Pay in
           <select

@@ -5,7 +5,7 @@ import type { Nip98Signer } from '@/lib/nip98'
 import { pickDefaultMethod } from '@/lib/payments/channels'
 import { availableMethods } from '@/lib/payments/methods'
 import { useMethodPreference } from '@/lib/payments/preferences'
-import type { MethodDefinition, PayOrder, PayResult } from '@/lib/payments/types'
+import type { MethodDefinition, PaymentChoice, PayOrder, PayResult } from '@/lib/payments/types'
 import { MethodPicker } from './MethodPicker'
 import { NeedsAttention } from './PayStatus'
 
@@ -16,6 +16,11 @@ interface PaymentSheetProps {
   tier?: MailTier | null
   /** Fixed USD cents for the order; falls back to the tier's price. */
   priceUsd?: number | null
+  /**
+   * A choice made before the pay step. When supplied, the sheet skips its
+   * method picker and opens straight on that method, with its currency.
+   */
+  choice?: PaymentChoice | null
   /** Called once the backend confirms the purchase. */
   onPaid: () => void
 }
@@ -25,11 +30,13 @@ interface PaymentSheetProps {
  * one, and reports when the backend says paid. The wizard and the seats panel
  * both render this and know nothing about individual methods.
  */
-export function PaymentSheet({ order, signer, tier, priceUsd, onPaid }: PaymentSheetProps) {
+export function PaymentSheet({ order, signer, tier, priceUsd, choice, onPaid }: PaymentSheetProps) {
   const [methods, setMethods] = useState<MethodDefinition[] | null>(null)
   const remembered = useMethodPreference((s) => s.method)
   const remember = useMethodPreference((s) => s.setMethod)
   const [chosen, setChosen] = useState<string | null>(null)
+  // The first panel already decided the method; do not ask again on this screen.
+  const directMethod = choice?.methodId ?? null
   const [error, setError] = useState<string | null>(null)
   const [problem, setProblem] = useState<PayResult | null>(null)
   const [displayPrice, setDisplayPrice] = useState<number | null>(null)
@@ -45,18 +52,21 @@ export function PaymentSheet({ order, signer, tier, priceUsd, onPaid }: PaymentS
     }
   }, [])
 
-  const selectedId = useMemo(
-    () =>
-      methods
-        ? (chosen && methods.some((m) => m.id === chosen)
-            ? chosen
-            : pickDefaultMethod(
-                methods.map((m) => m.id),
-                remembered,
-              ))
-        : null,
-    [methods, chosen, remembered],
-  )
+  const selectedId = useMemo(() => {
+    if (!methods) return null
+    if (directMethod) {
+      // A rail the build no longer offers falls back to its first method.
+      return methods.some((m) => m.id === directMethod)
+        ? directMethod
+        : (methods[0]?.id ?? null)
+    }
+    return chosen && methods.some((m) => m.id === chosen)
+      ? chosen
+      : pickDefaultMethod(
+          methods.map((m) => m.id),
+          remembered,
+        )
+  }, [methods, directMethod, chosen, remembered])
   const selected = methods?.find((m) => m.id === selectedId) ?? null
   const effectivePrice = displayPrice ?? priceUsd ?? tier?.priceUsd ?? null
   const priceContext = useMemo(
@@ -64,9 +74,10 @@ export function PaymentSheet({ order, signer, tier, priceUsd, onPaid }: PaymentS
     [order, tier, effectivePrice],
   )
 
-  // Each method states its own amount: Bitcoin in sats, card in USD.
+  // Each method states its own amount: Bitcoin in sats, card in the chosen
+  // currency. Only the picker needs those prices; a direct rail does not.
   useEffect(() => {
-    if (!methods) return
+    if (!methods || directMethod) return
     let cancelled = false
     void Promise.all(
       methods.map(async (m) => {
@@ -83,7 +94,7 @@ export function PaymentSheet({ order, signer, tier, priceUsd, onPaid }: PaymentS
     return () => {
       cancelled = true
     }
-  }, [methods, priceContext])
+  }, [methods, priceContext, directMethod])
 
   const handleResult = (result: PayResult) => {
     if (result.status === 'paid') onPaid()
@@ -106,7 +117,7 @@ export function PaymentSheet({ order, signer, tier, priceUsd, onPaid }: PaymentS
   const Method = selected.Component
   return (
     <div>
-      {methods.length > 1 && (
+      {!directMethod && methods.length > 1 && (
         <MethodPicker
           methods={methods}
           selected={selected.id}
@@ -135,6 +146,7 @@ export function PaymentSheet({ order, signer, tier, priceUsd, onPaid }: PaymentS
           signer={signer}
           tier={tier}
           priceUsd={effectivePrice}
+          currency={choice?.currency}
           onPriceUsdChange={setDisplayPrice}
           onResult={handleResult}
           onError={setError}

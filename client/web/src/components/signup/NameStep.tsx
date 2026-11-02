@@ -1,7 +1,16 @@
+import { Suspense, lazy } from 'react'
 import { AtSign, Check, Loader2, X } from 'lucide-react'
 import { config } from '@/lib/config'
 import type { MailTier } from '@/lib/api'
+import type { PaymentChoice } from '@/lib/payments/types'
 import { PriceTag } from '@/components/payments/PriceTag'
+
+// Store builds must not ship card or Lightning code, so these are only
+// imported in open builds. The build-time constant lets Rollup drop the other
+// branch (same pattern as PriceTag and lib/payments/methods).
+const STORE_BUILD = import.meta.env.VITE_STORE_BUILD === '1'
+const PayInPicker = STORE_BUILD ? null : lazy(() => import('@/components/payments/PayInPicker'))
+const PayInPrice = STORE_BUILD ? null : lazy(() => import('@/components/payments/PayInPrice'))
 
 export type Availability = 'idle' | 'checking' | 'free' | 'taken' | 'invalid' | 'error'
 
@@ -13,6 +22,13 @@ interface NameStepProps {
   tiers: MailTier[] | null
   selectedTierId: string | null
   onSelectTier: (id: string) => void
+  /** `sats` or a lowercase fiat code. */
+  payIn: string
+  onPayInChange: (value: string) => void
+  /** The rail/currency the pay step should open on. */
+  onPayInChoiceChange: (choice: PaymentChoice) => void
+  /** False while the pay-in picker is still resolving its options. */
+  paymentReady: boolean
   onContinue: () => void
   onRetryCheck: () => void
 }
@@ -26,6 +42,10 @@ export function NameStep({
   tiers,
   selectedTierId,
   onSelectTier,
+  payIn,
+  onPayInChange,
+  onPayInChoiceChange,
+  paymentReady,
   onContinue,
   onRetryCheck,
 }: NameStepProps) {
@@ -129,7 +149,13 @@ export function NameStep({
                   </div>
                   <div className="shrink-0 text-right">
                     <span className="text-lg font-bold leading-none text-ink">
-                      <PriceTag subject={{ kind: 'mail', tier: t }} />
+                      {PayInPrice ? (
+                        <Suspense fallback={<span className="text-gray-300">…</span>}>
+                          <PayInPrice tier={t} payIn={payIn} />
+                        </Suspense>
+                      ) : (
+                        <PriceTag subject={{ kind: 'mail', tier: t }} />
+                      )}
                     </span>
                     <span className="block text-[11px] text-gray-400">{t.billing}</span>
                   </div>
@@ -156,8 +182,27 @@ export function NameStep({
         )}
       </div>
 
+      {PayInPicker && (
+        <div className="mt-4">
+          <label className="mb-1.5 block text-sm font-semibold text-ink">Pay in</label>
+          <Suspense
+            fallback={
+              <div className="rounded-xl border border-black/10 bg-white px-3 py-2.5 text-sm text-gray-400">
+                Loading payment options…
+              </div>
+            }
+          >
+            <PayInPicker
+              value={payIn}
+              onChange={onPayInChange}
+              onChoiceChange={onPayInChoiceChange}
+            />
+          </Suspense>
+        </div>
+      )}
+
       <button
-        disabled={availability !== 'free' || !selectedTier}
+        disabled={availability !== 'free' || !selectedTier || !paymentReady}
         onClick={onContinue}
         className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition-all enabled:hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-40"
       >
@@ -166,7 +211,11 @@ export function NameStep({
       {selectedTier && (
         <p className="mt-2 text-center text-xs text-gray-400">
           {selectedTier.billing === 'one-time'
-            ? 'Paid once. No recurring charge. Pay with Bitcoin or your local currency on the next step.'
+            ? STORE_BUILD
+              ? "Paid once. No recurring charge. You'll pay in the app store on the next step."
+              : payIn === 'sats'
+                ? "Paid once. No recurring charge. You'll pay with Bitcoin on the next step."
+                : `Paid once. No recurring charge. You'll pay by card in ${payIn.toUpperCase()} on the next step.`
             : `Billed ${selectedTier.billing}.`}
         </p>
       )}

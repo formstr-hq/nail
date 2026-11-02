@@ -128,4 +128,35 @@ describe('PaymentSheet', () => {
     render(<PaymentSheet order={order} signer={signer} onPaid={() => {}} />)
     expect(await screen.findByText(/temporarily unavailable/)).toBeTruthy()
   })
+
+  it('opens directly on the chosen method without the picker', async () => {
+    methods.list = [method('one', 'One'), method('two', 'Two')]
+    render(
+      <PaymentSheet
+        order={order}
+        signer={signer}
+        choice={{ methodId: 'two' }}
+        onPaid={() => {}}
+      />,
+    )
+    expect(await screen.findByText('Two panel')).toBeTruthy()
+    expect(screen.queryByRole('radiogroup')).toBeNull()
+  })
+
+  it('passes the chosen currency to the method', async () => {
+    const seen = vi.fn()
+    methods.list = [method('one', 'One'), method('two', 'Two', seen)]
+    render(
+      <PaymentSheet
+        order={order}
+        signer={signer}
+        choice={{ methodId: 'two', currency: 'eur' }}
+        onPaid={() => {}}
+      />,
+    )
+    expect(await screen.findByText('Two panel')).toBeTruthy()
+    expect(screen.queryByRole('radiogroup')).toBeNull()
+    expect(seen).toHaveBeenCalled()
+    expect(seen.mock.calls[0][0].currency).toBe('eur')
+  })
 })

@@ -105,7 +105,7 @@ export default defineConfig([
       'src/lib/payments/lightning/**',
       'src/lib/payments/stripe/**',
       'src/lib/payments/store/**',
-      'src/components/payments/{LightningPay,StripePay,StorePay,StorePrice,StoreSeatPacks,OpenPrice,InvoiceQR}.tsx',
+      'src/components/payments/{LightningPay,StripePay,StorePay,StorePrice,StoreSeatPacks,OpenPrice,InvoiceQR,PayInPicker,PayInPrice}.tsx',
     ],
     rules: { 'no-restricted-imports': 'off' },
   },
