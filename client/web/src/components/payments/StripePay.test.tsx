@@ -6,6 +6,8 @@ import userEvent from '@testing-library/user-event'
 
 const api = vi.hoisted(() => ({
   fetchPaymentsConfig: vi.fn(),
+  fetchPaymentCurrencies: vi.fn(),
+  fetchPaymentQuote: vi.fn(),
   createCheckout: vi.fn(),
   fetchOrderStatus: vi.fn(),
 }))
@@ -33,6 +35,7 @@ vi.mock('@stripe/stripe-js/pure', () => ({ loadStripe: vi.fn(async () => ({})) }
 
 import StripePay from './StripePay'
 import { PriceChanged } from '@/lib/payments/stripe/api'
+import { useCurrencyPreference } from '@/lib/payments/preferences'
 
 const order = { product: 'mail', pubkey: 'p', nip05: 'alice@mailstr.app', tierId: 'base' } as const
 const signer = { signEvent: vi.fn() } as never
@@ -59,10 +62,13 @@ beforeEach(() => {
   cleanup()
   vi.clearAllMocks()
   embedded.onComplete = undefined
+  // The remembered currency persists in localStorage; every test starts on USD.
+  useCurrencyPreference.setState({ currency: 'usd' })
   api.fetchPaymentsConfig.mockResolvedValue({
     stripe: { enabled: true, publishableKey: 'pk_test' },
     lightning: { enabled: true },
   })
+  api.fetchPaymentCurrencies.mockResolvedValue(['usd'])
 })
 
 describe('StripePay', () => {
@@ -74,7 +80,8 @@ describe('StripePay', () => {
 
     expect(await screen.findByText('$5.00')).toBeTruthy()
     expect(screen.getByText(/tax included/)).toBeTruthy()
-    expect(screen.getByText(/charged in your local currency/)).toBeTruthy()
+    // With only usd offered there is no currency picker and no FX estimate.
+    expect(screen.queryByRole('combobox', { name: 'Card currency' })).toBeNull()
 
     await user.click(screen.getByRole('button', { name: /^pay$/i }))
     expect(api.createCheckout).toHaveBeenCalledWith(
@@ -82,6 +89,7 @@ describe('StripePay', () => {
       expect.objectContaining({
         product: 'mail',
         expectedPriceUsd: 500,
+        currency: 'usd',
         uiMode: 'embedded',
         tierId: 'base',
         nip05: 'alice@mailstr.app',
@@ -141,6 +149,30 @@ describe('StripePay', () => {
     const { onError } = setup()
     await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.stringMatching(/not available/)))
     expect(api.createCheckout).not.toHaveBeenCalled()
+  })
+
+  it('charges the backend-quoted amount in the chosen currency and remembers the choice', async () => {
+    api.fetchPaymentCurrencies.mockResolvedValue(['usd', 'eur'])
+    api.fetchPaymentQuote.mockResolvedValue({
+      currency: 'eur',
+      amount: 460,
+      exponent: 2,
+      usdCents: 500,
+      estimate: true,
+      fetchedAt: '2026-11-02T00:00:00Z',
+    })
+    api.createCheckout.mockResolvedValue({ sessionId: 'cs_eur', clientSecret: 's', amount: 460, currency: 'eur' })
+    const user = userEvent.setup()
+    setup()
+
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Card currency' }), 'eur')
+    expect(await screen.findByText(/4[.,]60/)).toBeTruthy()
+    expect(screen.getByText(/final price may change with the exchange rate/)).toBeTruthy()
+    expect(api.fetchPaymentQuote).toHaveBeenCalledWith({ product: 'mail', currency: 'eur', seats: undefined })
+
+    await user.click(screen.getByRole('button', { name: /^pay$/i }))
+    expect(api.createCheckout).toHaveBeenCalledWith(signer, expect.objectContaining({ currency: 'eur', expectedPriceUsd: 500 }))
+    expect(useCurrencyPreference.getState().currency).toBe('eur')
   })
 
   it('reports a paid-but-not-delivered order from the backend as needs_attention', async () => {
