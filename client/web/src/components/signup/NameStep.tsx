@@ -70,38 +70,40 @@ export function NameStep({
         </span>
       </div>
 
-      <p className="mt-2 min-h-5 text-sm">
-        {availability === 'checking' && (
-          <span className="inline-flex items-center gap-1.5 text-gray-400">
-            <Loader2 size={13} className="animate-spin" /> Checking…
-          </span>
-        )}
-        {availability === 'free' && (
-          <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-600">
-            <Check size={14} /> {address} is available
-          </span>
-        )}
-        {availability === 'taken' && (
-          <span className="font-semibold text-red-600">{address} is taken — try another</span>
-        )}
-        {availability === 'invalid' && (
-          <span className="text-gray-500">
-            Lowercase letters, digits, dots, underscores and hyphens only.
-          </span>
-        )}
-        {availability === 'error' && (
-          <span className="inline-flex items-center gap-2 text-gray-500">
-            Couldn't check availability.
-            <button
-              type="button"
-              onClick={onRetryCheck}
-              className="font-semibold text-primary underline"
-            >
-              Retry
-            </button>
-          </span>
-        )}
-      </p>
+      {availability !== 'idle' && (
+        <p className="mt-2 text-sm">
+          {availability === 'checking' && (
+            <span className="inline-flex items-center gap-1.5 text-gray-400">
+              <Loader2 size={13} className="animate-spin" /> Checking…
+            </span>
+          )}
+          {availability === 'free' && (
+            <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-600">
+              <Check size={14} /> {address} is available
+            </span>
+          )}
+          {availability === 'taken' && (
+            <span className="font-semibold text-red-600">{address} is taken — try another</span>
+          )}
+          {availability === 'invalid' && (
+            <span className="text-gray-500">
+              Lowercase letters, digits, dots, underscores and hyphens only.
+            </span>
+          )}
+          {availability === 'error' && (
+            <span className="inline-flex items-center gap-2 text-gray-500">
+              Couldn't check availability.
+              <button
+                type="button"
+                onClick={onRetryCheck}
+                className="font-semibold text-primary underline"
+              >
+                Retry
+              </button>
+            </span>
+          )}
+        </p>
+      )}
 
       {PayInPicker && (
         <div className="mt-3">
