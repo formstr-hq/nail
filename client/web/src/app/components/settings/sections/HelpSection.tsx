@@ -6,7 +6,7 @@ export function HelpSection() {
     <>
       <Field
         label="Privacy policy"
-        hint="How Mail by Formstr handles your data — what we store, what we don't, and how Lightning payments work."
+        hint="How Mail by Formstr handles your data — what we store, what we don't, and how payments are handled."
       >
         <a
           href="/privacy-policy"

@@ -1,6 +1,7 @@
 import { AtSign, Check, Loader2, X } from 'lucide-react'
 import { config } from '@/lib/config'
 import type { MailTier } from '@/lib/api'
+import { PriceTag } from '@/components/payments/PriceTag'
 
 export type Availability = 'idle' | 'checking' | 'free' | 'taken' | 'invalid' | 'error'
 
@@ -12,12 +13,11 @@ interface NameStepProps {
   tiers: MailTier[] | null
   selectedTierId: string | null
   onSelectTier: (id: string) => void
-  busy: boolean
-  onRequestInvoice: () => void
+  onContinue: () => void
   onRetryCheck: () => void
 }
 
-/** Step 2 — pick the address and plan, then request the invoice. */
+/** Step 2 — pick the address and plan, then continue to payment. */
 export function NameStep({
   name,
   onNameChange,
@@ -26,8 +26,7 @@ export function NameStep({
   tiers,
   selectedTierId,
   onSelectTier,
-  busy,
-  onRequestInvoice,
+  onContinue,
   onRetryCheck,
 }: NameStepProps) {
   const selectedTier = tiers?.find((t) => t.id === selectedTierId) ?? null
@@ -84,7 +83,7 @@ export function NameStep({
         )}
       </p>
 
-      <div className="mt-4 flex flex-col gap-2">
+      <div className="mt-2 flex flex-col gap-2">
         {tiers === null ? (
           <div className="flex items-center justify-center rounded-xl border border-black/10 bg-white p-6">
             <Loader2 size={18} className="animate-spin text-gray-300" />
@@ -130,9 +129,8 @@ export function NameStep({
                   </div>
                   <div className="shrink-0 text-right">
                     <span className="text-lg font-bold leading-none text-ink">
-                      {t.priceSats.toLocaleString()}
+                      <PriceTag subject={{ kind: 'mail', tier: t }} />
                     </span>
-                    <span className="ml-1 text-sm text-gray-500">{t.unit}</span>
                     <span className="block text-[11px] text-gray-400">{t.billing}</span>
                   </div>
                 </div>
@@ -159,25 +157,16 @@ export function NameStep({
       </div>
 
       <button
-        disabled={availability !== 'free' || busy || !selectedTier}
-        onClick={onRequestInvoice}
+        disabled={availability !== 'free' || !selectedTier}
+        onClick={onContinue}
         className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition-all enabled:hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {busy ? (
-          <>
-            <Loader2 size={15} className="animate-spin" /> Preparing invoice…
-          </>
-        ) : (
-          <>
-            Get {selectedTier?.name ?? 'Mail'}
-            {selectedTier ? ` — ${selectedTier.priceSats.toLocaleString()} ${selectedTier.unit}` : ''}
-          </>
-        )}
+        Get {selectedTier?.name ?? 'Mail'}
       </button>
       {selectedTier && (
         <p className="mt-2 text-center text-xs text-gray-400">
           {selectedTier.billing === 'one-time'
-            ? 'Paid once. No recurring charge.'
+            ? 'Paid once. No recurring charge. Pay with Bitcoin or your local currency on the next step.'
             : `Billed ${selectedTier.billing}.`}
         </p>
       )}

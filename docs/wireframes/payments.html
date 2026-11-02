@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payments wireframe — Mail by Formstr</title>
+<style>
+  /* Tokens copied from client/web/src/index.css (@theme) — the landing palette. */
+  :root {
+    --ink: #0b0b0c; --paper: #f4f4f3; --surface: #fff; --line: #e4e4e2;
+    --emphasis: #e5484d; --g400: #9ca3af; --g500: #6b7280; --g600: #4b5563;
+    --emerald: #059669; --red: #dc2626;
+    --font: "Inter", system-ui, -apple-system, sans-serif;
+    --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #e9e9e7; color: var(--ink); font: 14px/1.5 var(--font); padding: 32px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 40px 0 4px; text-transform: uppercase; letter-spacing: .06em; color: var(--g600); }
+  .lede { color: var(--g500); max-width: 760px; margin: 0 0 20px; }
+  .wrap { max-width: 1240px; margin: 0 auto; }
+
+  /* channel matrix */
+  table { border-collapse: collapse; background: var(--surface); border: 1px solid rgba(0,0,0,.1); border-radius: 12px; overflow: hidden; }
+  th, td { padding: 8px 14px; text-align: center; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th:first-child, td:first-child { text-align: left; font-weight: 600; }
+  th { background: var(--paper); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--g500); }
+  tr:last-child td { border-bottom: 0; }
+  .yes { color: var(--emerald); font-weight: 700; } .no { color: var(--g400); }
+
+  /* screen frames */
+  .row { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 28px; margin-top: 16px; }
+  figure { margin: 0; }
+  figcaption { margin: 0 0 8px; font-size: 12px; color: var(--g600); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .chip { font-size: 10px; font-weight: 700; letter-spacing: .05em; padding: 2px 8px; border-radius: 999px; background: var(--ink); color: #fff; }
+  .chip.alt { background: rgba(0,0,0,.08); color: var(--g600); }
+  .stage { background: rgba(11,11,12,.6); border-radius: 16px; padding: 22px 16px; display: flex; justify-content: center; }
+
+  /* the wizard card — mirrors SignupWizard: max-w-md rounded-2xl border bg-paper p-6 shadow-2xl */
+  .card { width: 100%; max-width: 448px; background: var(--paper); border: 1px solid rgba(0,0,0,.1); border-radius: 16px; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0,0,0,.35); }
+  .card h3 { margin: 0; font-size: 18px; font-weight: 700; }
+  .card .sub { margin: 2px 0 0; font-size: 14px; color: var(--g500); }
+  .head { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+  .x { color: var(--g400); font-size: 18px; line-height: 1; }
+
+  .tier { background: var(--surface); border: 1px solid var(--ink); box-shadow: 0 0 0 1px var(--ink); border-radius: 12px; padding: 16px; margin-top: 16px; }
+  .tier .top { display: flex; justify-content: space-between; gap: 12px; }
+  .tier h4 { margin: 0; font-size: 16px; }
+  .tier .desc { font-size: 12px; color: var(--g500); margin: 2px 0 0; }
+  .price { text-align: right; white-space: nowrap; }
+  .price b { font-size: 18px; } .price span { color: var(--g500); font-size: 14px; margin-left: 4px; }
+  .price small { display: block; font-size: 11px; color: var(--g400); }
+  .price .or { font-size: 11px; color: var(--g400); display: block; }
+  .feat { list-style: none; padding: 0; margin: 12px 0 0; font-size: 14px; color: var(--g600); }
+  .feat li::before { content: "✓ "; color: var(--emerald); font-weight: 700; }
+  .feat li.no { color: var(--g400); } .feat li.no::before { content: "✕ "; color: var(--g400); }
+
+  .field { display: flex; align-items: stretch; background: #fff; border: 1px solid rgba(0,0,0,.15); border-radius: 12px; overflow: hidden; }
+  .field .in { flex: 1; padding: 12px; font-size: 14px; } .field .sfx { padding: 12px; background: rgba(0,0,0,.03); border-left: 1px solid rgba(0,0,0,.05); font-family: var(--mono); color: var(--g500); font-size: 14px; }
+  .avail { margin: 8px 0 0; font-size: 14px; font-weight: 600; color: var(--emerald); }
+
+  .btn { display: flex; width: 100%; align-items: center; justify-content: center; gap: 8px; border: 0; background: var(--ink); color: #fff; border-radius: 12px; padding: 12px 20px; font: 600 14px var(--font); margin-top: 16px; }
+  .btn.sm { border-radius: 8px; margin-top: 0; }
+  .btn.ghost { background: transparent; color: var(--ink); border: 1px solid rgba(0,0,0,.1); }
+  .btn[disabled] { opacity: .4; }
+  .note { margin: 8px 0 0; text-align: center; font-size: 12px; color: var(--g400); }
+  .link { color: var(--ink); font-weight: 600; text-decoration: underline; }
+
+  /* NEW: method picker — a segmented control in the wizard's own idiom (rounded-xl, ink selected) */
+  .seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; padding: 4px; background: rgba(0,0,0,.06); border-radius: 12px; margin-bottom: 14px; }
+  .seg button { border: 0; background: transparent; padding: 9px 8px; border-radius: 9px; font: 600 13px var(--font); color: var(--g600); display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .seg button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .seg .amt { font-weight: 500; color: var(--g500); font-size: 12px; }
+
+  .summary { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 14px; background: var(--surface); border: 1px solid rgba(0,0,0,.1); border-radius: 12px; margin-bottom: 14px; font-size: 14px; }
+  .summary .addr { font-weight: 600; } .summary .amt { font-weight: 700; }
+
+  .embed { border: 2px dashed rgba(0,0,0,.25); border-radius: 12px; background: repeating-linear-gradient(45deg, #fafaf9, #fafaf9 10px, #f1f1ef 10px, #f1f1ef 20px); padding: 14px; }
+  .embed .lbl { font: 600 10px var(--mono); text-transform: uppercase; letter-spacing: .06em; color: var(--g500); margin-bottom: 10px; }
+  .ph { height: 38px; border: 1px solid rgba(0,0,0,.15); background: #fff; border-radius: 8px; margin-bottom: 8px; padding: 9px 10px; font-size: 13px; color: var(--g400); }
+  .ph.half { display: inline-block; width: calc(50% - 4px); } .ph.half + .ph.half { margin-left: 4px; }
+
+  .qr { width: 150px; height: 150px; margin: 4px auto; background: #fff; border: 1px solid rgba(0,0,0,.1); border-radius: 16px; padding: 12px; }
+  .qr i { display: block; width: 100%; height: 100%; background:
+    conic-gradient(from 90deg at 3px 3px, #0000 90deg, var(--ink) 0) 0 0/14px 14px; opacity: .85; }
+  .inv { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+  .inv pre { flex: 1; margin: 0; overflow: hidden; white-space: nowrap; border-radius: 8px; background: rgba(0,0,0,.04); padding: 8px 12px; font: 12px var(--mono); color: var(--g600); }
+  .inv .copy { border: 1px solid rgba(0,0,0,.1); border-radius: 8px; padding: 8px 12px; font: 600 12px var(--font); }
+  .center { text-align: center; } .muted { color: var(--g500); font-size: 14px; }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(0,0,0,.15); border-top-color: var(--ink); border-radius: 50%; vertical-align: -2px; margin-right: 6px; }
+  .ok { color: var(--emerald); font-weight: 700; } .err { color: var(--red); font-weight: 600; font-size: 14px; }
+  .alert { border: 1px solid #fecaca; background: #fef2f2; color: #b91c1c; border-radius: 8px; padding: 8px 12px; font-size: 14px; margin-bottom: 14px; }
+  .fine { border-top: 1px solid rgba(0,0,0,.1); margin-top: 14px; padding-top: 12px; font-size: 12px; color: var(--g500); text-align: center; }
+  .store-badge { display: flex; gap: 10px; align-items: center; padding: 12px 14px; border: 1px solid rgba(0,0,0,.1); background: #fff; border-radius: 12px; font-size: 13px; color: var(--g600); margin-bottom: 14px; }
+  .store-badge .ic { width: 28px; height: 28px; border-radius: 8px; background: var(--ink); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+
+  /* annotations */
+  ol.notes { margin: 10px 0 0; padding-left: 18px; font-size: 12px; color: var(--g600); max-width: 460px; }
+  ol.notes li { margin-bottom: 3px; }
+  .pin { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--emphasis); color: #fff; font: 700 10px var(--font); vertical-align: 1px; margin-left: 4px; }
+  .price .pin, .price small .pin { font-size: 10px; margin-left: 4px; color: #fff; }
+  .seg button { flex-wrap: wrap; row-gap: 0; }
+  .legend { background: var(--surface); border: 1px solid rgba(0,0,0,.1); border-radius: 12px; padding: 14px 18px; max-width: 760px; font-size: 13px; color: var(--g600); }
+.cur { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 14px; font-size: 12px; color: var(--g500); }
+  .cur .seg { margin: 0; padding: 3px; border-radius: 10px; }
+  .cur .seg button { padding: 4px 12px; font-size: 12px; border-radius: 7px; }
+.sel { display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(0,0,0,.15); background: #fff; border-radius: 10px; padding: 6px 10px; font: 600 13px var(--font); }
+  .sel::after { content: "▾"; color: var(--g400); font-size: 11px; }
+  .quote { background: var(--surface); border: 1px solid rgba(0,0,0,.1); border-radius: 12px; padding: 16px; text-align: center; margin: 12px 0; }
+  .quote .big { font-size: 28px; font-weight: 700; letter-spacing: -.01em; }
+  .quote .meta { font-size: 12px; color: var(--g500); margin-top: 2px; }
+.stage2 { background: #e2e2df; border-radius: 16px; padding: 22px 16px; display: flex; justify-content: center; }
+  .panel { width: 100%; max-width: 480px; background: #fff; border: 1px solid rgba(0,0,0,.1); border-radius: 12px; padding: 18px; }
+  .panel .lbl2 { font-weight: 600; font-size: 13px; }
+  .panel .hint { font-size: 11.5px; color: var(--g500); margin: 2px 0 10px; }
+  .panel .row2 { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+  .panel .inp { border: 1px solid rgba(0,0,0,.15); border-radius: 8px; padding: 7px 10px; width: 84px; font: 13px var(--mono); }
+  .panel .tot { font-size: 13px; padding-bottom: 6px; } .panel .tot b { font-family: var(--mono); }
+  .panel .btn2 { background: var(--ink); color: #fff; border-radius: 8px; padding: 7px 14px; font: 600 12.5px var(--font); }
+  .packs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .pack { border: 1px solid rgba(0,0,0,.12); border-radius: 10px; padding: 10px 8px; text-align: center; background: #fff; }
+  .pack.on { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+  .pack b { display: block; font-size: 15px; } .pack span { font-size: 12px; color: var(--g500); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Payments — wireframe</h1>
+<p class="lede">
+  Low-fi, but built from the live tokens and the existing <code>SignupWizard</code> card (<code>max-w-md rounded-2xl bg-paper p-6</code>).
+  Steps stay <b>login → name → pay → keys</b>. Only the <b>name step's price row</b> and the <b>pay step body</b> change; both live in nail's <code>lib/payments</code> module.
+  <b>Revised Oct 25 2026:</b> there is no currency picker anywhere. formstr shows exactly one price itself — the <b>fixed dollar price</b> — everywhere, always, before any payment method is chosen; the buyer only ever chooses a payment <i>method</i> ("Pay with Bitcoin" or "Pay in your local currency"), never a currency. Sats only appears once "Pay with Bitcoin" is actually selected and a BOLT11 invoice is generated. Once "local currency" is picked instead, the same fixed dollar price is charged and Stripe Adaptive Pricing (Card) or the store's own purchase sheet (Apple/Google) handles localisation — formstr never computes or shows a converted number itself. Red pins <span class="pin">1</span> mark what is <i>new</i> versus today's UI.
+</p>
+
+<h2>Which rails each build shows</h2>
+<table>
+  <tr><th>Build</th><th>Lightning</th><th>Card (Stripe)</th><th>Apple / Google IAP</th></tr>
+  <tr><td>Web (browser)</td><td class="yes">✓ <span class="no">(default)</span></td><td class="yes">✓</td><td class="no">—</td></tr>
+  <tr><td>Direct APK (Zapstore / sideload)</td><td class="yes">✓ <span class="no">(default)</span></td><td class="yes">✓ <span class="no">(hosted)</span></td><td class="no">— not possible outside Play</td></tr>
+  <tr><td>Play Store build</td><td class="no">—</td><td class="no">—</td><td class="yes">✓ Google</td></tr>
+  <tr><td>iOS App Store build</td><td class="no">—</td><td class="no">—</td><td class="yes">✓ Apple</td></tr>
+</table>
+
+<!-- ============ 1. NAME STEP ============ -->
+<h2>1 · Name step — price row</h2>
+<p class="lede">Same tier card. <b>The dollar price is the only price formstr itself shows here</b> — no currency select, no sats, nothing fetched from Stripe yet (it's plain config, not a quote). Sats only appears later, on the pay step, once "Pay with Bitcoin" is actually chosen. Store builds show the store's own localized price instead (set once in the console, not computed by us).</p>
+<div class="row">
+  <figure>
+    <figcaption><span class="chip">WEB</span><span class="chip">DIRECT APK</span> dollar price, always</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>Pick your address</h3><p class="sub">This becomes your email and your NIP-05 handle.</p></div><span class="x">✕</span></div>
+      <div class="field"><span class="in">alice</span><span class="sfx">@mailstr.app</span></div>
+      <p class="avail">✓ alice@mailstr.app is available</p>
+      <div class="tier" style="margin-top:8px">
+        <div class="top">
+          <div><h4>Mail</h4><p class="desc">Your own encrypted mailbox, delivered over Nostr.</p></div>
+          <div class="price"><b>$5.00</b><small>one-time <span class="pin">1</span></small></div>
+        </div>
+        <ul class="feat"><li>Your name@mailstr.app address</li><li>Send &amp; receive mail, stored encrypted to your key</li><li class="no">Attachments</li><li class="no">Extra storage</li></ul>
+      </div>
+      <button class="btn">Get Mail <span class="pin">2</span></button>
+      <p class="note">Paid once. No recurring charge. Pay with Bitcoin or your local currency on the next step.</p>
+    </div></div>
+    <ol class="notes"><li>No currency select, no sats here — there's nothing to pick before the pay step, and nothing is fetched from Stripe yet. The $5.00 figure is the plain <code>MAIL_PRICE_USD</code> config value, shown whether the buyer ends up paying in Bitcoin or fiat.</li><li>CTA no longer names a method, and no longer says "Preparing invoice…" — the order is created on the pay step, after a payment method is chosen.</li></ol>
+  </figure>
+  <figure>
+    <figcaption><span class="chip">PLAY</span><span class="chip">IOS</span> store price only</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>Pick your address</h3><p class="sub">This becomes your email and your NIP-05 handle.</p></div><span class="x">✕</span></div>
+      <div class="field"><span class="in">alice</span><span class="sfx">@mailstr.app</span></div>
+      <p class="avail">✓ alice@mailstr.app is available</p>
+      <div class="tier">
+        <div class="top">
+          <div><h4>Mail</h4><p class="desc">Your own encrypted mailbox, delivered over Nostr.</p></div>
+          <div class="price"><b>€4,99</b><small>one-time <span class="pin">3</span></small></div>
+        </div>
+        <ul class="feat"><li>Your name@mailstr.app address</li><li>Send &amp; receive mail, stored encrypted to your key</li><li class="no">Attachments</li><li class="no">Extra storage</li></ul>
+      </div>
+      <button class="btn">Get Mail</button>
+      <p class="note">Paid once. No recurring charge.</p>
+    </div></div>
+    <ol class="notes"><li>Price string is the store's own (<code>fetchProduct</code>), localized by StoreKit / Play — never our number. No sats, no USD shown here (store builds carry no Lightning or Stripe code at all).</li></ol>
+  </figure>
+  <figure>
+    <figcaption><span class="chip">WEB</span><span class="chip">DIRECT APK</span> fallback: Stripe not configured</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>Pick your address</h3><p class="sub">This becomes your email and your NIP-05 handle.</p></div><span class="x">✕</span></div>
+      <div class="field"><span class="in">alice</span><span class="sfx">@mailstr.app</span></div>
+      <p class="avail">✓ alice@mailstr.app is available</p>
+      <div class="tier" style="margin-top:14px">
+        <div class="top">
+          <div><h4>Mail</h4><p class="desc">Your own encrypted mailbox, delivered over Nostr.</p></div>
+          <div class="price"><b>$5.00</b><small>one-time</small></div>
+        </div>
+        <ul class="feat"><li>Your name@mailstr.app address</li><li>Send &amp; receive mail, stored encrypted to your key</li><li class="no">Attachments</li><li class="no">Extra storage</li></ul>
+      </div>
+      <button class="btn">Get Mail</button>
+      <p class="note">Paid once. No recurring charge.</p>
+    </div></div>
+    <ol class="notes"><li>Identical card either way — the dollar price is config, not a Stripe call, so it shows even when Stripe is off. The only thing that changes is that the pay step's "local currency" option doesn't appear at all; Bitcoin still works.</li></ol>
+  </figure>
+</div>
+
+<!-- ============ 2. PAY STEP, OPEN BUILDS ============ -->
+<h2>2 · Pay step — web &amp; direct APK</h2>
+<p class="lede">The title ("One payment, and it's yours") and "Claiming alice@…" subtitle are unchanged. The body gains the two-choice method picker, both options showing the <b>same dollar figure</b> until one is actually picked; Lightning is today's <code>InvoiceQR</code>, moved into the package untouched. Nothing is fetched from Stripe until "Pay in your local currency" is selected, and the Bitcoin option only turns into a sats amount once it's selected and a BOLT11 is generated.</p>
+<div class="row">
+  <figure>
+    <figcaption><span class="chip">WEB</span><span class="chip">DIRECT APK</span> Bitcoin selected — the default (existing UI)</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
+      <div class="seg"><button class="on">⚡ Bitcoin <span class="amt">1,000 sats</span></button><button>Local currency</button></div>
+      <div class="center">
+        <p class="muted" style="margin:0 0 10px">Scan the QR with your wallet to pay <b style="color:var(--ink)">1,000 sats</b>.</p>
+        <div class="qr"><i></i></div>
+        <div class="btn" style="margin-top:12px">▢ Open in wallet</div>
+        <div class="inv"><pre>lnbc10u1p3k…</pre><span class="copy">Copy</span></div>
+        <p class="muted" style="margin-top:12px"><span class="spin"></span>Waiting for payment… expires in 04:52</p>
+        <p class="fine">Payments usually confirm within minutes, but can take up to an hour to reflect. If yours has not shown up after that, contact us from <b>Settings → Help</b>.</p>
+      </div>
+    </div></div>
+    <ol class="notes"><li>Pixel-identical to today's <code>InvoiceQR</code>; the invoice is requested lazily when this segment is first selected (so choosing "Local currency" never creates a Lightning invoice or a relay listener).</li></ol>
+  </figure>
+
+  <figure>
+    <figcaption><span class="chip">WEB</span> Local currency selected — fixed price, one button</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
+      <div class="seg"><button>⚡ Bitcoin <span class="amt">$5.00</span></button><button class="on">Local currency</button></div>
+      <div class="quote"><div class="big">$5.00</div><div class="meta">plus applicable tax — charged in your local currency <span class="pin">4</span></div></div>
+      <button class="btn" style="margin-top:0">Pay</button>
+      <p class="fine">Card purchases are sold through Stripe (Link); we never see your card. Your bank statement and Stripe's checkout page show this in your own currency — we don't compute or show that number ourselves.</p>
+    </div></div>
+    <ol class="notes"><li><b>This is the whole card flow now:</b> no currency to pick, no quote to accept — the price shown is the fixed dollar amount from config. Tapping "Pay" creates the order and mounts Checkout directly (next screen); there's nothing in between any more.</li></ol>
+  </figure>
+  <figure>
+    <figcaption><span class="chip">WEB</span> after tapping Pay → Stripe Embedded Checkout</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
+      <div class="seg"><button>⚡ Bitcoin <span class="amt">$5.00</span></button><button class="on">Local currency <span class="amt">$5.00</span></button></div>
+      <div class="embed">
+        <div class="lbl">Stripe Embedded Checkout (iframe) — localises automatically <span class="pin">5</span></div>
+        <div class="ph">Email</div><div class="ph">Card number</div>
+        <div class="ph half">MM / YY</div><div class="ph half">CVC</div>
+        <div class="btn sm" style="justify-content:center">Pay €4,62</div>
+      </div>
+      <p class="fine">Checkout was created for $5.00 and Stripe Adaptive Pricing is showing this buyer €4,62 — Stripe's own conversion, inside Stripe's own page. The backend's invoice still records $5.00, which is what the webhook checks against.</p>
+    </div></div>
+  </figure>
+  <figure>
+    <figcaption><span class="chip">WEB</span> config price changed before paying</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
+      <div class="seg"><button>⚡ Bitcoin <span class="amt">$5.00</span></button><button class="on">Local currency</button></div>
+      <p class="alert" style="background:#fffbeb;border-color:#fde68a;color:#92400e">The price was updated. Please review it before paying.</p>
+      <div class="quote"><div class="big">$5.50</div><div class="meta">plus applicable tax — was $5.00</div></div>
+      <button class="btn" style="margin-top:0">Pay</button>
+    </div></div>
+    <ol class="notes"><li>A 409 <code>price_changed</code> from checkout (the config price moved between page load and the tap — not a currency rate, since there is none) refetches the tier and shows the new fixed price. A buyer is never charged an amount they haven't seen; this is rare, not an expiring quote on a timer.</li><li>If Stripe isn't configured, "Local currency" doesn't appear at all — only Bitcoin is offered.</li></ol>
+  </figure>
+
+  <figure>
+    <figcaption><span class="chip">DIRECT APK</span> Local currency → hosted Checkout in a Custom Tab</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
+      <div class="seg"><button>⚡ Bitcoin <span class="amt">$5.00</span></button><button class="on">Local currency</button></div>
+      <div class="summary"><span class="addr">alice@mailstr.app</span><span class="amt">$5.00</span></div>
+      <button class="btn" style="margin-top:0">Continue to secure checkout ↗ <span class="pin">6</span></button>
+      <p class="note">Opens Stripe in your browser. You'll come back here when it's done.</p>
+      <p class="fine" style="border:0;margin-top:6px;padding-top:0">…after returning, the same card shows <i>Confirming payment…</i> (see §4).</p>
+    </div></div>
+    <ol class="notes"><li>Embedded Checkout is not verified inside the Capacitor WebView origin (<code>https://localhost</code>), so the APK uses hosted Checkout via <code>@capacitor/browser</code> and resumes by deep link + status polling. Decide at implementation after a device test.</li></ol>
+  </figure>
+</div>
+
+<!-- ============ 3. PAY STEP, STORE ============ -->
+<h2>3 · Pay step — store builds</h2>
+<p class="lede">No picker, no Lightning, no Stripe. One button that opens the native payment sheet.</p>
+<div class="row">
+  <figure>
+    <figcaption><span class="chip">IOS</span><span class="chip alt">PLAY: same layout, "Google Play account"</span></figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
+      <div class="summary"><span class="addr">Mail · alice@mailstr.app</span><span class="amt">€4,99</span></div>
+      <button class="btn" style="margin-top:0">Buy for €4,99</button>
+      <div class="note" style="margin-top:10px"><a class="link">Restore purchases</a> <span class="pin">7</span></div>
+      <p class="fine">Charged to your Apple ID. A one-time purchase — no subscription.</p>
+    </div></div>
+    <ol class="notes"><li>"Restore purchases" is mandatory for App Review. It re-runs verification and jumps to the success step.</li><li>No sheet of our own is shown during the purchase — StoreKit / Play draw it.</li></ol>
+  </figure>
+
+  <figure>
+    <figcaption><span class="chip">IOS</span><span class="chip">PLAY</span> store sheet closed / failed</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
+      <p class="alert">We couldn't confirm your purchase yet. You haven't been charged twice — try again to finish.</p>
+      <div class="summary"><span class="addr">Mail · alice@mailstr.app</span><span class="amt">€4,99</span></div>
+      <button class="btn" style="margin-top:0">Try again</button>
+      <div class="note" style="margin-top:10px"><a class="link">Restore purchases</a></div>
+    </div></div>
+    <ol class="notes"><li>User-cancelled the sheet → silent return to this screen, no alert. A verification failure keeps the token and retries it (the purchase is already paid).</li></ol>
+  </figure>
+</div>
+
+<!-- ============ 4. SHARED STATES ============ -->
+<h2>4 · Shared states (all rails)</h2>
+<p class="lede">After any rail reports done, the wizard waits for the <i>backend</i> to say "paid" — never for the client's own belief. Card polls <code>GET /api/orders/:sessionId/status</code> (the Checkout Session id); store purchases need no polling because <code>POST /api/store/verify</code> answers synchronously (<i>provisioned</i> / <i>already_provisioned</i> / <i>needs_attention</i>); Lightning keeps its WebSocket.</p>
+<div class="row">
+  <figure>
+    <figcaption>Confirming</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div></div>
+      <div class="center" style="padding:24px 0"><p class="muted"><span class="spin"></span>Confirming your payment…</p><p class="note">This usually takes a few seconds. Don't close this window.</p></div>
+    </div></div>
+  </figure>
+  <figure>
+    <figcaption>Paid → existing <code>KeysStep</code> (unchanged)</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>You're all set</h3><p class="sub">Your address is confirmed and ready.</p></div></div>
+      <div class="center" style="padding:10px 0"><div style="font-size:40px">🎉</div><p style="font-size:18px;font-weight:700;margin:8px 0 2px">alice@mailstr.app is yours.</p><p class="muted">Next: your inbox.</p><button class="btn sm" style="display:inline-flex;width:auto;margin-top:12px">Open your inbox →</button></div>
+    </div></div>
+  </figure>
+  <figure>
+    <figcaption>Card declined / session expired</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
+      <p class="alert">Your card was declined. Try another card or pay with Bitcoin.</p>
+      <div class="seg"><button>⚡ Bitcoin <span class="amt">$5.00</span></button><button class="on">Local currency</button></div>
+      <div class="embed"><div class="lbl">Stripe Embedded Checkout (fresh session)</div><div class="ph">Card number</div></div>
+    </div></div>
+    <ol class="notes"><li>A declined card is handled inside Stripe's iframe; this banner only appears for expired sessions (30 min) or a server-side failure.</li></ol>
+  </figure>
+  <figure>
+    <figcaption>Still confirming (poll bound reached)</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
+      <div class="center" style="padding:18px 0"><p style="font-size:15px;font-weight:600;margin:0 0 6px">Still confirming your payment…</p><p class="muted" style="margin:0 0 14px">You can close this window. Your mailbox will appear in your inbox shortly.</p><button class="btn sm" style="display:inline-flex;width:auto">Close</button></div>
+      <p class="fine">If it hasn't shown up after an hour, contact us from <b>Settings → Help</b>.</p>
+    </div></div>
+    <ol class="notes"><li>After the bounded poll (about 2 minutes) the wizard stops spinning. Stripe's webhook retries and the reconcile cron finish the job; the buyer isn't asked to pay again.</li></ol>
+  </figure>
+  <figure>
+    <figcaption>Paid but couldn't provision (<code>needs_attention</code>)</figcaption>
+    <div class="stage"><div class="card">
+      <div class="head"><div><h3>One payment, and it's yours</h3><p class="sub">Claiming alice@mailstr.app</p></div><span class="x">✕</span></div>
+      <p class="alert">Your payment went through, but alice@mailstr.app was claimed by someone else a moment earlier, so we couldn't create it.</p>
+      <p class="muted" style="margin:0 0 12px">We've alerted support. Reference <span style="font-family:var(--mono)">#1042</span>. You'll be refunded or offered another address.</p>
+      <button class="btn" style="margin-top:0">Contact support</button>
+    </div></div>
+    <ol class="notes"><li>Terminal error, never a spinner. The reason comes from the backend result (address/slug taken, domain gone or suspended, storage plan no longer applies); admins get the alert mail. Same card for the store build, where verify returns it synchronously.</li></ol>
+  </figure>
+</div>
+
+<!-- ============ 5. WORKSPACE SEATS ============ -->
+<h2>5 · Workspace seats panel (mail client → Settings → Workspace)</h2>
+<p class="lede">Today's <code>SeatsPanel</code>: a quantity input and a total. Open builds keep that and pay through the same payment sheet as §2. Store builds replace the free quantity with a fixed pack picker (consumable purchases of 1, 10 or 50 seats) at the store's price. This panel uses the mail client's own styling, not the landing card.</p>
+<div class="row">
+  <figure>
+    <figcaption><span class="chip">WEB</span><span class="chip">DIRECT APK</span> any quantity</figcaption>
+    <div class="stage2"><div class="panel">
+      <div class="lbl2">Seats</div><div class="hint">You have used 3 of 5. One seat per address.</div>
+      <div class="lbl2" style="margin-top:6px">Buy seats</div>
+      <div class="hint">One-time payment. Pay with Bitcoin or your local currency.</div>
+      <div class="row2">
+        <div><div style="font-size:11px;color:var(--g500);margin-bottom:3px">Seats to buy</div><div class="inp">10</div></div>
+        <div class="tot"><span style="color:var(--g500)">Total </span><b>$9.90</b></div>
+        <span class="btn2">Buy seats</span>
+      </div>
+    </div></div>
+    <ol class="notes"><li>The total is always in dollars, same as the name step — no currency select, no sats here. It's <code>WORKSPACE_SEAT_PRICE_USD</code> × seat count. Buying opens the payment sheet from §2 (Bitcoin / local currency) with this total; sats only appears if Bitcoin is picked there, scaled the same way from the sats seat price.</li></ol>
+  </figure>
+  <figure>
+    <figcaption><span class="chip">PLAY</span><span class="chip">IOS</span> fixed packs</figcaption>
+    <div class="stage2"><div class="panel">
+      <div class="lbl2">Seats</div><div class="hint">You have used 3 of 5. One seat per address.</div>
+      <div class="lbl2" style="margin-top:6px">Buy seats</div>
+      <div class="hint">One-time purchase, charged to your Apple ID. Buy as many packs as you need.</div>
+      <div class="packs">
+        <div class="pack"><b>1 seat</b><span>€1,99</span></div>
+        <div class="pack on"><b>10 seats</b><span>€17,99</span></div>
+        <div class="pack"><b>50 seats</b><span>€79,99</span></div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:10px;align-items:center"><span class="btn2">Buy 10 seats</span><a class="link" style="font-size:12px">Retry a pending purchase</a></div>
+    </div></div>
+    <ol class="notes"><li>Seat counts come only from the store catalog, never from the client. Prices are the store's own, localized.</li><li>A pack that was bought but not yet verified (app killed mid-purchase) is re-sent automatically on launch; the link is the manual fallback.</li></ol>
+  </figure>
+</div>
+
+<h2>Notes</h2>
+<div class="legend">
+  <b>Pins</b> —
+  <span class="pin">1</span> dollar price only here, no currency select, no sats until Bitcoin is actually picked ·
+  <span class="pin">2</span> CTA no longer names a method ·
+  <span class="pin">3</span> store-localized price ·
+  <span class="pin">4</span> fixed dollar price, no quote/expiry ·
+  <span class="pin">5</span> Stripe-hosted iframe — we style only the surrounding card, Adaptive Pricing does the rest ·
+  <span class="pin">6</span> APK hosted-checkout hand-off ·
+  <span class="pin">7</span> App Review requirement.<br><br>
+  <b>Dark mode / in-app modal</b> — the buy flow inside the mail client renders under <code>.landing</code> (BuyAddressModal), which pins the light palette, so this wireframe's single light theme is correct for both surfaces.<br>
+  <b>Accessibility</b> — the picker is a <code>role="radiogroup"</code> with arrow-key navigation, matching the tier cards' <code>role="radio"</code> pattern; the Android back button closes the sheet via the existing back stack (no new overlay).
+</div>
+
+</div>
+</body>
+</html>

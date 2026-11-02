@@ -1,0 +1,53 @@
+{
+  "identifier" : "A1B2C3D4",
+  "nonRenewingSubscriptions" : [],
+  "products" : [
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : false,
+      "internalID" : "6740000001",
+      "localizations" : [
+        { "description" : "Your own encrypted mailbox, delivered over Nostr.", "displayName" : "Mailbox", "locale" : "en_US" }
+      ],
+      "productID" : "com.formstr.mail.mailbox.base",
+      "referenceName" : "Mailbox",
+      "type" : "NonConsumable"
+    },
+    {
+      "displayPrice" : "1.99",
+      "familyShareable" : false,
+      "internalID" : "6740000002",
+      "localizations" : [
+        { "description" : "One workspace seat.", "displayName" : "1 seat", "locale" : "en_US" }
+      ],
+      "productID" : "com.formstr.mail.workspace.seats1",
+      "referenceName" : "Workspace seats 1",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "17.99",
+      "familyShareable" : false,
+      "internalID" : "6740000003",
+      "localizations" : [
+        { "description" : "Ten workspace seats.", "displayName" : "10 seats", "locale" : "en_US" }
+      ],
+      "productID" : "com.formstr.mail.workspace.seats10",
+      "referenceName" : "Workspace seats 10",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "79.99",
+      "familyShareable" : false,
+      "internalID" : "6740000004",
+      "localizations" : [
+        { "description" : "Fifty workspace seats.", "displayName" : "50 seats", "locale" : "en_US" }
+      ],
+      "productID" : "com.formstr.mail.workspace.seats50",
+      "referenceName" : "Workspace seats 50",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {},
+  "subscriptionGroups" : [],
+  "version" : { "major" : 3, "minor" : 0 }
+}

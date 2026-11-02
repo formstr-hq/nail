@@ -34,15 +34,15 @@ before any relay can reject the event:
     (`RestartCount` 1→3, no app-level log possible).
 - Relay caps measured directly, and they are **not uniform**:
 
-  | event size | formstr.app | nos.lol / nostr.com | primal | damus |
-  |---|---|---|---|---|
-  | 64 KiB | reject | reject | accept | accept |
-  | 100 KiB | reject | reject | accept | accept |
-  | 256 KiB | reject | reject | accept | reject |
-  | 512 KiB | reject | reject | reject | accept |
+  | event size | formstr.app | nos.lol / nostr.com | primal | damus  |
+  | ---------- | ----------- | ------------------- | ------ | ------ |
+  | 64 KiB     | reject      | reject              | accept | accept |
+  | 100 KiB    | reject      | reject              | accept | accept |
+  | 256 KiB    | reject      | reject              | accept | reject |
+  | 512 KiB    | reject      | reject              | reject | accept |
 
   So the size cap **was already active implicitly**: relays rejected the
-  event, `publishMail` counts success as *any* relay accepting, and mail in
+  event, `publishMail` counts success as _any_ relay accepting, and mail in
   the 100-256 KiB event band (≈42-107 KiB raw) previously "delivered" on
   `relay.primal.net` alone — visible only to recipients whose read set
   includes it, and with no signal to the sender either way. Above that, the
@@ -80,7 +80,7 @@ below does.
 - `config.ts` — `relayMaxEventBytes` (`RELAY_MAX_EVENT_BYTES`, default
   102400 = 100 KiB, matching relay.formstr.app's measured content cap).
 - `lmtp-server.ts` — `MAX_WRAPPABLE_MESSAGE_BYTES = relayMaxEventBytes /
-  WRAP_INFLATION` (~42 KB at defaults). A message over it **skips the full
+WRAP_INFLATION` (~42 KB at defaults). A message over it **skips the full
   publish entirely** and goes straight to the strip path; nothing over it can
   fit a relay-accepted wrap anyway. If stripping cannot bring it under (or
   there is nothing to strip — a huge plain-text body), the message is
@@ -90,13 +90,13 @@ below does.
   `RELAY_MAX_EVENT_BYTES` default 102400 (100 KiB).
 - `config.ts` — `logEffectiveLimits()`, called first in `index.ts`: prints
   `max inbound message`, `relay event cap` and the derived `raw-message
-  ceiling` in KiB, plus what happens above the ceiling. These caps decide
+ceiling` in KiB, plus what happens above the ceiling. These caps decide
   deliverability, are env-overridable, and a 552 is otherwise inexplicable
   from the logs.
 
 **On the ~42 KiB raw-message ceiling (answer to "is 100 KiB enough?"):**
 
-The 100 KiB is an *event* cap; the raw-mail ceiling it implies is ~42 KiB
+The 100 KiB is an _event_ cap; the raw-mail ceiling it implies is ~42 KiB
 (100 KiB / 2.4). It is enough for most mail — plain-text bodies, transactional
 mail, headers, and small inline images routinely sit far below it — but it is
 not a comfortable margin for rich HTML newsletters, and it is worse for
@@ -105,7 +105,7 @@ derived from ASCII measurements (ratios measured 1.97-2.70 depending on where
 the content lands against a padding chunk), multi-byte UTF-8 and base64-heavy
 bodies measure ~5.3x, dropping the effective ceiling to ~19 KiB. The gate
 therefore sits below the event cap for some content classes: it is a
-conservative *skip* threshold, not a promise the resulting event just fits.
+conservative _skip_ threshold, not a promise the resulting event just fits.
 The cap **was already active implicitly** — relays rejected oversized events
 and the bridge bounced (451, retried forever) or OOM-crashed while sealing.
 What changes is that the decision is now explicit, logged at boot and per
@@ -125,7 +125,7 @@ or a dead process.
    (RFC 3156 PGP/MIME — its octet-stream part is the encrypted message, not an
    attachment).
 2. **`lmtp-server.ts`.** Publish is now `publishWithAttachmentFallback`: on a
-   thrown publish *or* no relay accepting, it logs the failure, strips
+   thrown publish _or_ no relay accepting, it logs the failure, strips
    attachments, republishes once, and only falls back to LMTP 451 if the retry
    also fails. On success the delivered log line says "(without attachments)".
 3. **`nostr-publisher.ts`.** `publishToRelay` now captures the relay's `OK`
@@ -134,7 +134,7 @@ or a dead process.
 
 Deliberately **not** done: Blossom offload / `imeta` tags (the separate
 `attachments` feature branch). This is the quick release: mail with
-attachments now *arrives* (body + notice) instead of 451-looping forever.
+attachments now _arrives_ (body + notice) instead of 451-looping forever.
 
 ### Verification (exact)
 
@@ -148,7 +148,7 @@ attachments now *arrives* (body + notice) instead of 451-looping forever.
   body), null for no attachments, null for PGP/MIME, an oversized (>65535 B)
   attachment mail shrinking under the NIP-44 ceiling, and a latin-1 body
   surviving the parse/rebuild without mojibake.
-- `lmtp-server.test.ts` (14): the retry test asserts the *second* `publishMail`
+- `lmtp-server.test.ts` (14): the retry test asserts the _second_ `publishMail`
   call carries the notice; the failure test asserts 451 only after both
   attempts; new — an over-ceiling attachment message triggers exactly one
   publish and it is the stripped one; a huge plain-text body 552s without any
@@ -209,7 +209,7 @@ relays.
    and `KIND_SETTINGS` (30078) to `protectedKinds`. Docstring states the
    local-only invariant and that the durable fix belongs upstream.
 2. **`relay.worker.ts`** passes it as `persistence: { prunePolicy:
-   mailPrunePolicy() }` — the supported `RelayServiceOptions` seam.
+mailPrunePolicy() }` — the supported `RelayServiceOptions` seam.
 3. **`prunePolicy.ts.test`** — asserts the package default does NOT protect
    these (so the test fails if upstream fixes it and the override becomes
    redundant), that the mail kinds are protected, that no existing protected kind
@@ -239,7 +239,7 @@ that should be raised separately.
 
 - Push the protection upstream (`@formstr/local-relay`): either protect 1059 by
   default or expose per-host kind protection; nail's override is a stopgap.
-- `KIND_MAIL_META` protects kind-34578 *events* by kind — but the store also
+- `KIND_MAIL_META` protects kind-34578 _events_ by kind — but the store also
   holds every other addressable app's 34578s, so this over-protects. Acceptable
   for now (small; correctness over memory), revisit with a kind+namespace rule.
 
@@ -315,7 +315,7 @@ consult). Work done on branch `app_restructure`, base `67528bc`.
      status-bar 7.0.6; typescript ~5.9.3).
    - `.github/workflows/android-apk.yml`: one
      `pnpm install --frozen-lockfile` + `pnpm --filter mailstr-mobile run
-     build` (was `pnpm --dir web install --no-frozen-lockfile` + `npm ci`).
+build` (was `pnpm --dir web install --no-frozen-lockfile` + `npm ci`).
    - `mobile/README.md`: workspace build instructions; documents that
      `cap sync` regenerates `capacitor.settings.gradle` with `.pnpm` paths.
 4. **`AGENTS.md`:** repo map (`mobile/`, no `shared/`), rule 8, command
@@ -462,7 +462,7 @@ the only prior session in this log. Work continued on `app_restructure`.
 
 - **Status:** accepted (2026-09-13).
 - **Context:** clearing account-scoped stores synchronously on switch/logout
-  (the B1 fix) removes the *existing* state, but not work already in flight.
+  (the B1 fix) removes the _existing_ state, but not work already in flight.
   Decode completions, settings publishes/loads, and mail-action error writers
   all call `set()` asynchronously; without a guard, old-account results land in
   the new account's stores — the same class of bug B1 fixed, just time-shifted.
@@ -542,7 +542,7 @@ rev-3 audit fix pass + ADR-002/003). The rev-3 work was committed first
    verification), root `README.md` (repo table was stale from before the
    merge — now lists `client/web`, `client`, `notifier`), `client/README.md`,
    `docs/ARCHITECTURE.md` (component table + callers + protocol section),
-   `docs/fiat-iap-plan.md` (paths retargeted to the merged layout).
+   `formstr-backend/docs/fiat-iap-plan.md` (paths retargeted to the merged layout).
 8. **`scripts/render-app-icon.py`:** `RES` points at `client/android/...`;
    the dead `client/public` + `landing/public` favicon writes (deleted in the
    merge, guarded by `exists()`) are replaced by the live
@@ -565,7 +565,7 @@ rev-3 audit fix pass + ADR-002/003). The rev-3 work was committed first
   `.so`/bindings cross-compiled by the Gradle preBuild task).
 - `docker build -f client/web/Dockerfile .` — image builds; `/build-output`
   contains `index.html` + `mails/index.html` + assets. `docker compose
-  config` resolves.
+config` resolves.
 
 ### ADR-004: one flat `client/` tree; `mobile/` is removed (supersedes ADR-001)
 
@@ -575,7 +575,7 @@ rev-3 audit fix pass + ADR-002/003). The rev-3 work was committed first
 - **Context:** ADR-001 merged `mobile/` into the pnpm workspace so one
   lockfile served both. The remaining split (`web/` + `mobile/`) still named
   the native shell by one of its two platforms, while the roadmap
-  (`docs/fiat-iap-plan.md` phase 3b) adds `client/ios`. A flat
+  (`formstr-backend/docs/fiat-iap-plan.md` phase 3b) adds `client/ios`. A flat
   `client/{web,android,ios}` tree makes the shell's platform folders siblings
   under a neutral name and matches the plan the iOS work will follow.
 - **Decision:** `mobile/` is removed as a directory; its contents become
@@ -583,7 +583,7 @@ rev-3 audit fix pass + ADR-002/003). The rev-3 work was committed first
   workspace member that carries app source). Workspace lists both `client`
   (shell, for Capacitor deps) and `client/web` (app); the package is renamed
   `mailstr-client`. The shell stays a pure consumer: `client/scripts/
-  build-web.mjs` builds `client/web` and assembles `www/`; no web code
+build-web.mjs` builds `client/web` and assembles `www/`; no web code
   imports the shell.
 - **Consequences:**
   - Relative offsets that assumed the old depth were updated once:
@@ -596,9 +596,8 @@ rev-3 audit fix pass + ADR-002/003). The rev-3 work was committed first
   - iOS can now be added with `npx cap add ios` inside `client/` with no
     path churn (macOS + Xcode required; not scaffolded here).
   - The Dockerfile's protocol copy bug — `/nostr-bridge` vs the `/app/
-    nostr-bridge` the alias resolves to — is fixed as part of this move and
+nostr-bridge` the alias resolves to — is fixed as part of this move and
     verified with a real image build.
-
 
 ## 2026-09-14 — Restore `cursor: pointer` on buttons (Tailwind v4 preflight regression)
 
@@ -792,8 +791,6 @@ on staging, and outbound legacy mail routed through the production bridge.
   `"mailstr.app"` and 0 staging matches); `https://stg.mailstr.app/mails/`
   returns 200 and references the new chunk.
 
-
-
 ## 2026-09-17 — Outbound mail rides the backend send-wrap API (relay fallback)
 
 Context consulted: the 2026-09-15 sender-proof ADR-005 entry, the
@@ -815,9 +812,9 @@ per rule 15. Branch `fix/bugfixes` (from `403db91`, latest `origin/main`).
    - Bridge-bound wraps (p-tagged to the resolved bridge) go to the API first.
      Only the ones it declines fall back to relay publish.
    - Nostr-direct wraps and the self-copy always relay.
-   - A discovery document naming a *different* bridge than NIP-05 resolved is
+   - A discovery document naming a _different_ bridge than NIP-05 resolved is
      treated as "API unavailable" (relay fallback), not an error.
-   - Undeliverable *real* recipients throw as before; the self-copy stays
+   - Undeliverable _real_ recipients throw as before; the self-copy stays
      best-effort.
 3. **`lib/mail/send.ts`.** `sendMail` now delegates to `deliverWraps`; the old
    inline relay loop is gone. `buildWraps` takes `BuildWrapsParams` (params
@@ -894,7 +891,7 @@ account-specific and intermittent.
 
 Evidence: `wss://relay.stg.formstr.app` answers a REQ with `AUTH <challenge>` and
 then sends nothing (no EVENT, no EOSE, no CLOSED). The package's own test for the
-auth-required path asserted the *opposite* of correct behaviour — it asserted
+auth-required path asserted the _opposite_ of correct behaviour — it asserted
 that `CLOSED ... auth-required` causes the subscription to be forgotten.
 
 ### What changed
@@ -909,13 +906,14 @@ signer, or a mid-sign socket drop all leave the relay unauthenticated as before.
 
 The merged PR also had to **carry the published 0.6.1 dm-publish work**: 0.6.1
 was cut from `fix/dm-aware-publish-routing`, which was never on `main`, so `main`
-was *behind* npm and its `publish(event)` lacked the `opts: { relays }` that nail
+was _behind_ npm and its `publish(event)` lacked the `opts: { relays }` that nail
 already calls. Publishing from `main` would have silently regressed gift-wrap
 DM-inbox routing. PR #30 cherry-picked `ec5d52b` onto `main` first, then stacked
 AUTH as 0.6.2. It also added tests for 0.6.1's uncovered branches — the published
 0.6.1 lineage actually **failed the repo's own 99% branch floor** (98.89%).
 
 **`nail` (`fix/more-bugfixes`):**
+
 - `lib/mail/inboxFilter.ts` — `inboxFilters(pubkey)` returns a three-way
   partition (one upstream REQ each; the worker dedups by event id):
   1. `#k:['1301']` whole-history (tagged mail, uncrowdable by DMs);
@@ -934,9 +932,9 @@ AUTH as 0.6.2. It also added tests for 0.6.1's uncovered branches — the publis
   Manually driven through the built package against a live NIP-42 relay:
   `REQ authed=false → AUTH valid=true → REQ authed=true → EVENT → EOSE`.
   Published 0.6.2 verified from the registry tarball (AUTH + `publish(event,
-  opts?)` + `dmPublishTargets` all present).
+opts?)` + `dmPublishTargets` all present).
 - nail: 36 files / 294 tests, lint 0 errors, build ok (`NODE_OPTIONS=
-  --experimental-strip-types`; pre-existing Node 22.17 `prerender.js` issue),
+--experimental-strip-types`; pre-existing Node 22.17 `prerender.js` issue),
   15/15 e2e.
 
 ### Open items
@@ -976,7 +974,7 @@ take precedence where they already did.
 ### Verification (exact, at this working tree)
 
 - `client/web`: `vitest run src/app/lib/nostr/relays.test.ts
-  src/app/lib/nostr/bridgeSend.test.ts` — 17 passed (relays.test asserts
+src/app/lib/nostr/bridgeSend.test.ts` — 17 passed (relays.test asserts
   against the imported `DEFAULT_RELAYS`, so it tracks the new first entry).
 - `client/web`: `tsc --noEmit` — ok. `eslint` on the two touched files — 0
   errors.
@@ -1032,7 +1030,7 @@ encryptable set to plaintext — leaving only the composer's layer. On stg the
 alias key is unlocked, so the second layer succeeded.
 
 **Fail-open encryption.** The `catch`-to-plaintext branch meant a locked key, a
-wrong passphrase, or malformed key material all produced a *cleartext* send
+wrong passphrase, or malformed key material all produced a _cleartext_ send
 with no signal — the send the user asked to protect is the one that leaks.
 
 ### What changed (nail `main`, 4 files)
@@ -1045,12 +1043,12 @@ with no signal — the send the user asked to protect is the one that leaks.
      for, and always the self-copy. Recipients without a key get the plaintext
      document (mixed delivery) as before.
    - The `catch` now **fails closed**: `{ wraps: [], errors: ['Could not encrypt
-     this message: …'] }` — never a silent cleartext send.
+this message: …'] }` — never a silent cleartext send.
 2. **`components/ComposeModal.tsx`** — drops the pre-encryption entirely; passes
    `encrypt`, `pgpPassphrase`, and the plaintext body. The passphrase prompt now
    fires only when the lock is on.
 3. **`lib/pgp/compose.ts`** — recipient key resolution now mirrors
-   `keyForAddress` (`allKeysForAddress`, which resolves own aliases *and*
+   `keyForAddress` (`allKeysForAddress`, which resolves own aliases _and_
    keyring entries) instead of keyring-only. Previously a recipient who was
    another own alias passed send's `keyed()` gate but threw inside
    `encryptBody`; the silent demote hid it. Also deletes the unused
@@ -1070,7 +1068,7 @@ with no signal — the send the user asked to protect is the one that leaks.
   stashing this diff and re-running (12 failed / 316 passed at base).
 - `pnpm --filter mailstr-web lint` — 0 errors.
 - `pnpm --filter mailstr-web build` — ok with `NODE_OPTIONS=
-  --experimental-strip-types`, once untracked WIP that does not compile is moved
+--experimental-strip-types`, once untracked WIP that does not compile is moved
   aside (moved back after).
 
 ### ADR-006: PGP bodies are encrypted exactly once, in the send library
@@ -1080,7 +1078,7 @@ with no signal — the send the user asked to protect is the one that leaks.
   Having two produced nested ciphertext on any unlocked-key send and,
   worse, the send-side `catch` silently downgraded to plaintext on any key
   error. The composer cannot do it correctly anyway: it does not know which
-  recipients are legacy vs Nostr-direct, and it must encrypt the *same*
+  recipients are legacy vs Nostr-direct, and it must encrypt the _same_
   document for all recipients so the audience headers stay consistent.
 - **Decision:** `lib/mail/send.ts` (`buildWraps`) owns PGP encryption. The
   composer passes intent (`encrypt`), key material (`pgp`), and the session
@@ -1132,7 +1130,7 @@ user believes the key is gone, while every WKD lookup keeps returning it.
 ### Deliberately left in place
 
 `removeFromKeyring` / the correspondents-keyring Remove is untouched — that is
-the user's own local cache of *other people's* keys, not a WKD publish, so
+the user's own local cache of _other people's_ keys, not a WKD publish, so
 deleting it is correct and has no server-side counterpart.
 
 ### Re-add condition
@@ -1493,7 +1491,7 @@ the remaining gap above can be closed by a phone on the same network:
 
 - `debug { applicationIdSuffix ".debug" }` in
   `client/android/app/build.gradle` plus
-  `client/android/app/src/debug/res/values/strings.xml` ("Mail by Form*
+  `client/android/app/src/debug/res/values/strings.xml` ("Mail by Form\*
   (debug)") so the debug build installs **alongside** the production app
   (distinct applicationId = distinct app; Java package unchanged). This is
   committed as the permanent debug-variant setup, not a one-off.
@@ -1506,7 +1504,7 @@ the remaining gap above can be closed by a phone on the same network:
 - Built with `cap sync` (6 plugins, `@capacitor/browser` included) and
   `assembleDebug`; `aapt2 dump badging` confirms package
   `com.formstr.mail.debug`, versionName `0.2.1`, launch label
-  "Mail by Form* (debug)".
+  "Mail by Form\* (debug)".
 - The server is a plain static host serving only the APKs; it is not a repo
   artifact. No auth — LAN only; stop the process when done.
 
@@ -1524,7 +1522,7 @@ silently falling back). Work on `fix/mail-link-opening`, base `main`
    `ResizeObserver` observed `doc.documentElement` while its callback wrote the
    iframe's height — which resizes that very element. The browser reported the
    self-retrigger as `ResizeObserver loop completed with undelivered
-   notifications`, an `error` event; `DebugErrorOverlay` captured every one as
+notifications`, an `error` event; `DebugErrorOverlay` captured every one as
    a fatal app error and rendered a full-height overlay over a working page.
    Because layout kept settling, they arrived continuously. Diagnosed on the
    real WebView: the user's console dump was 100% these notifications.
@@ -1615,7 +1613,7 @@ timings and decoded mail ids in the APK.
     `currentSrc: https://…`.
 - `apk:debug` — BUILD SUCCESSFUL; `aapt2 dump badging` confirms package
   `com.formstr.mail.debug`, **versionCode 4, versionName 0.2.2**, label
-  "Mail by Form* (debug)".
+  "Mail by Form\* (debug)".
 
 ### Notes / limitations
 
@@ -1661,7 +1659,7 @@ UI could only display wrong.
    shown while `pending`; MX/SPF/DKIM/DMARC appear once active (with a "show
    anyway" escape hatch for careful setups).
 6. **DKIM was invisible after verifying.** Activation is when the backend
-   *generates* the signing key, so the pre-verification fetch returned a
+   _generates_ the signing key, so the pre-verification fetch returned a
    placeholder. `runVerify` now refetches DNS after success, so the live
    `v=DKIM1; k=rsa; p=…` appears. (Backend also returns `onboarding`; an
    unavailable DKIM surfaces as a specific message.)
@@ -1687,7 +1685,7 @@ UI could only display wrong.
     recount and orphan-backfill read the address set.
 11. **Reserved names on a tenant's own domain** are allowed (#8): the owner
     controls the domain and is the one who would be impersonated, so
-    `contact@`/`support@` on *their* domain have no victim. Platform-domain
+    `contact@`/`support@` on _their_ domain have no victim. Platform-domain
     claims still enforce `isReservedName` (purchase routes untouched).
 12. **MX host is `MAIL_HOST`, not `MAIL_DOMAIN`** (#11): the SMTP server
     (`mails.stg.mailstr.app`) is not the address domain. New env, defaulting to
@@ -1766,7 +1764,7 @@ redirects there).
 
 **Migration handling — deliberately not a rollback.** The branch's
 `20260925130000_domain_members.ts` is already recorded in `knex_migrations`
-(batch 8) on staging, and the DB had the *old* table shape. A branch rollback
+(batch 8) on staging, and the DB had the _old_ table shape. A branch rollback
 would have dropped `verified_at`, `seats_total`/`seats_used` and
 `domain_members` (all in batches 8/9) and taken real workspaces (`rramaa.com`,
 `hllo.live`, `workspace-test`) offline. The change is additive, so only the
@@ -1799,7 +1797,7 @@ Three issues raised while testing staging:
    domain row; a confirm for active domains only.
 3. **"Should the steps be a snackbar?"** No — steps are persistent state, not
    an event, so they stay a progress affordance rather than a snackbar.
-   Snackbars (`Snackbar.tsx`, 6 s, dismissible) were added for *events*: domain
+   Snackbars (`Snackbar.tsx`, 6 s, dismissible) were added for _events_: domain
    added, verified, removed, seats purchased. Success confirmations moved out of
    the inline `message` line and into the snackbar; failures stay inline (they
    should not vanish). On a later clarification ("I meant breadcrumbs"), the
@@ -1818,7 +1816,7 @@ carries "Back to mail" / "Delete this domain", `/mails/workspace` 200.
 Correction to an earlier verbal note: `domains` has **no DNS column**
 (`\d domains` shows only `dns_token`; `buildDnsRecords()` computes MX/SPF/DKIM/
 DMARC per request from `MAIL_HOST`/`MAIL_DOMAIN`). There was therefore never a
-stale MX in our database to refresh. `#11` fixes what the panel *tells* the
+stale MX in our database to refresh. `#11` fixes what the panel _tells_ the
 owner to publish; an owner who already published the old (web-host) MX must
 update it at their own registrar — nothing server-side changes, and our DB does
 not reflect their DNS. Consequence for routing: mail to a tenant domain routes
@@ -1860,7 +1858,7 @@ staging: bundle chain `index-DlDfF3Nm.js` → `App-BUzH5QcN.js`, which carries
 Three things surfaced testing `hllo.live` on staging:
 
 1. **"Request failed (400)" on Verify, with the record correctly published.**
-   The backend returns the verify *verdict* as the HTTP body for its
+   The backend returns the verify _verdict_ as the HTTP body for its
    non-success cases too — 400 `no-token`/`not-found`, 503 `error` — but the
    client only accepted a 503 body and threw a generic error for the rest,
    hiding what DNS actually had. `verifyDomain` now returns any body carrying
@@ -1870,7 +1868,7 @@ Three things surfaced testing `hllo.live` on staging:
 2. **Root cause of the failed check: the host resolver.** The record was
    published and matched the stored token, but staging's default resolver
    (`127.0.0.11` → host `systemd-resolved`, servers `153.92.2.6 1.1.1.1
-   8.8.4.4`) returned `ENOTFOUND` — the first two nameservers time out and only
+8.8.4.4`) returned `ENOTFOUND` — the first two nameservers time out and only
    1.1.1.1 answers, so the same record resolved on one attempt and not the
    next. Verification now runs against pinned nameservers
    (`VERIFY_DNS_SERVERS`, default `1.1.1.1,8.8.8.8,9.9.9.9`) via a
@@ -1919,3 +1917,61 @@ fresh clone of `nostr://infinityx2@mailstr.app/relay.ngit.dev/nail` at the new
 main, NIP-82 release publish (APK to Blossom; AAB on the GitHub mirror only),
 then `main` force-pushed to the `formstr-hq/nail` GitHub mirror with the tag
 and release.
+
+---
+
+## 2026-10-13 — Fiat payments plan rev 2: Stripe, in-nail payments module, migration re-base
+
+Docs only; no code changed. Files: `formstr-backend/docs/fiat-iap-plan.md` (rewritten as rev 2),
+`docs/wireframes/payments.html` (new).
+
+### Decisions (ADR-style)
+
+1. **Stripe added** (Checkout Sessions, webhook-driven provisioning) beside Lightning and store IAP.
+   Channel matrix: web + direct APK = Card + Lightning; Play/iOS builds = IAP only.
+2. **Payment UI/logic consolidated in nail** (`lib/payments`, `components/payments`);
+   no shared package (dropped on request). Lightning is listed and defaulted first.
+   Rail exclusion in store builds is by build-time dead-code elimination of
+   per-rail dynamic imports, not a runtime switch.
+3. **`invoices.lnInvoice` is not renamed** (rev 1 proposed it): `/api/invoices`
+   returns `*` and the analytics app and storage console consume the field. Added
+   `provider` + `paymentRef` instead.
+4. **Migrations re-based** on workspaces/seats (on `main`) and the unmerged
+   `blossom-storage-plans` migration; reconcile crons must filter `provider='lightning'`.
+5. Rev 1's "make `expirationDate` nullable" dropped — already nullable; only a data update remains.
+
+### Open
+
+Five questions at the end of the plan (direct-APK scope, Stripe v1 scope, storage-branch ordering, tax/currency, mailbox-date wipe).
+
+---
+
+## 2026-10-18 — Fiat plan: sats-pegged card quotes, Stripe Managed Payments, store-bundle rule
+
+Docs only; no code. Files: `formstr-backend/docs/fiat-iap-plan.md`, `docs/wireframes/payments.html`.
+
+### Decisions (ADR-style)
+1. **Prices are fixed in sats; fiat for Stripe is a stateless signed quote** (sats × BTC/<currency> from a two-source median feed, plus a gross-up so the net after Stripe's fees equals the converted amount). No rate or sats price is stored; `invoices.price` / `price_unit` hold the amount charged. Flow: pick currency → quote → accept → invoice → pay → webhook checks the paid amount against the invoice.
+2. **Card payments use Stripe Managed Payments** (Stripe is merchant of record for tax). Consequences recorded in the plan: no `adaptive_pricing` / `automatic_tax` / `payment_method_types`, tax-exclusive pricing with a tax code, higher fees (re-verify), Stripe-initiated refunds, buyer-facing "sold through Link".
+3. **Lightning and Stripe code must never ship in store bundles**: six layers (build-constant composition, no Lightning vocabulary in shared code, post-build denylist scan, release gating, `X-Pay-Channel` tripwire, tests).
+4. Migration verification is a two-step local tool (`snapshot`, then `check`) for this migration set only, never checked in. Deploy B gains M13 (NOT NULL on `status` / `provider`). Store seat packs are 1 / 10 / 50.
+
+### Open
+Currency list vs Managed Payments' always-on Adaptive Pricing; auto-deactivation on refunds; confirm Managed Payments fee numbers, embedded Checkout support and tax code.
+
+---
+
+## 2026-10-18 — Fiat payments implemented (backend Deploy A + Stripe + store IAP + nail client)
+
+Code in `formstr-backend` branch `fiat_payments` and in `client/` here. Nothing deployed or pushed.
+
+### Decisions (ADR-style)
+1. **DCE-based payment-method exclusion.** Which payment methods a build offers is chosen on the build-time constant `VITE_STORE_BUILD` (`lib/payments/methods.ts`, `PriceTag`, `PriceCurrencySwitch`, `billing.tsx`), each method behind a dynamic `import()` inside the branch that wants it, so the store bundle never contains Lightning or card code. Shared code names no rail: tiers carry the backend's price fields opaquely (`MailTier.pricing`) and only the rail modules read them. Backed by an ESLint `no-restricted-imports` ban on static rail imports, `scripts/check-store-bundle.mjs` (denylist scan of the whole bundle + native project, with a justified allowlist for nostr-tools' dead zap helpers), Gradle `pre{Direct,Play}*Build` gates, CI on both bundle kinds, and the backend's `X-Pay-Channel: store` 403.
+2. **Unified invoices table with product status** (backend): see `formstr-backend/docs/fiat-iap-plan.md` and the backend migrations M1-M10.
+3. **Purchase plugin: `cordova-plugin-purchase`** (the plan's `capacitor-iap` is unpublished). It is gated per flavor by `includePlugins` in `capacitor.config.ts` rather than by editing Gradle files, so the direct APK has no Play Billing (verified: 0 `billingclient` classes). Its unverified assumptions (the `approved` event shape, StoreKit 2 transaction ids) are confined to `lib/payments/store/iap.ts`.
+4. **Embedded Checkout never redirects** (`redirect_on_completion: "never"` + `onComplete`); the native app uses hosted Checkout in the system browser and returns by deep link. The client always waits for the backend (`/api/orders/:id/status`) rather than its own belief.
+5. A charged store purchase that the backend cannot provision is **not finished/consumed**, so the store can refund it.
+
+### Not verified here
+Real Stripe Managed Payments sandbox (fees, tax, embedded Checkout), Apple/Google sandbox purchases, an on-device run, iOS (needs macOS).
+

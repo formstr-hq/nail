@@ -1,36 +1,40 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
+// Store builds (Play / App Store) sell through the platform's billing; every
+// other build (the direct APK, which has no Google services at all) must not
+// carry the purchase plugin, and so none of Play Billing. `cap sync` honours
+// includePlugins, so which plugins reach the native project is decided here,
+// by the same STORE_BUILD flag that picks the web bundle (see
+// scripts/build-web.mjs and scripts/check-store-bundle.mjs).
+//
+// This file is loaded by the Capacitor CLI as CommonJS, so it can't import
+// package.json; keep this list equal to package.json's plugin dependencies
+// minus the purchase plugin (check-store-bundle.mjs fails the build if a
+// non-store sync still carries the purchase plugin).
+const STORE_BUILD = ['1', 'true'].includes(process.env.STORE_BUILD ?? '');
+const PLUGINS_WITHOUT_PURCHASES = [
+  '@capacitor/app',
+  '@capacitor/browser',
+  '@capacitor/filesystem',
+  '@capacitor/share',
+  '@capacitor/status-bar',
+  'nostr-signer-capacitor-plugin',
+];
+
 const config: CapacitorConfig = {
   appId: 'com.formstr.mail',
   appName: 'Mail by Form*',
-  // The combined web bundle: landing (prerendered) at '/', mail app at
-  // '/mails/'. Assembled by scripts/build-web.mjs; `cap sync` copies it into
-  // the Android project.
   webDir: 'www',
   android: {
-    // Serve the bundle from https://localhost so the landing -> client handoff
-    // (a same-origin navigation to /mails/) and the app's calls to
-    // api.formstr.app behave exactly like the deployed site.
     initialFocus: false,
   },
+  ...(STORE_BUILD ? {} : { includePlugins: PLUGINS_WITHOUT_PURCHASES }),
   plugins: {
-    // Route fetch/XHR through the native HTTP stack. The WebView's origin is
-    // https://localhost, and api.formstr.app rejects that CORS origin (returns
-    // 500, no ACAO header), so every browser-context API call fails. Native
-    // requests carry no browser Origin and aren't subject to CORS, so the same
-    // fetch() calls in web/ just work. WebSocket relay connections
-    // are unaffected (not CORS-gated).
     CapacitorHttp: {
       enabled: true,
     },
     StatusBar: {
-      // Draw the app behind a transparent status bar (edge-to-edge) and let CSS
-      // safe-area insets pad the content. This is the only approach that works
-      // on Android 15, where the plugin's non-overlay path (setStatusBarColor)
-      // is a no-op, so the layout is identical across OS versions.
       overlaysWebView: true,
-      // The suite's canvas is light "paper", so the status bar wants dark icons.
-      // (Capacitor's Style.Light == dark content for a light background.)
       style: 'LIGHT',
     },
   },

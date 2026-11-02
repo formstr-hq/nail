@@ -9,8 +9,16 @@
     "sync": "cap sync android",
     "build": "pnpm run build:web && pnpm run sync",
     "open": "cap open android",
-    "apk:debug": "cd android && ./gradlew assembleDebug",
-    "apk:release": "cd android && ./gradlew assembleRelease"
+    "apk:debug": "cd android && ./gradlew assembleDirectDebug",
+    "apk:release": "cd android && ./gradlew assembleDirectRelease",
+    "build:web:store": "node scripts/build-web.mjs --store",
+    "sync:store": "STORE_BUILD=1 cap sync android",
+    "build:store": "pnpm run build:web:store && pnpm run sync:store",
+    "check:store": "node scripts/check-store-bundle.mjs --mode store",
+    "check:open": "node scripts/check-store-bundle.mjs --mode open",
+    "apk:direct:debug": "cd android && ./gradlew assembleDirectDebug",
+    "apk:direct:release": "cd android && ./gradlew assembleDirectRelease",
+    "aab:play": "pnpm run check:store && cd android && ./gradlew bundlePlayRelease"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.8",
@@ -20,6 +28,7 @@
     "@capacitor/filesystem": "^7.1.8",
     "@capacitor/share": "^7.0.4",
     "@capacitor/status-bar": "^7.0.6",
+    "cordova-plugin-purchase": "^13.19.1",
     "nostr-signer-capacitor-plugin": "^0.0.5"
   },
   "devDependencies": {

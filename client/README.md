@@ -36,6 +36,57 @@ install already provided.
 `cap sync` regenerates `android/capacitor.settings.gradle` with pnpm's
 `.pnpm`-store paths; that file is generated, not hand-edited.
 
+## Two distributions: direct APK and store builds
+
+The same app ships in two payment shapes, as two Gradle flavors and two kinds
+of web bundle. They are never interchangeable:
+
+| | direct APK (Zapstore / sideload) | store build (Play, App Store) |
+|---|---|---|
+| Pays with | Lightning, card (hosted Stripe Checkout in a browser tab) | the store's in-app purchase only |
+| Gradle | `assembleDirect{Debug,Release}` | `bundlePlayRelease` |
+| Web bundle | `pnpm run build:web` (open) | `pnpm run build:web:store` (`VITE_STORE_BUILD=1`) |
+| Native plugins | no purchase plugin: no Play Billing, no Google services | `cordova-plugin-purchase` (Play Billing / StoreKit) |
+| Deep link | `com.formstr.mail://pay-return` (card checkout return) | none |
+
+```bash
+# direct APK
+pnpm --filter mailstr-client run build           # open web bundle + cap sync
+pnpm --filter mailstr-client run apk:direct:release
+
+# Play bundle
+pnpm --filter mailstr-client run build:store     # store web bundle + STORE_BUILD=1 cap sync
+pnpm --filter mailstr-client run aab:play        # runs the bundle guard, then bundlePlayRelease
+```
+
+Store platforms forbid offering other ways to pay for digital goods, so a store
+bundle must contain **no Lightning and no card code at all**. That is enforced
+in layers: the payment methods are chosen on the build-time constant
+`VITE_STORE_BUILD` and loaded with dynamic imports (`web/src/lib/payments/methods.ts`),
+ESLint bans static imports of a rail, and `scripts/check-store-bundle.mjs`
+scans every file of the finished bundle and the native project for a denylist
+(Lightning, bolt11, zap, sats, stripe, the payment endpoints...). The Gradle
+`pre{Direct,Play}*Build` tasks run it, so a bundle of the wrong kind cannot be
+packaged; `web-ci.yml` runs it on both kinds. A genuine false positive from a
+vendored library goes in the script's `ALLOWLIST` with a written reason.
+
+`cap sync` decides which plugins reach the native project (`includePlugins` in
+`capacitor.config.ts`, switched by `STORE_BUILD=1`). Always rebuild the web
+bundle **and** re-sync for the flavor you are about to package; the guard fails
+if either is stale. The checked-in generated Gradle files are the direct
+(open) state.
+
+### iOS (App Store build)
+
+Not generated here: `npx cap add ios` needs macOS, Xcode and CocoaPods. When
+adding it: `pnpm add @capacitor/ios`, `STORE_BUILD=1 npx cap add ios`, bundle id
+`com.formstr.mail`, always built with `build:web:store`. `storekit/Mailstr.storekit`
+is a StoreKit configuration with the mailbox and the three seat packs for local
+Xcode testing; sandbox devices and TestFlight come after. Submission needs the
+privacy-policy URL, support URL, screenshots and privacy labels (public key +
+purchase record). The purchase plugin is the same; `Info.plist` is covered by
+the bundle guard.
+
 ## Status bar / safe areas
 
 `targetSdk 35` (Android 15) forces edge-to-edge, and the StatusBar plugin's

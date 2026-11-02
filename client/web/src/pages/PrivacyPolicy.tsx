@@ -1,7 +1,9 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Navbar, Footer } from "../components/landing";
-import content from "./privacy-policy.md?raw";
+// Aliased at build time (vite.config.ts): store builds get the variant that
+// describes store billing and names no other payment method.
+import content from "@privacy-policy.md?raw";
 
 export default function PrivacyPolicy() {
   return (

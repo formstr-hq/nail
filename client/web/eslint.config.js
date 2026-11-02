@@ -52,4 +52,61 @@ export default defineConfig([
       // `pnpm lint` gates real regressions without blocking the merge.
     },
   },
+  // Store bundles must contain no Lightning and no card code. The bundler can
+  // only drop what is never statically imported, so shared code may reach a
+  // payment rail ONLY through a dynamic import() inside a build-time branch
+  // (lib/payments/methods.ts, PriceTag.tsx, ...).
+  // This bans the static route; files that belong to a rail are exempt below.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                '@/lib/payments/lightning/*',
+                '@/lib/payments/stripe/*',
+                '@/lib/payments/store/*',
+                '**/lib/payments/lightning/*',
+                '**/lib/payments/stripe/*',
+                '**/lib/payments/store/*',
+              ],
+              message:
+                'Payment rails are loaded with a dynamic import() behind VITE_STORE_BUILD (see lib/payments/methods.ts); a static import ships the rail in store bundles.',
+            },
+            {
+              group: [
+                '@/components/payments/LightningPay',
+                '@/components/payments/StripePay',
+                '@/components/payments/StorePay',
+                '@/components/payments/StorePrice',
+                '@/components/payments/StoreSeatPacks',
+                '@/components/payments/OpenPrice',
+                '@/components/payments/InvoiceQR',
+              ],
+              message:
+                'Payment method components are loaded with a dynamic import() behind VITE_STORE_BUILD (see lib/payments/methods.ts).',
+            },
+            {
+              group: ['@stripe/*', 'qrcode.react'],
+              message: 'Only the card / Lightning method components may import this (store bundles must not contain it).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The rails themselves, and tests (which are never bundled).
+    files: [
+      'src/**/*.test.{ts,tsx}',
+      'src/lib/payments/lightning/**',
+      'src/lib/payments/stripe/**',
+      'src/lib/payments/store/**',
+      'src/components/payments/{LightningPay,StripePay,StorePay,StorePrice,StoreSeatPacks,OpenPrice,InvoiceQR}.tsx',
+    ],
+    rules: { 'no-restricted-imports': 'off' },
+  },
 ])

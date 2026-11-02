@@ -26,6 +26,13 @@ const www = path.resolve(__dirname, "../www");
 // you back to landing. Naming the file makes it serve the mail app. This
 // overrides the web deploy's "/mails" default for the mobile build only, so
 // the deployed site's URLs are unaffected.
+// Store builds (Play / App Store) are made with `--store` (or STORE_BUILD=1):
+// the web bundle is compiled with VITE_STORE_BUILD=1 so the Lightning and card
+// code is removed at build time, and `www/.build-channel` records which kind of
+// bundle this is for scripts/check-store-bundle.mjs.
+const STORE_BUILD =
+  process.argv.includes("--store") || ["1", "true"].includes(process.env.STORE_BUILD ?? "");
+
 const MAILS_URL = "/mails/index.html";
 // The whole app builds under the same base its files live at in the bundle.
 // (The prerendered landing keeps working under a base: its routes are
@@ -65,6 +72,8 @@ run("pnpm", ["run", "build"], webDir, {
   CLIENT_BASE_PATH: CLIENT_BASE,
   VITE_MAILS_URL: MAILS_URL,
   ...PROD_ENV,
+  // Always set explicitly: an inherited VITE_STORE_BUILD must not leak into an open build.
+  VITE_STORE_BUILD: STORE_BUILD ? "1" : "",
 });
 
 // Assemble www/: prerendered pages at the root, and everything the
@@ -88,4 +97,7 @@ for (const rel of ["index.html", "mails/index.html"]) {
     throw new Error(`combined bundle missing ${rel} — build layout changed?`);
   }
 }
-console.log(`\n✓ combined bundle assembled at ${path.relative(repo, www)}`);
+fs.writeFileSync(path.join(www, ".build-channel"), STORE_BUILD ? "store\n" : "open\n");
+console.log(
+  `\n✓ combined ${STORE_BUILD ? "STORE" : "open"} bundle assembled at ${path.relative(repo, www)}`,
+);

@@ -45,6 +45,10 @@ function prerouter(): Plugin {
   }
 }
 
+// Store builds (Play / App Store) ship a privacy policy that describes store
+// billing and mentions no other payment method; see lib/payments/methods.ts.
+const storeBuild = process.env.VITE_STORE_BUILD === '1'
+
 export default defineConfig({
   plugins: [react(), tailwindcss(), prerouter()],
   base: process.env.CLIENT_BASE_PATH ?? '/',
@@ -110,12 +114,20 @@ export default defineConfig({
     // resolve from their own directory. Dedupe forces Vite to resolve these
     // from the web root, where they're installed.
     dedupe: ['nostr-tools'],
-    alias: {
-      '@': path.resolve(__dirname, './src'),
+    alias: [
+      // A regex, because a string key would not match the `?raw` suffix.
+      {
+        find: /^@privacy-policy\.md/,
+        replacement: path.resolve(
+          __dirname,
+          storeBuild ? './src/pages/privacy-policy.store.md' : './src/pages/privacy-policy.md',
+        ),
+      },
+      { find: '@', replacement: path.resolve(__dirname, './src') },
       // The wire protocol lives in nostr-bridge and is shared verbatim with
       // the bridge and the e2e suite, so client and bridge cannot drift apart.
       // Kept outside web/ deliberately; the Dockerfile copies it in.
-      '@protocol': path.resolve(__dirname, '../../nostr-bridge/src/protocol'),
-    },
+      { find: '@protocol', replacement: path.resolve(__dirname, '../../nostr-bridge/src/protocol') },
+    ],
   },
 })

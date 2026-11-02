@@ -32,3 +32,19 @@ export async function completeOnboarding(page: Page) {
   await confirm.click()
   await expect(confirm).toBeHidden()
 }
+
+/**
+ * Card payments off: the deployment reports Stripe disabled, so the pay step
+ * offers Lightning only. Prices still show the fixed USD config amount; tests
+ * that don't exercise the card flow stub this so they never depend on the
+ * real API.
+ */
+export async function stubCardOff(page: Page) {
+  await page.route('**/api/payments/config', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ stripe: { enabled: false, publishableKey: null }, lightning: { enabled: true } }),
+    }),
+  )
+}
