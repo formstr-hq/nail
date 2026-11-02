@@ -10,6 +10,9 @@ import {
   removeDomain,
   createSeatInvoice,
   fetchSeatPrice,
+  fetchPaymentCurrencies,
+  fetchSeatCardQuote,
+  createSeatCardCheckout,
 } from './workspace'
 
 /**
@@ -239,5 +242,47 @@ describe('fetchSeatPrice', () => {
   it('reports a failure rather than a silent default', async () => {
     mockFetch(() => json({}, 500))
     await expect(fetchSeatPrice()).rejects.toThrow(/500/)
+  })
+})
+
+describe('card checkout', () => {
+  it('lists the currencies the backend offers (public)', async () => {
+    const spy = mockFetch(() => json({ base: 'usd', currencies: ['usd', 'eur'] }))
+    await expect(fetchPaymentCurrencies()).resolves.toEqual(['usd', 'eur'])
+    expect(spy.mock.calls[0][1]).toBeUndefined()
+  })
+
+  it('asks the backend for a seat quote in the chosen currency', async () => {
+    const spy = mockFetch(() =>
+      json({ currency: 'eur', amount: 1380, exponent: 2, estimate: true, fetchedAt: 'x' }),
+    )
+    const quote = await fetchSeatCardQuote(3, 'eur')
+    expect(String(spy.mock.calls[0][0])).toContain('/api/payments/quote?')
+    expect(String(spy.mock.calls[0][0])).toContain('product=workspace')
+    expect(String(spy.mock.calls[0][0])).toContain('seats=3')
+    expect(String(spy.mock.calls[0][0])).toContain('currency=eur')
+    expect(quote.amount).toBe(1380)
+    expect(quote.estimate).toBe(true)
+  })
+
+  it('surfaces the quote error message from the server', async () => {
+    mockFetch(() => json({ error: 'Exchange rates are temporarily unavailable' }, 503))
+    await expect(fetchSeatCardQuote(1, 'eur')).rejects.toThrow('Exchange rates are temporarily unavailable')
+  })
+
+  it('posts a hosted workspace checkout in the chosen currency', async () => {
+    const spy = mockFetch(() =>
+      json({ sessionId: 'cs_1', url: 'https://checkout.stripe.test/c/cs_1', amount: 1380, currency: 'eur' }),
+    )
+    const checkout = await createSeatCardCheckout(active, 'acme.com', 3, 'eur')
+    expect(String(spy.mock.calls[0][0])).toMatch(/\/api\/stripe\/checkout$/)
+    expect(JSON.parse(String(spy.mock.calls[0][1]?.body))).toEqual({
+      product: 'workspace',
+      domain: 'acme.com',
+      seats: 3,
+      uiMode: 'hosted',
+      currency: 'eur',
+    })
+    expect(checkout.url).toBe('https://checkout.stripe.test/c/cs_1')
   })
 })
