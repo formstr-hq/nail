@@ -91,13 +91,13 @@ export function SeatsPanel({
       </Field>
 
       {StoreSeatPacks ? (
-        <Field label="Buy seats" hint="One-time purchase. Buy as many packs as you need.">
+        <Field label="Buy seats" hint="One-time purchase. Buy as many packs as you need. Seats are valid for 1 year.">
           <Suspense fallback={null}>
             <StoreSeatPacks onPick={(packSeats) => setPaying({ product: 'workspace', domain: domain.domain, packSeats })} />
           </Suspense>
         </Field>
       ) : (
-        <Field label="Buy seats" hint="One-time payment. Pay with Bitcoin or your local currency.">
+        <Field label="Buy seats" hint="Pay with Bitcoin or your local currency. Seats are valid for 1 year.">
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1">
               <span className="text-[11px] text-subtle">Seats to buy</span>
