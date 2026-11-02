@@ -30,7 +30,7 @@ function currencyName(code: string): string {
 function labelFor(option: Option): string {
   return option.kind === 'sats'
     ? 'Bitcoin (Sats)'
-    : `${option.value.toUpperCase()} — ${currencyName(option.value)}`
+    : `${option.value.toUpperCase()} - ${currencyName(option.value)}`
 }
 
 /**
