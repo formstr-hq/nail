@@ -326,3 +326,62 @@ export function createSeatInvoice(
     body: { domain, seats },
   })
 }
+
+/**
+ * Currencies offered for card checkout, usd first (public). Sats are not in
+ * this list: they are the Lightning option and are added by the client.
+ */
+export async function fetchPaymentCurrencies(): Promise<string[]> {
+  const res = await fetch(apiUrl('/api/payments/currencies'))
+  if (!res.ok) throw new Error(`Could not load currencies (${res.status})`)
+  return ((await res.json()) as { currencies: string[] }).currencies
+}
+
+/**
+ * Card price of a seat purchase in `currency`, converted by the backend (public).
+ * `amount` is in the currency's minor units; `exponent` is how many digits after
+ * the decimal point. `estimate` is true for non-USD: checkout re-prices at click
+ * time, so the final amount can move with the FX rate.
+ */
+export interface CardQuote {
+  currency: string
+  amount: number
+  exponent: number
+  estimate: boolean
+  fetchedAt: string
+}
+
+export async function fetchSeatCardQuote(seats: number, currency: string): Promise<CardQuote> {
+  const query = new URLSearchParams({ product: 'workspace', seats: String(seats), currency })
+  const res = await fetch(apiUrl(`/api/payments/quote?${query}`))
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(body?.error ?? `Could not load the price (${res.status})`)
+  }
+  return (await res.json()) as CardQuote
+}
+
+export interface CardCheckout {
+  sessionId: string
+  /** Hosted Stripe Checkout page to send the buyer to. */
+  url: string
+  amount: number
+  currency: string
+}
+
+/**
+ * Start a card purchase of seats in `currency`. Returns a hosted Stripe Checkout
+ * URL; the caller redirects there. Fulfilment happens from Stripe's webhook, so
+ * the seats appear once the payment clears.
+ */
+export function createSeatCardCheckout(
+  active: ActiveSigner,
+  domain: string,
+  seats: number,
+  currency: string,
+): Promise<CardCheckout> {
+  return authed<CardCheckout>(active, '/api/stripe/checkout', {
+    method: 'POST',
+    body: { product: 'workspace', domain, seats, uiMode: 'hosted', currency },
+  })
+}
