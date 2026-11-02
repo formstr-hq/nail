@@ -104,7 +104,7 @@ export function NameStep({
       </p>
 
       {PayInPicker && (
-        <div className="mt-4">
+        <div className="mt-3">
           <label className="mb-1.5 block text-sm font-semibold text-ink">Pay in</label>
           <Suspense
             fallback={
@@ -122,7 +122,7 @@ export function NameStep({
         </div>
       )}
 
-      <div className="mt-2 flex flex-col gap-2">
+      <div className={`${PayInPicker ? 'mt-3' : 'mt-2'} flex flex-col gap-2`}>
         {tiers === null ? (
           <div className="flex items-center justify-center rounded-xl border border-black/10 bg-white p-6">
             <Loader2 size={18} className="animate-spin text-gray-300" />
@@ -204,7 +204,7 @@ export function NameStep({
       <button
         disabled={availability !== 'free' || !selectedTier || !paymentReady}
         onClick={onContinue}
-        className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition-all enabled:hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-40"
+        className={`${PayInPicker ? 'mt-3' : 'mt-4'} inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition-all enabled:hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-40`}
       >
         Get {selectedTier?.name ?? 'Mail'}
       </button>
