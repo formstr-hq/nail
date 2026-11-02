@@ -327,6 +327,9 @@ test('workspace setup: add → DNS → verify → assign addresses', async ({ pa
     'true',
   )
 
+  // The card currency defaults to USD; this test covers the sats (Lightning) path.
+  await page.getByLabel('Pay in').selectOption('sats')
+
   // Billing is flat per-seat with a custom quantity, not fixed packs: the live
   // total tracks the entered seat count (20 sats/seat).
   await expect(page.getByText(/20 sats per seat/i)).toBeVisible()
