@@ -12,6 +12,22 @@ export function formatUsd(cents: number, locale?: string): string {
   }
 }
 
+/** A card amount in its presentment currency: `amount` is in minor units (see the quote's exponent). */
+export function formatCurrencyMinor(amount: number, currency: string, exponent: number, locale?: string): string {
+  const code = currency.toUpperCase()
+  const value = amount / 10 ** exponent
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: code,
+      minimumFractionDigits: exponent,
+      maximumFractionDigits: exponent,
+    }).format(value)
+  } catch {
+    return `${code} ${value.toFixed(exponent)}`
+  }
+}
+
 /** Lightning prices are sats; the unit comes from the backend's tier pricing. */
 export function formatSats(amount: number, unit = 'sats', locale?: string): string {
   try {

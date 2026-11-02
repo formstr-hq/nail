@@ -46,6 +46,14 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # nostr-bridge and e2e-nostr are separate pnpm projects with their own
+      # lockfiles; client/web's tests and the e2e relay need their deps.
+      - name: Install nostr-bridge deps
+        run: pnpm --dir nostr-bridge install --frozen-lockfile
+
+      - name: Install e2e-nostr deps
+        run: pnpm --dir e2e-nostr install --frozen-lockfile
+
       - name: Lint
         run: pnpm --filter mailstr-web lint
 

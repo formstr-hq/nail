@@ -4,14 +4,18 @@ import { EmbeddedCheckout, EmbeddedCheckoutProvider } from '@stripe/react-stripe
 import { loadStripe } from '@stripe/stripe-js/pure'
 import { isNativeApp } from '@/lib/platform'
 import { checkoutUiMode } from '@/lib/payments/channels'
-import { formatUsd } from '@/lib/payments/money'
+import { formatCurrencyMinor, formatUsd } from '@/lib/payments/money'
 import { currentMailPriceUsd, currentSeatTotalUsd } from '@/lib/payments/pricing'
+import { useCurrencyPreference } from '@/lib/payments/preferences'
 import { pollOrderStatus } from '@/lib/payments/status'
 import {
   PriceChanged,
   createCheckout,
   fetchOrderStatus,
+  fetchPaymentCurrencies,
+  fetchPaymentQuote,
   fetchPaymentsConfig,
+  type PaymentQuote,
 } from '@/lib/payments/stripe/api'
 import { NATIVE_RETURN_URL, onCheckoutReturn, openCheckoutPage } from '@/lib/payments/stripe/checkoutWindow'
 import type { MethodProps } from '@/lib/payments/types'
@@ -26,9 +30,10 @@ type Phase =
   | { name: 'still' }
 
 /**
- * Card payments: one fixed USD price, one button. Stripe Checkout is created in
- * USD and Adaptive Pricing shows the buyer their own currency inside Stripe's
- * page; this component never computes a conversion.
+ * Card payments: the fixed USD price, a currency the buyer can pick, and one
+ * button. The backend converts non-USD amounts at its own FX rate (the quote is
+ * an estimate) and creates Managed Payments Checkout in the chosen currency, so
+ * local payment methods are offered. This component never computes a rate.
  */
 export default function StripePay({
   order,
@@ -44,6 +49,52 @@ export default function StripePay({
   const [previousAmount, setPreviousAmount] = useState<string | null>(null)
   const [phase, setPhase] = useState<Phase>({ name: 'choose' })
   const abort = useRef<AbortController | null>(null)
+  const rememberedCurrency = useCurrencyPreference((s) => s.currency)
+  const setCurrency = useCurrencyPreference((s) => s.setCurrency)
+  const [currencies, setCurrencies] = useState<string[]>(['usd'])
+  // A remembered currency the deployment no longer offers falls back to USD.
+  const currency = currencies.includes(rememberedCurrency) ? rememberedCurrency : 'usd'
+  const seats = 'seats' in order ? order.seats : undefined
+  // The quote is kept with the inputs it was asked for, so a stale one is ignored rather than cleared.
+  const quoteKey = [currency, priceUsd, order.product, seats].join(':')
+  const [quoteState, setQuoteState] = useState<{ key: string; quote: PaymentQuote | null; failed: boolean }>({
+    key: '',
+    quote: null,
+    failed: false,
+  })
+  const quoteFresh = quoteState.key === quoteKey
+  const quote = quoteFresh ? quoteState.quote : null
+  const quoteFailed = quoteFresh && quoteState.failed
+
+  useEffect(() => {
+    let cancelled = false
+    fetchPaymentCurrencies()
+      .then((list) => {
+        if (!cancelled && list.length > 0) setCurrencies(list)
+      })
+      .catch(() => {
+        // Keep USD only: the picker stays hidden and card still works.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // The backend's FX estimate for a non-USD choice; re-asked when the price or the currency changes.
+  useEffect(() => {
+    if (currency === 'usd' || priceUsd == null) return
+    let cancelled = false
+    fetchPaymentQuote({ product: order.product, currency, seats })
+      .then((next) => {
+        if (!cancelled) setQuoteState({ key: quoteKey, quote: next, failed: false })
+      })
+      .catch(() => {
+        if (!cancelled) setQuoteState({ key: quoteKey, quote: null, failed: true })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [currency, priceUsd, order.product, seats, quoteKey])
 
   useEffect(() => {
     let cancelled = false
@@ -91,7 +142,14 @@ export default function StripePay({
     return () => controller.abort()
   }, [])
 
-  const price = priceUsd != null ? formatUsd(priceUsd) : null
+  const usdPrice = priceUsd != null ? formatUsd(priceUsd) : null
+  // What the buyer will be charged: the USD price, or the backend's estimate in their currency.
+  const price =
+    currency === 'usd'
+      ? usdPrice
+      : quote && quote.currency === currency
+        ? formatCurrencyMinor(quote.amount, quote.currency, quote.exponent)
+        : null
 
   const settle = useCallback(
     async (sessionId: string, maxMs: number) => {
@@ -113,7 +171,7 @@ export default function StripePay({
   )
 
   const accept = async () => {
-    if (priceUsd == null || !publishableKey) return
+    if (priceUsd == null || !publishableKey || price === null) return
     const native = isNativeApp()
     const mode = checkoutUiMode(native)
     setPhase({ name: 'creating' })
@@ -123,6 +181,7 @@ export default function StripePay({
       const session = await createCheckout(signer, {
         product: order.product,
         expectedPriceUsd: priceUsd,
+        currency,
         uiMode: mode,
         ...(order.product === 'mail'
           ? { tierId: order.tierId, nip05: order.nip05 }
@@ -191,7 +250,7 @@ export default function StripePay({
   }
   if (phase.name === 'still') return <StillConfirming />
 
-  if (!publishableKey || price === null) {
+  if (!publishableKey || usdPrice === null) {
     return (
       <div className="flex items-center justify-center py-8">
         <Loader2 size={18} className="animate-spin text-gray-300" />
@@ -199,21 +258,43 @@ export default function StripePay({
     )
   }
 
+  const fxNote = currency === 'usd' ? '' : ` · charged in ${currency.toUpperCase()} · final price may change with the exchange rate`
+
   return (
     <div className="flex flex-col gap-4">
       {notice && <p className="text-sm font-semibold text-amber-700">{notice}</p>}
 
+      {currencies.length > 1 && (
+        <label className="flex items-center justify-between gap-3 text-sm text-gray-600">
+          Pay in
+          <select
+            aria-label="Card currency"
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
+            className="rounded-lg border border-black/10 bg-white px-2 py-1 text-ink"
+          >
+            {currencies.map((code) => (
+              <option key={code} value={code}>
+                {code.toUpperCase()}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
       <div className="rounded-xl border border-black/10 bg-white p-4 text-center">
-        <p className="text-2xl font-bold text-ink">{price}</p>
+        <p className="text-2xl font-bold text-ink">
+          {price ?? (quoteFailed ? 'Exchange rate unavailable' : 'Converting…')}
+        </p>
         <p className="mt-1 text-xs text-gray-500">
-          tax included — charged in your local currency
+          tax included{fxNote}
           {previousAmount && previousAmount !== price ? ` · was ${previousAmount}` : ''}
         </p>
       </div>
 
       <button
         type="button"
-        disabled={phase.name === 'creating'}
+        disabled={phase.name === 'creating' || price === null}
         onClick={() => void accept()}
         className={[
           'inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40',
@@ -234,8 +315,8 @@ export default function StripePay({
         )}
       </button>
       <p className="text-center text-xs text-gray-400">
-        Card purchases are sold through Stripe (Link); we never see your card. Your bank statement and
-        Stripe's checkout page show the amount in your own currency — we don't compute that number.
+        Card purchases are sold through Stripe (Link); we never see your card. Your bank statement shows the
+        amount in the currency you chose.
       </p>
     </div>
   )
