@@ -40,6 +40,12 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # client/web's tests import ../../nostr-bridge, which is a separate
+      # pnpm project with its own lockfile; without its deps the test
+      # suite can't resolve nostr-tools.
+      - name: Install nostr-bridge deps
+        run: pnpm --dir nostr-bridge install --frozen-lockfile
+
       - name: Lint
         run: pnpm --filter mailstr-web lint
 
