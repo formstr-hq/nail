@@ -73,6 +73,7 @@ describe('StripePay', () => {
     const { onResult } = setup()
 
     expect(await screen.findByText('$5.00')).toBeTruthy()
+    expect(screen.getByText(/tax included/)).toBeTruthy()
     expect(screen.getByText(/charged in your local currency/)).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: /^pay$/i }))
@@ -93,6 +94,22 @@ describe('StripePay', () => {
     embedded.onComplete?.()
     await waitFor(() => expect(onResult).toHaveBeenCalledWith({ status: 'paid' }))
     expect(api.fetchOrderStatus).toHaveBeenCalledWith('cs_1')
+  })
+
+  it('uses a white, dark-text pay button in the workspace flow', async () => {
+    render(
+      <StripePay
+        order={{ product: 'workspace', domain: 'acme.com', seats: 1 }}
+        signer={signer}
+        priceUsd={500}
+        onResult={vi.fn()}
+        onError={vi.fn()}
+      />,
+    )
+    const pay = await screen.findByRole('button', { name: /^pay$/i })
+    expect(pay.className).toContain('bg-white')
+    expect(pay.className).toContain('text-ink')
+    expect(pay.className).not.toContain('bg-primary')
   })
 
   it('still settles after StrictMode remounts the panel', async () => {

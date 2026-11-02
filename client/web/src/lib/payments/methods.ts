@@ -10,17 +10,24 @@
 // This file and the picker/sheet around it are the only shared code that knows
 // methods exist; it must not name a payment rail outside its own branch.
 import { lazy } from 'react'
+import { formatSats, formatUsd } from './money'
 import type { MethodDefinition } from './types'
 
 const OPEN_BUILD_METHODS = (): MethodDefinition[] => [
   {
     id: 'lightning',
     label: 'Pay with Bitcoin',
+    price: async ({ order, tier }) => {
+      const { orderSats } = await import('./lightning/api')
+      const sats = await orderSats(order, tier)
+      return sats ? formatSats(sats.amount, sats.unit) : null
+    },
     Component: lazy(() => import('@/components/payments/LightningPay')),
   },
   {
     id: 'stripe',
     label: 'Pay in your local currency',
+    price: ({ priceUsd }) => (priceUsd == null ? null : formatUsd(priceUsd)),
     available: async () => {
       const api = await import('./stripe/api')
       const config = await api.fetchPaymentsConfig()

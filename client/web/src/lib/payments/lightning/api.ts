@@ -5,6 +5,7 @@ import { config } from '@/lib/config'
 import type { MailTier } from '@/lib/api'
 import type { Nip98Signer } from '@/lib/nip98'
 import { apiUrl } from '@/app/lib/api/config'
+import type { PayOrder } from '../types'
 import { request } from '../http'
 
 export interface LightningInvoice {
@@ -45,6 +46,17 @@ export function tierSats(tier: MailTier): { amount: number; unit: string } | nul
   const amount = tier.pricing.priceSats
   if (typeof amount !== 'number') return null
   return { amount, unit: typeof tier.pricing.unit === 'string' ? tier.pricing.unit : 'sats' }
+}
+
+/** The sats price of an order, or null when the backend sent none. */
+export async function orderSats(
+  order: PayOrder,
+  tier?: MailTier | null,
+): Promise<{ amount: number; unit: string } | null> {
+  if (order.product === 'mail') return tier ? tierSats(tier) : null
+  if (!('seats' in order)) return null
+  const { pricePerSeatSats } = await fetchSeatPricing()
+  return { amount: pricePerSeatSats * order.seats, unit: 'sats' }
 }
 
 /** The flat per-seat price and the allowed purchase range (public). */

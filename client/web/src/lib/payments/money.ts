@@ -11,3 +11,12 @@ export function formatUsd(cents: number, locale?: string): string {
     return `$${(cents / 100).toFixed(2)}`
   }
 }
+
+/** Lightning prices are sats; the unit comes from the backend's tier pricing. */
+export function formatSats(amount: number, unit = 'sats', locale?: string): string {
+  try {
+    return `${new Intl.NumberFormat(locale).format(amount)} ${unit}`
+  } catch {
+    return `${amount} ${unit}`
+  }
+}

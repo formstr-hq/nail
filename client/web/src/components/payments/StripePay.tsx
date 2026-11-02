@@ -206,7 +206,7 @@ export default function StripePay({
       <div className="rounded-xl border border-black/10 bg-white p-4 text-center">
         <p className="text-2xl font-bold text-ink">{price}</p>
         <p className="mt-1 text-xs text-gray-500">
-          plus applicable tax — charged in your local currency
+          tax included — charged in your local currency
           {previousAmount && previousAmount !== price ? ` · was ${previousAmount}` : ''}
         </p>
       </div>
@@ -215,7 +215,12 @@ export default function StripePay({
         type="button"
         disabled={phase.name === 'creating'}
         onClick={() => void accept()}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition-all enabled:hover:bg-primary-light disabled:cursor-not-allowed disabled:opacity-40"
+        className={[
+          'inline-flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-semibold transition-all disabled:cursor-not-allowed disabled:opacity-40',
+          order.product === 'workspace'
+            ? 'border border-black/10 bg-white text-ink enabled:hover:bg-gray-300'
+            : 'bg-primary text-white enabled:hover:bg-primary-light',
+        ].join(' ')}
       >
         {phase.name === 'creating' ? (
           <>

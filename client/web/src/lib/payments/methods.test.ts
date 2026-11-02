@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
+import { normalizeTier } from '@/lib/api'
+import { formatSats } from './money'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -20,6 +22,16 @@ describe('channel matrix', () => {
   it('store builds offer in-app purchase only', async () => {
     const { buildMethods } = await load(true)
     expect(buildMethods().map((m) => m.id)).toEqual(['store'])
+  })
+
+  it("prices Bitcoin in sats and card in USD", async () => {
+    const { buildMethods } = await load(false)
+    const [lightning, stripe] = buildMethods()
+    const order = { product: 'mail', pubkey: 'p', nip05: 'a@b', tierId: 'base' } as const
+    const tier = normalizeTier({ id: 'base', name: 'Mail', priceSats: 1000, unit: 'sats' })!
+
+    expect(await lightning.price?.({ order, tier, priceUsd: 500 })).toBe(formatSats(1000))
+    expect(await stripe.price?.({ order, tier, priceUsd: 500 })).toBe('$5.00')
   })
 })
 
