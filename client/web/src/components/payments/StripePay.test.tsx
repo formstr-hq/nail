@@ -40,7 +40,10 @@ import { useCurrencyPreference } from '@/lib/payments/preferences'
 const order = { product: 'mail', pubkey: 'p', nip05: 'alice@mailstr.app', tierId: 'base' } as const
 const signer = { signEvent: vi.fn() } as never
 
-function setup(props: { priceUsd?: number | null } = {}, strict = false) {
+function setup(
+  props: { priceUsd?: number | null; currency?: string; autoStart?: boolean } = {},
+  strict = false,
+) {
   const onResult = vi.fn()
   const onError = vi.fn()
   const onPriceUsdChange = vi.fn()
@@ -49,6 +52,8 @@ function setup(props: { priceUsd?: number | null } = {}, strict = false) {
       order={order}
       signer={signer}
       priceUsd={props.priceUsd === undefined ? 500 : props.priceUsd}
+      currency={props.currency}
+      autoStart={props.autoStart}
       onPriceUsdChange={onPriceUsdChange}
       onResult={onResult}
       onError={onError}
@@ -173,6 +178,48 @@ describe('StripePay', () => {
     await user.click(screen.getByRole('button', { name: /^pay$/i }))
     expect(api.createCheckout).toHaveBeenCalledWith(signer, expect.objectContaining({ currency: 'eur', expectedPriceUsd: 500 }))
     expect(useCurrencyPreference.getState().currency).toBe('eur')
+  })
+
+  it('uses the currency chosen on the first panel without showing the card picker', async () => {
+    api.fetchPaymentQuote.mockResolvedValue({
+      currency: 'eur',
+      amount: 460,
+      exponent: 2,
+      usdCents: 500,
+      estimate: true,
+      fetchedAt: '2026-11-02T00:00:00Z',
+    })
+    api.createCheckout.mockResolvedValue({ sessionId: 'cs_locked', clientSecret: 's', amount: 460, currency: 'eur' })
+    const user = userEvent.setup()
+    setup({ currency: 'eur' })
+
+    expect(await screen.findByText(/4[.,]60/)).toBeTruthy()
+    expect(screen.queryByRole('combobox', { name: 'Card currency' })).toBeNull()
+    expect(api.fetchPaymentCurrencies).not.toHaveBeenCalled()
+    expect(api.fetchPaymentQuote).toHaveBeenCalledWith({ product: 'mail', currency: 'eur', seats: undefined })
+
+    await user.click(screen.getByRole('button', { name: /^pay$/i }))
+    expect(api.createCheckout).toHaveBeenCalledWith(signer, expect.objectContaining({ currency: 'eur' }))
+  })
+
+  it('opens Checkout immediately when autoStart is set', async () => {
+    api.fetchPaymentQuote.mockResolvedValue({
+      currency: 'eur',
+      amount: 460,
+      exponent: 2,
+      usdCents: 500,
+      estimate: true,
+      fetchedAt: '2026-11-02T00:00:00Z',
+    })
+    api.createCheckout.mockResolvedValue({ sessionId: 'cs_auto', clientSecret: 's', amount: 460, currency: 'eur' })
+    setup({ currency: 'eur', autoStart: true })
+
+    expect(await screen.findByText('Stripe Embedded Checkout')).toBeTruthy()
+    expect(api.createCheckout).toHaveBeenCalledWith(
+      signer,
+      expect.objectContaining({ currency: 'eur', expectedPriceUsd: 500 }),
+    )
+    expect(screen.queryByRole('button', { name: /^pay$/i })).toBeNull()
   })
 
   it('reports a paid-but-not-delivered order from the backend as needs_attention', async () => {

@@ -40,6 +40,8 @@ export default function StripePay({
   signer,
   tier,
   priceUsd,
+  currency: lockedCurrency,
+  autoStart,
   onPriceUsdChange,
   onResult,
   onError,
@@ -48,12 +50,15 @@ export default function StripePay({
   const [notice, setNotice] = useState<string | null>(null)
   const [previousAmount, setPreviousAmount] = useState<string | null>(null)
   const [phase, setPhase] = useState<Phase>({ name: 'choose' })
+  const [autoStartBlocked, setAutoStartBlocked] = useState(false)
+  const autoStarted = useRef(false)
   const abort = useRef<AbortController | null>(null)
   const rememberedCurrency = useCurrencyPreference((s) => s.currency)
   const setCurrency = useCurrencyPreference((s) => s.setCurrency)
   const [currencies, setCurrencies] = useState<string[]>(['usd'])
-  // A remembered currency the deployment no longer offers falls back to USD.
-  const currency = currencies.includes(rememberedCurrency) ? rememberedCurrency : 'usd'
+  // The first panel may have already chosen the currency. Otherwise fall back
+  // to the remembered card currency, or USD when the deployment dropped it.
+  const currency = lockedCurrency ?? (currencies.includes(rememberedCurrency) ? rememberedCurrency : 'usd')
   const seats = 'seats' in order ? order.seats : undefined
   // The quote is kept with the inputs it was asked for, so a stale one is ignored rather than cleared.
   const quoteKey = [currency, priceUsd, order.product, seats].join(':')
@@ -67,6 +72,8 @@ export default function StripePay({
   const quoteFailed = quoteFresh && quoteState.failed
 
   useEffect(() => {
+    // The first panel already picked the currency; no need for the list.
+    if (lockedCurrency) return
     let cancelled = false
     fetchPaymentCurrencies()
       .then((list) => {
@@ -78,7 +85,7 @@ export default function StripePay({
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [lockedCurrency])
 
   // The backend's FX estimate for a non-USD choice; re-asked when the price or the currency changes.
   useEffect(() => {
@@ -202,6 +209,9 @@ export default function StripePay({
       }
     } catch (err) {
       setPhase({ name: 'choose' })
+      // A failed auto-start falls back to the normal amount/Pay screen so the
+      // buyer can see the error (or the refreshed price) and try again.
+      setAutoStartBlocked(true)
       if (err instanceof PriceChanged) {
         // A buyer is never charged an amount they haven't seen: refresh it and ask again.
         if (price) setPreviousAmount(price)
@@ -212,6 +222,19 @@ export default function StripePay({
       }
     }
   }
+
+  // The first panel already showed the amount and the Stripe disclosure, so
+  // this screen goes straight to Checkout instead of asking for a second
+  // confirmation. A failed start falls back to the normal amount/Pay screen.
+  useEffect(() => {
+    if (!autoStart || autoStartBlocked || autoStarted.current) return
+    if (phase.name !== 'choose' || !publishableKey || priceUsd == null || price === null) return
+    autoStarted.current = true
+    // Defer past the effect so the auto-start does not cascade a render.
+    queueMicrotask(() => void accept())
+    // accept reads the current render's price/currency; the guard makes this one-shot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart, autoStartBlocked, phase.name, publishableKey, priceUsd, price])
 
   // Wake the poll sooner when the buyer returns from the hosted page.
   useEffect(() => {
@@ -250,6 +273,22 @@ export default function StripePay({
   }
   if (phase.name === 'still') return <StillConfirming />
 
+  if (
+    autoStart &&
+    !autoStartBlocked &&
+    !quoteFailed &&
+    publishableKey &&
+    (phase.name === 'choose' || phase.name === 'creating')
+  ) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-10 text-center">
+        <Loader2 size={20} className="animate-spin text-gray-400" />
+        <p className="text-sm font-semibold text-ink">Opening Stripe Checkout…</p>
+        <p className="text-xs text-gray-500">You'll complete the payment on Stripe's secure page.</p>
+      </div>
+    )
+  }
+
   if (!publishableKey || usdPrice === null) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -264,7 +303,7 @@ export default function StripePay({
     <div className="flex flex-col gap-4">
       {notice && <p className="text-sm font-semibold text-amber-700">{notice}</p>}
 
-      {currencies.length > 1 && (
+      {!lockedCurrency && currencies.length > 1 && (
         <label className="flex items-center justify-between gap-3 text-sm text-gray-600">
           Pay in
           <select
