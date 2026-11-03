@@ -42,7 +42,7 @@ export const useMethodPreference = create<MethodPreference>()(
   ),
 )
 
-/** The card currency the buyer chose last; usd until they pick another. */
+/** The payment currency the buyer chose last; sats (Bitcoin) until they pick another. */
 interface CurrencyPreference {
   currency: string
   setCurrency: (currency: string) => void
@@ -51,7 +51,7 @@ interface CurrencyPreference {
 export const useCurrencyPreference = create<CurrencyPreference>()(
   persist(
     (set) => ({
-      currency: 'usd',
+      currency: 'sats',
       setCurrency: (currency) => set({ currency }),
     }),
     { name: 'mailstr.pay.currency', storage: storage() },
