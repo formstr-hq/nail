@@ -60,6 +60,13 @@ interface Group {
   meta: ChunkMeta
   createdAt: number
   parts: Map<number, { content: string; wrapId: string; wrapSecret?: string }>
+  /**
+   * Wraps carrying an identical copy of a slice we already have. A bridge
+   * retry (lost LMTP ACK, restart) re-wraps the same message with fresh
+   * ephemeral keys, so the content matches but the wrap id does not. Keep them
+   * so delete-forever can purge every copy.
+   */
+  extra: Array<{ wrapId: string; wrapSecret?: string }>
 }
 
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000
@@ -97,7 +104,7 @@ export class ChunkAssembler {
 
     let group = this.groups.get(meta.msgid)
     if (!group) {
-      group = { meta, createdAt: this.now(), parts: new Map() }
+      group = { meta, createdAt: this.now(), parts: new Map(), extra: [] }
       this.groups.set(meta.msgid, group)
     } else if (
       group.meta.total !== meta.total ||
@@ -111,11 +118,18 @@ export class ChunkAssembler {
 
     const previous = group.parts.get(meta.index)
     if (previous) {
-      // Same index twice with different bytes is a hard conflict. An identical
-      // replay (two relays holding the same event) is simply ignored.
-      if (previous.content !== part.content || previous.wrapId !== part.wrapId) {
+      // Same index with different bytes is a hard conflict.
+      if (previous.content !== part.content) {
         this.groups.delete(meta.msgid)
         return { status: 'invalid', reason: `conflicting part ${meta.index}` }
+      }
+      // Identical content, different wrap id: a re-published copy. Keep the
+      // first for assembly and remember the extra wrap for deletion.
+      if (
+        part.wrapId !== previous.wrapId &&
+        !group.extra.some((e) => e.wrapId === part.wrapId)
+      ) {
+        group.extra.push({ wrapId: part.wrapId, wrapSecret: part.wrapSecret })
       }
       return { status: 'buffered', have: group.parts.size, total: meta.total }
     }
@@ -153,9 +167,13 @@ export class ChunkAssembler {
 
     this.rememberCompleted(meta.msgid)
 
+    const extras = group.extra
     const wrapSecrets: WrapSecret[] = []
     for (const p of ordered) {
       if (p?.wrapSecret) wrapSecrets.push({ id: p.wrapId, secret: p.wrapSecret })
+    }
+    for (const e of extras) {
+      if (e.wrapSecret) wrapSecrets.push({ id: e.wrapId, secret: e.wrapSecret })
     }
 
     return {
@@ -164,7 +182,10 @@ export class ChunkAssembler {
         msgid: meta.msgid,
         raw: result.raw,
         id: ordered[0]!.wrapId,
-        wrapIds: ordered.map((p) => p!.wrapId),
+        wrapIds: [
+          ...ordered.map((p) => p!.wrapId),
+          ...extras.map((e) => e.wrapId),
+        ],
         wrapSecrets,
       },
     }

@@ -2081,3 +2081,27 @@ spam signal were not.
 - client: `tsc -b` clean, 487 tests (27 new in folders.test.ts and receive).
 - bridge: `tsc` clean, 160 tests (6 new in spam-marker.test.ts, plus marker
   preservation in stripAttachments).
+
+## 2026-11-04 — Chunked mail: long-message LMTP timeout and retry amplification
+
+A 1 MB staging test split into 38 parts and published them sequentially. That
+took longer than `smtp-server`'s 60 s default socket timeout, so Postfix saw
+`421 Timeout`, deferred the message, and retried — and every retry re-wrapped
+and re-published all 38 parts (three "over the wrap ceiling" lines, one
+successful publish, queue still deferred).
+
+- The LMTP server now sets `socketTimeout` from `LMTP_SOCKET_TIMEOUT_MS`
+  (default 300 s) with a 30 s close timeout.
+- `publishChunkedMail` publishes four parts in flight instead of one, keeping a
+  64-part message well inside the socket timeout without opening scores of
+  sockets at once.
+- A successfully published msgid is cached for one hour and re-ACKed without
+  re-publishing. Postfix retries whenever the 250 is lost; the retry must not
+  duplicate the message on relays.
+- The client assembler now treats an identical slice carried by a different
+  wrap id as a re-published copy, not a conflict. It keeps the first copy for
+  assembly and includes every wrap/key in `wrapIds`/`wrapSecrets`, so
+  delete-forever purges all of them.
+
+Verified with a 1 MB body: 38 parts, one logical message, and the LMTP
+transaction completes in time. bridge: 174 tests; client: 500 tests.

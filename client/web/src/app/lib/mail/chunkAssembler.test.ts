@@ -74,6 +74,34 @@ describe('ChunkAssembler', () => {
     })
   })
 
+  it('accepts a re-published part with a new wrap id as the same slice', async () => {
+    const assembler = new ChunkAssembler()
+    const parts = await partsFor(BIG)
+
+    // A bridge retry re-wraps the same slice with a fresh ephemeral key: the
+    // content matches but the wrap id does not. That is a duplicate, not a
+    // conflict, and the extra wrap must still be deletable.
+    const retry = { ...parts[0], wrapId: 'retry-wrap-0', wrapSecret: 'retry-secret-0' }
+    await assembler.add(parts[0])
+    await expect(assembler.add(retry)).resolves.toEqual({
+      status: 'buffered',
+      have: 1,
+      total: parts.length,
+    })
+
+    let result
+    for (const part of parts.slice(1)) result = await assembler.add(part)
+
+    expect(result?.status).toBe('complete')
+    if (result?.status !== 'complete') return
+    expect(result.message.raw).toBe(BIG)
+    expect(result.message.wrapIds).toContain(retry.wrapId)
+    expect(result.message.wrapSecrets).toContainEqual({
+      id: retry.wrapId,
+      secret: retry.wrapSecret,
+    })
+  })
+
   it('rejects a second part at the same index with different bytes', async () => {
     const assembler = new ChunkAssembler()
     const parts = await partsFor(BIG)

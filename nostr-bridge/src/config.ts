@@ -98,6 +98,12 @@ export const config = {
   // change the measured rumor size and could push an event past the cap.
   maxChunkCount: Math.min(999, Number(process.env.MAX_CHUNK_COUNT ?? 64) || 64),
 
+  // How long the LMTP socket stays open. `smtp-server` defaults to 60 s, but a
+  // 38-part chunked publish (relay round-trips) exceeded that: Postfix got 421
+  // and retried, re-publishing every part. Publishing is parallelised, and this
+  // is the backstop for the 64-part cap on slow relays.
+  lmtpSocketTimeoutMs: Number(process.env.LMTP_SOCKET_TIMEOUT_MS ?? 300_000),
+
   // Rollout gate. A chunked message is N kind-1059 events carrying
   // `["chunk", …]`; a client that does not reassemble them renders N broken
   // messages, which is worse than a bounce. Off until the recipient client
@@ -176,7 +182,8 @@ export function logEffectiveLimits(): void {
       `relay event cap ${kib(config.relayMaxEventBytes)} ` +
       `(raw-message ceiling ${kib(config.maxWrappableMessageBytes)}; ` +
       "mail above it is delivered without attachments), " +
-      `chunked delivery ${config.chunkedMailEnabled ? `on (max ${config.maxChunkCount} parts)` : "off"}`,
+      `chunked delivery ${config.chunkedMailEnabled ? `on (max ${config.maxChunkCount} parts)` : "off"}, ` +
+      `lmtp socket timeout ${config.lmtpSocketTimeoutMs / 1000}s`,
   );
 }
 

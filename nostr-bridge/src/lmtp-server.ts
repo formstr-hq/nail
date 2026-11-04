@@ -46,6 +46,10 @@ export function createLmtpServer(userResolver: UserResolver): SMTPServer {
     lmtp: true,
     secure: false,
     disabledCommands: ["AUTH", "STARTTLS"],
+    // A chunked publish can outlive the 60 s default before it ACKs; Postfix
+    // would then 421 and retry, re-publishing every part.
+    socketTimeout: config.lmtpSocketTimeoutMs,
+    closeTimeout: 30_000,
     onData(stream, session, callback) {
       const chunks: Buffer[] = [];
       let received = 0;
