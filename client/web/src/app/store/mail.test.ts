@@ -43,6 +43,35 @@ beforeEach(() => {
 })
 
 describe('delete forever, locally', () => {
+  it('marks every part of a chunked message as seen after assembly', () => {
+    const first = '1'.repeat(64)
+    const second = '2'.repeat(64)
+    useMailStore.getState().addEmail({ ...email(first), wrapIds: [first, second] })
+
+    const after = useMailStore.getState()
+    // Both are marked: skipping only chunk 0 would leave the others to decode
+    // into an assembler that can never complete, losing the mail on reload.
+    expect(after.seenIds.has(first)).toBe(true)
+    expect(after.seenIds.has(second)).toBe(true)
+  })
+
+  it('markDeleted purges and tombstones every part of a chunked message', () => {
+    const first = '1'.repeat(64)
+    const second = '2'.repeat(64)
+    const s = useMailStore.getState()
+    s.addEmail({ ...email(first), wrapIds: [first, second] })
+    s.saveWrapKey(first, 'aa'.repeat(32))
+    s.saveWrapKey(second, 'bb'.repeat(32))
+
+    useMailStore.getState().markDeleted(first, [second])
+
+    const after = useMailStore.getState()
+    expect(after.wrapKeys[first]).toBeUndefined()
+    expect(after.wrapKeys[second]).toBeUndefined()
+    expect(after.deletedIds.has(first)).toBe(true)
+    expect(after.deletedIds.has(second)).toBe(true)
+  })
+
   it('markDeleted purges the mail, drops its wrap key, and returns deleted flags for publishing', () => {
     const s = useMailStore.getState()
     s.addEmail(email())

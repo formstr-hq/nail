@@ -107,9 +107,17 @@ export function useMailActions() {
       const deleteStore = useMailStore.getState()
       if (deleteStore.deletedIds.has(id) || deleteStore.mailState[id]?.deleted) return
 
-      // Read the wrap key before markDeleted purges it.
-      const wrapSecret = useMailStore.getState().wrapKeys[id]
-      const merged = useMailStore.getState().markDeleted(id)
+      // Read the wrap keys before markDeleted purges them. A chunked message
+      // has one wrap (and one embedded ephemeral key) per part; deleting only
+      // chunk 0 would leave the rest readable on relays, so the next replay
+      // would resurrect the mail from part 1 upward.
+      const before = useMailStore.getState()
+      const wrapIds = before.emails[id]?.wrapIds ?? []
+      const secrets = [id, ...wrapIds].map((wrapId) => ({
+        giftwrapId: wrapId,
+        wrapSecret: before.wrapKeys[wrapId],
+      }))
+      const merged = useMailStore.getState().markDeleted(id, wrapIds)
       const session = sessionEpoch()
 
       void (async () => {
@@ -128,12 +136,14 @@ export function useMailActions() {
           }
         }
         try {
-          await publishGiftwrapDeletion({
-            giftwrapId: id,
-            wrapSecret,
-            pubkey: account.pubkey,
-            active,
-          })
+          for (const secret of secrets) {
+            await publishGiftwrapDeletion({
+              giftwrapId: secret.giftwrapId,
+              wrapSecret: secret.wrapSecret,
+              pubkey: account.pubkey,
+              active,
+            })
+          }
         } catch (e) {
           // Local removal stands; a failed relay round just means relays keep
           // ciphertext they cannot read, and the tombstone keeps it hidden.

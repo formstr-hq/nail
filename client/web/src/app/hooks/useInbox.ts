@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { useAccountStore } from '@/app/store/account'
 import { useMailStore } from '@/app/store/mail'
 import { getLocalRelay, syncAccountRelays, localRelayBootError } from '@/app/lib/nostr/localRelay'
-import { decodeGiftWrap } from '@/app/lib/mail/receive'
+import { decodeOrAssemble } from '@/app/lib/mail/receive'
+import { ChunkAssembler } from '@/app/lib/mail/chunkAssembler'
 import { DecodeQueue } from '@/app/lib/mail/decodeQueue'
 import { RelayBootWatchdog } from '@/app/lib/nostr/relayWatchdog'
 import { isCurrentSession, sessionEpoch } from '@/app/store/sessionEpoch'
@@ -70,15 +71,21 @@ export function useInbox() {
     })
     watchdog.start()
 
+    // Groups split messages across their wraps. Per session: relays replay the
+    // same events on reconnect, so the groups rebuild themselves, and partial
+    // ciphertext is never persisted.
+    const assembler = new ChunkAssembler()
     // The bounded decode pump, extracted into a testable service
     // (lib/mail/decodeQueue.ts). The hook only wires callbacks.
     const queue = new DecodeQueue(MAX_CONCURRENT_DECRYPTS, {
-      onEmail: (email, wrapSecret) => {
+      onEmail: (email, wrapSecrets) => {
         if (!alive || !isCurrentSession(session)) return
-        // Stash the wrap author's key before the email itself: delete-
-        // forever needs it on hand, and a crash between the two must not
-        // strand the mail as undeletable.
-        if (wrapSecret) useMailStore.getState().saveWrapKey(email.id, wrapSecret)
+        // Stash the wrap authors' keys before the email itself: delete-
+        // forever needs them on hand, and a crash between the two must not
+        // strand the mail as undeletable. A chunked message has one per part.
+        for (const { id, secret } of wrapSecrets ?? []) {
+          useMailStore.getState().saveWrapKey(id, secret)
+        }
         addEmail(email)
       },
       onFailure: (event, reason) => {
@@ -129,7 +136,13 @@ export function useInbox() {
           // local cache included) will keep serving the wrap; the tombstone,
           // not the decode-then-drop path, is what pays no signer round-trip.
           if (useMailStore.getState().deletedIds.has(event.id)) return
-          queue.push(event, (e) => decodeGiftWrap(e, signer, account!.pubkey))
+          queue.push(event, async (e) => {
+            const outcome = await decodeOrAssemble(e, signer, account!.pubkey, assembler)
+            // A part that is waiting for its siblings is neither an email nor
+            // a failure; the queue must count it done and stay silent.
+            if ('buffered' in outcome) return { ignored: true }
+            return outcome
+          })
         },
       })
 
@@ -166,6 +179,7 @@ export function useInbox() {
       alive = false
       watchdog.stop()
       queue.stop()
+      assembler.reset()
       cleanup?.()
     }
   }, [account, active, addEmail, attempt])

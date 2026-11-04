@@ -89,6 +89,23 @@ export const config = {
   // stock 128 MB override that means keeping this at 8 MB or less.
   maxMessageBytes: Number(process.env.MAIL_MAX_BYTES ?? 8 * 1024 * 1024),
 
+  // Hard cap on how many chunks one message may be split into. Chunking makes
+  // a large body deliverable, but it also multiplies relay writes (each part
+  // goes to every relay), so a multi-megabyte message is refused permanently
+  // rather than spending thousands of events on a single recipient. 64 parts
+  // is ~1.8 MB of ASCII body at the 64 KiB event ceiling. Clamped to 999
+  // because chunk indices are zero-padded to 3 digits: a 4-digit index would
+  // change the measured rumor size and could push an event past the cap.
+  maxChunkCount: Math.min(999, Number(process.env.MAX_CHUNK_COUNT ?? 64) || 64),
+
+  // Rollout gate. A chunked message is N kind-1059 events carrying
+  // `["chunk", …]`; a client that does not reassemble them renders N broken
+  // messages, which is worse than a bounce. Off until the recipient client
+  // ships reassembly (see protocol/chunked-mail.ts), then set
+  // CHUNKED_MAIL_ENABLED=true. Oversized mail stays on the old 552 path while
+  // this is false.
+  chunkedMailEnabled: (process.env.CHUNKED_MAIL_ENABLED ?? "false").toLowerCase() === "true",
+
   // Largest kind-1059 wrap event the relays will carry. 100 KiB matches
   // relay.formstr.app's measured content cap (102400 — our own relay, so it
   // is the one that matters most). nos.lol and relay.nostr.com are stricter
@@ -158,7 +175,8 @@ export function logEffectiveLimits(): void {
       `max inbound message ${kib(config.maxMessageBytes)}, ` +
       `relay event cap ${kib(config.relayMaxEventBytes)} ` +
       `(raw-message ceiling ${kib(config.maxWrappableMessageBytes)}; ` +
-      "mail above it is delivered without attachments)",
+      "mail above it is delivered without attachments), " +
+      `chunked delivery ${config.chunkedMailEnabled ? `on (max ${config.maxChunkCount} parts)` : "off"}`,
   );
 }
 

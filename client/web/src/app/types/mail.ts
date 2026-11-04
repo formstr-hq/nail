@@ -80,6 +80,12 @@ export interface RumorDebug {
 
 export interface Email {
   id: string               // Kind 1059 gift-wrap event ID
+  /**
+   * Wrap ids for a chunked message, in order. `id` is chunk 0; each part has
+   * its own wrap and its own ephemeral key, so permanent delete must publish
+   * one NIP-09 per id. Absent for ordinary single-wrap mail.
+   */
+  wrapIds?: string[]
   messageId?: string       // RFC 2822 Message-ID header
   inReplyTo?: string       // RFC 2822 In-Reply-To header
   references?: string[]    // RFC 2822 References header

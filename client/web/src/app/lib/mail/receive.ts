@@ -3,8 +3,12 @@ import {
   unwrapAndVerify,
   messageStringToBytes,
   parseImetaTags,
+  readChunkMeta,
   type ProtocolSigner,
+  type Rumor,
+  type UnwrapResult,
 } from '@protocol'
+import type { ChunkAssembler, WrapSecret } from './chunkAssembler'
 import { parseRfc2822 } from './rfc2822'
 import type { Attachment, Email } from '@/app/types/mail'
 
@@ -132,23 +136,119 @@ export async function decodeGiftWrap(
   signer: ProtocolSigner,
   ownPubkey: string | null = null,
 ): Promise<DecodeResult> {
+  const result = await unwrapGiftWrap(event, signer)
+  if (!result.ok) return { failure: failureFor(result.reason) }
+
+  const decoded = await decodeRumor(result.rumor, result.seal, ownPubkey, {
+    id: event.id,
+  })
+  if ('failure' in decoded) return decoded
+  return result.wrapSecret ? { ...decoded, wrapSecret: result.wrapSecret } : decoded
+}
+
+/** Decode an already-unwrapped rumor (a full RFC 2822 message). */
+export type RumorDecodeResult = { email: Email } | { failure: DecodeFailure }
+
+/**
+ * Unwrap and verify one gift wrap.
+ *
+ * Split out from the RFC 2822 work because a chunked message's rumor carries a
+ * byte range, not a message: the inbox must inspect the tags and buffer the
+ * part before anything is parsed.
+ */
+export async function unwrapGiftWrap(
+  event: Event,
+  signer: ProtocolSigner,
+): Promise<UnwrapResult> {
   // No staleness bound here: unlike the bridge, a mailbox legitimately shows
   // mail from months ago, and the replay concern (re-relaying a message) does
   // not apply to rendering one.
-  const result = await unwrapAndVerify(event, signer, { maxAgeSeconds: Infinity })
+  return unwrapAndVerify(event, signer, { maxAgeSeconds: Infinity })
+}
 
-  if (!result.ok) {
-    return {
-      failure: {
-        reason: result.reason,
-        routine: result.reason === 'not-for-us',
-        retryable: result.reason === 'signer-error',
-      },
-    }
+function failureFor(reason: string): DecodeFailure {
+  return {
+    reason,
+    routine: reason === 'not-for-us',
+    retryable: reason === 'signer-error',
+  }
+}
+
+/** Outcome of the inbox decode step, which may buffer a chunk instead. */
+export type InboxDecodeOutcome =
+  | { email: Email; wrapSecrets: WrapSecret[] }
+  | { buffered: { have: number; total: number } }
+  /** A part already assembled and delivered (relay replay). */
+  | { ignored: true }
+  | { failure: DecodeFailure }
+
+/**
+ * Inbox entry point: decode a wrap, or buffer its chunk.
+ *
+ * A chunk's content is a byte range, so it must be intercepted here rather
+ * than handed to `decodeRumor`/`parseRfc2822`. Only the completed message is
+ * parsed, with chunk 0's wrap id as the email id and every part listed in
+ * `wrapIds` for delete-forever.
+ */
+export async function decodeOrAssemble(
+  event: Event,
+  signer: ProtocolSigner,
+  ownPubkey: string | null,
+  assembler: ChunkAssembler,
+): Promise<InboxDecodeOutcome> {
+  const result = await unwrapGiftWrap(event, signer)
+  if (!result.ok) return { failure: failureFor(result.reason) }
+
+  const { rumor, seal, wrapSecret } = result
+  const wrapSecrets: WrapSecret[] = wrapSecret
+    ? [{ id: event.id, secret: wrapSecret }]
+    : []
+
+  if (!readChunkMeta(rumor.tags)) {
+    const decoded = await decodeRumor(rumor, seal, ownPubkey, { id: event.id })
+    return 'failure' in decoded ? decoded : { email: decoded.email, wrapSecrets }
   }
 
-  const { seal, rumor, wrapSecret } = result
+  const added = await assembler.add({
+    tags: rumor.tags,
+    content: rumor.content,
+    wrapId: event.id,
+    wrapSecret,
+  })
 
+  if (added.status === 'buffered') {
+    return { buffered: { have: added.have, total: added.total } }
+  }
+  if (added.status === 'duplicate') return { ignored: true }
+  if (added.status === 'invalid') {
+    return { failure: { reason: `chunk: ${added.reason}`, routine: false } }
+  }
+
+  const decoded = await decodeRumor(
+    { ...rumor, content: added.message.raw },
+    seal,
+    ownPubkey,
+    { id: added.message.id, wrapIds: added.message.wrapIds },
+  )
+  return 'failure' in decoded
+    ? decoded
+    : { email: decoded.email, wrapSecrets: added.message.wrapSecrets }
+}
+
+/**
+ * Turn a verified rumor into a displayable email.
+ *
+ * `opts.id` is the wrap event id that becomes `Email.id`; for a chunked
+ * message it is chunk 0's wrap id and `wrapIds` lists the rest, so the
+ * existing wrap-keyed state (delete, read flags) keeps working while delete
+ * can reach every part.
+ */
+export async function decodeRumor(
+  rumor: Rumor,
+  seal: Event,
+  ownPubkey: string | null,
+  opts: { id: string; wrapIds?: string[] },
+): Promise<RumorDecodeResult> {
   try {
     // §4: content is a byte string. postal-mime must be handed real bytes —
     // given a string it re-encodes to UTF-8 before applying the declared
@@ -192,9 +292,9 @@ export async function decodeGiftWrap(
     const ccAddresses = (parsed.cc ?? []).map(toDisplay)
 
     return {
-      wrapSecret,
       email: {
-        id: event.id,
+        id: opts.id,
+        ...(opts.wrapIds ? { wrapIds: opts.wrapIds } : {}),
         messageId: parsed.messageId,
         inReplyTo: parsed.inReplyTo,
         references: parsed.references?.split(/\s+/).filter(Boolean),

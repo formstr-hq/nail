@@ -62,6 +62,8 @@ export function buildMailRumor(params: {
   deliverTo?: string[];
   /** The ephemeral key that will sign the outer wrap; see WRAP_KEY_TAG. */
   wrapSecret?: Uint8Array;
+  /** Kind-specific tags appended after the mail's own (e.g. chunk metadata). */
+  extraTags?: string[][];
 }): Rumor {
   return buildRumor({
     senderPubkey: params.senderPubkey,
@@ -71,6 +73,7 @@ export function buildMailRumor(params: {
     extraTags: [
       ...(params.deliverTo ?? []).map((address) => ["deliver", address]),
       ...(params.wrapSecret ? [[WRAP_KEY_TAG, bytesToHex(params.wrapSecret)]] : []),
+      ...(params.extraTags ?? []),
     ],
   });
 }
