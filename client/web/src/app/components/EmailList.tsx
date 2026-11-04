@@ -6,6 +6,8 @@ import { useEffectiveSenders } from '@/app/hooks/useEffectiveSenders'
 import { matchesAlias } from '@/app/lib/mail/aliasFilter'
 import { showsSigningKey } from '@/app/lib/mail/senderProof'
 import type { Email, EmailFolder } from '@/app/types/mail'
+import { useSettingsStore } from '@/app/store/settings'
+import { foldersOf, resolveFolder } from '@/app/lib/mail/folders'
 import type { InboxStatus } from '@/app/hooks/useInbox'
 import { useMemo, useState } from 'react'
 import { cx } from '@/app/components/ui/cx'
@@ -158,6 +160,16 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
     clearSelectionClearedReason,
   } = useMailStore()
   const myPubkey = useAccountStore((s) => s.account?.pubkey)
+  const settings = useSettingsStore((s) => s.settings)
+  const folders = useMemo(() => foldersOf(settings), [settings])
+  const folderLabel =
+    folders.find((f) => f.id === folder)?.name ??
+    FOLDER_LABEL[folder as EmailFolder] ??
+    folder
+  const emptyCopy = EMPTY_COPY[folder as EmailFolder] ?? {
+    title: 'Nothing here',
+    body: 'No messages in this folder.',
+  }
   const effectiveFrom = useEffectiveSenders()
   const { deleteForever } = useMailActions()
   // Spin the icon briefly on tap so the refresh reads as "doing something" even
@@ -177,20 +189,19 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
           // reflects the inbox the user picked.
           if (!matchesAlias(e, inboxFilter, effectiveFrom.get(e.id))) return false
           const flags = mailState[e.id]
-          const filed = flags?.folder
-          const spam = e.labels.includes('spam')
-          // Spam stays server-side and surfaces only under Spam.
-          if (folder === 'spam') return spam
-          if (spam) return false
-          // An explicit folder wins over the natural mailbox; `inbox` is the
-          // implicit default and is not stored.
-          if (filed && filed !== 'inbox') return folder === filed
-          // Sent = the self-copy we wrap to ourselves; Inbox = everything else.
+          // One resolver for the whole spec: explicit folder (including an
+          // explicit 'inbox' override), then the first matching folder by
+          // position. Spam is an ordinary match, not a label.
+          const resolved = resolveFolder(e, flags, folders)
+          if (resolved) return folder === resolved
+          // Unfiled: the natural mailbox. Sent = the self-copy we wrap to
+          // ourselves; Inbox = everything else.
           if (folder === 'sent') return e.senderPubkey === myPubkey
-          return e.senderPubkey !== myPubkey
+          if (folder === 'inbox') return e.senderPubkey !== myPubkey
+          return false
         })
         .sort((a, b) => b.timestamp - a.timestamp),
-    [emails, mailState, folder, inboxFilter, myPubkey, effectiveFrom],
+    [emails, mailState, folder, folders, inboxFilter, myPubkey, effectiveFrom],
   )
 
   const filtered = useMemo(() => {
@@ -214,7 +225,7 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
     <div className="flex h-full flex-col overflow-hidden bg-surface-list">
       <header className="border-b border-border px-3.5 py-3">
         <div className="flex items-center justify-between pb-2">
-          <span className="eyebrow">{FOLDER_LABEL[folder]}</span>
+          <span className="eyebrow">{folderLabel}</span>
           <div className="flex items-center gap-2">
             {unread > 0 && (
               <span className="font-mono text-[10px] font-semibold tabular-nums text-primary">
@@ -246,7 +257,7 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search mail"
-            aria-label={`Search ${FOLDER_LABEL[folder]}`}
+            aria-label={`Search ${folderLabel}`}
             className="h-8 w-full rounded-md border border-border bg-card pl-8 pr-2.5 text-[12px] text-foreground placeholder:text-subtle focus:outline-none"
           />
         </div>
@@ -294,7 +305,7 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
         <ListState
           icon={<SearchIcon className="h-6 w-6" />}
           title="No matches"
-          body={`Nothing in ${FOLDER_LABEL[folder]} matches “${query.trim()}”.`}
+          body={`Nothing in ${folderLabel} matches “${query.trim()}”.`}
           action={
             <Button size="sm" onClick={() => setQuery('')} className="mt-1">
               Clear search
@@ -316,8 +327,8 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
       ) : (
         <ListState
           icon={<InboxIcon className="h-6 w-6" />}
-          title={EMPTY_COPY[folder].title}
-          body={EMPTY_COPY[folder].body}
+          title={emptyCopy.title}
+          body={emptyCopy.body}
         />
       )}
     </div>

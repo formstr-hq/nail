@@ -13,6 +13,7 @@ export type SectionId =
   | 'workspace'
   | 'relays'
   | 'composing'
+  | 'folders'
   | 'encryption'
   | 'security'
   | 'appearance'
@@ -23,6 +24,7 @@ export const SECTIONS: { id: SectionId; label: string; icon: typeof AtSignIcon }
   { id: 'workspace', label: 'Workspace', icon: InboxIcon },
   { id: 'relays', label: 'Relays', icon: InboxIcon },
   { id: 'composing', label: 'Composing', icon: PenIcon },
+  { id: 'folders', label: 'Folders & labels', icon: InboxIcon },
   { id: 'encryption', label: 'Encryption', icon: LockIcon },
   { id: 'security', label: 'Security', icon: KeyIcon },
   { id: 'appearance', label: 'Appearance', icon: SunIcon },

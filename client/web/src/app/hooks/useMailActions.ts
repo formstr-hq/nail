@@ -89,9 +89,35 @@ export function useMailActions() {
     archive: useCallback((id: string) => apply(id, { folder: 'archive' }), [apply]),
     unarchive: useCallback((id: string) => apply(id, { folder: undefined }), [apply]),
     trash: useCallback((id: string) => apply(id, { folder: 'trash' }), [apply]),
-    // Restore drops the folder, so the mail returns to its natural mailbox —
-    // Inbox, or Sent when the user authored it — whether it was archived or trashed.
+    // Restore drops the folder, so the mail returns to its resolved mailbox —
+    // Inbox, Sent, or a folder `match` (a rescued spam message deliberately
+    // uses `notSpam`, which stores an explicit inbox instead).
     restore: useCallback((id: string) => apply(id, { folder: undefined }), [apply]),
+
+    /** File into any folder id, including custom ones. */
+    moveToFolder: useCallback(
+      (id: string, folder: string) => apply(id, { folder }),
+      [apply],
+    ),
+    /**
+     * Explicit Inbox state. This is the only way to override a folder `match`
+     * (the Spam folder), because an absent folder would match again on the
+     * next decode. Stored as `folder: 'inbox'`, per the spec's precedence.
+     */
+    notSpam: useCallback((id: string) => apply(id, { folder: 'inbox' }), [apply]),
+    markSpam: useCallback((id: string) => apply(id, { folder: 'spam' }), [apply]),
+    /** Add or remove an explicit label. Matched labels cannot be removed this
+     *  way — they are recomputed from the folder/label rule on every decode. */
+    toggleLabel: useCallback(
+      (id: string, labelId: string) => {
+        const current = useMailStore.getState().mailState[id]?.labels ?? []
+        const labels = current.includes(labelId)
+          ? current.filter((l) => l !== labelId)
+          : [...current, labelId]
+        apply(id, { labels })
+      },
+      [apply],
+    ),
 
     /**
      * Permanent delete. The mail vanishes locally at once (tombstoned so no

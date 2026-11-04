@@ -1,22 +1,15 @@
-import { useMailStore, isFiled } from '@/app/store/mail'
+import { useMailStore } from '@/app/store/mail'
 import { useAccountStore } from '@/app/store/account'
 import { useEffectiveSenders } from '@/app/hooks/useEffectiveSenders'
 import { AccountSwitcher } from '@/app/components/AccountSwitcher'
 import { matchesAlias } from '@/app/lib/mail/aliasFilter'
-import type { EmailFolder } from '@/app/types/mail'
+import { useSettingsStore } from '@/app/store/settings'
+import { foldersOf, resolveFolder, sortFolders } from '@/app/lib/mail/folders'
 import type { InboxStatus } from '@/app/hooks/useInbox'
 import { BrandGlyph, PenIcon, SettingsIcon, InboxIcon, AtSignIcon, PlusIcon } from '@/app/components/ui/icons'
 import calendarAppIcon from '@/app/assets/calendar-app-icon.png'
 import { Button, IconButton } from '@/app/components/ui/Button'
 import { ThemeToggle } from '@/app/components/ui/ThemeToggle'
-
-const FOLDERS: { id: EmailFolder; label: string }[] = [
-  { id: 'inbox', label: 'Inbox' },
-  { id: 'sent', label: 'Sent' },
-  { id: 'archive', label: 'Archive' },
-  { id: 'spam', label: 'Spam' },
-  { id: 'trash', label: 'Trash' },
-]
 
 interface SidebarProps {
   onCompose: () => void
@@ -70,6 +63,8 @@ function RelayState({ status }: { status: InboxStatus }) {
 
 export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onBuyAddress, aliases, status }: SidebarProps) {
   const { folder, setFolder, emails, mailState, inboxFilter, setInboxFilter } = useMailStore()
+  const settings = useSettingsStore((s) => s.settings)
+  const folders = sortFolders(foldersOf(settings))
   const { account } = useAccountStore()
   // Effective senders, so an unbacked (possibly spoofed) header never files a
   // message under one of the user's aliases.
@@ -84,9 +79,11 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onB
   const unread = Object.values(emails).filter((e) => {
     const flags = mailState[e.id]
     const read = flags?.read ?? e.read
-    if (isFiled(flags) || e.labels.includes('spam') || e.senderPubkey === myPubkey || read) {
-      return false
-    }
+    if (read || e.senderPubkey === myPubkey) return false
+    // Inbox is the natural, unfiled mailbox plus an explicit 'inbox'
+    // override. A match that files elsewhere (Spam included) does not count.
+    const resolved = resolveFolder(e, flags, folders)
+    if (resolved && resolved !== 'inbox') return false
     return matchesAlias(e, inboxFilter, effectiveFrom.get(e.id))
   }).length
 
@@ -160,7 +157,7 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onB
 
         <nav aria-label="Mail folders" className="flex flex-col gap-px px-2">
           <div className="eyebrow px-2 pb-1.5">Folders</div>
-          {FOLDERS.map((f) => {
+          {folders.map((f) => {
             const active = folder === f.id
             return (
               <button
@@ -176,7 +173,7 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onB
                     : 'border-l-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                 ].join(' ')}
               >
-                <span>{f.label}</span>
+                <span>{f.name}</span>
                 {f.id === 'inbox' && unread > 0 && (
                   <span
                     className={[

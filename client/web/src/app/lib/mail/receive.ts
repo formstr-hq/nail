@@ -10,6 +10,7 @@ import {
 } from '@protocol'
 import type { ChunkAssembler, WrapSecret } from './chunkAssembler'
 import { parseRfc2822 } from './rfc2822'
+import { spamFromHeaders } from './folders'
 import type { Attachment, Email } from '@/app/types/mail'
 
 /** The shape postal-mime hands back; imported structurally to avoid a dep. */
@@ -328,6 +329,10 @@ export async function decodeRumor(
         read: ownPubkey !== null && seal.pubkey === ownPubkey,
         labelEventIds: [],
         labels: [],
+        // Derived from the receiving server's marker, never stored: a folder
+        // `match: { spam: true }` files it (see lib/mail/folders.ts), and an
+        // explicit folder overrides that match ("Not spam").
+        spam: spamFromHeaders(parsed.headers),
         // Ground truth for the reader's debug disclosure — what actually
         // arrived, before any RFC 2822 interpretation.
         debug: {

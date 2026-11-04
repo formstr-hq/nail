@@ -2035,3 +2035,49 @@ bridge listener refuses a chunk part rather than injecting a truncated message.
 - bridge: `pnpm build` clean, 171 tests (12 new in `chunked-mail.test.ts`).
 - client: `tsc -b` clean, 455 tests (9 new in `chunkAssembler.test.ts`, plus
   decode-queue and store coverage for multi-part delete).
+## 2026-11-04 — Folder spec implemented; spam becomes a folder rule
+
+`docs/nip-nostr-mail-metadata.md` existed but only the kind-34578 `folder`/
+`labels` fields were implemented; folder definitions, the match engine, and the
+spam signal were not.
+
+### Protocol
+
+- `match` gains `spam` (the receiving server's verdict). An explicit `folder`,
+  including `"inbox"`, always wins over a match — that is what makes "Not spam"
+  a normal filing action rather than a second flag.
+- `docs/nip-nostr-mail-metadata.md` updated to match exactly.
+
+### Client
+
+- `lib/mail/folders.ts`: one pure engine — `matchesMatch` (from / subject /
+  has_attachment / spam, AND across fields, OR within), `resolveFolder`
+  (explicit → first match by position → unfiled), `resolveLabels` (explicit ∪
+  matched), plus default folders, id/name/colour helpers and validation.
+- Settings carry `folders`/`labels`; defaults are Inbox, Sent, Archive, Spam
+  (`match: { spam: true }`), Trash. Inbox/Sent are always present.
+- The sidebar, list, unread badge and reader all use the resolver. Spam is no
+  longer `labels.includes('spam')`; it is a folder match, and the reader shows
+  a "Not spam" action that stores an explicit `folder: "inbox"`.
+- New Settings → Folders & labels editor: rename, colour, order, match rules,
+  add/remove (built-ins protected, non-empty folders cannot be removed), and
+  label definitions. Explicit labels can be toggled from the reader; matched
+  labels are shown as rule-derived and cannot be removed by hand.
+- `Email.spam` is derived at decode time from headers, never synced.
+
+### Server / bridge
+
+- The bridge stamps `X-Bridge-Spam: yes|no` after stripping every
+  `X-Spam*`/`X-Rspamd*`/`X-Bridge-Spam` header the sender supplied, so the
+  marker the client trusts is the last hop's. The verdict comes from the MTA
+  (mail-server rspamd `X-Spam-Flag`), which removes a forged flag before adding
+  its own on the spam action. The rebuild path (`stripAttachments`) preserves
+  the marker.
+- The mail-server PR (`spam/accept-and-mark`) supplies the accept-and-mark
+  behaviour; this branch consumes it.
+
+### Verification
+
+- client: `tsc -b` clean, 487 tests (27 new in folders.test.ts and receive).
+- bridge: `tsc` clean, 160 tests (6 new in spam-marker.test.ts, plus marker
+  preservation in stripAttachments).

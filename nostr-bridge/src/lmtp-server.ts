@@ -3,6 +3,7 @@ import { lookupNip05 } from "./nip05.js";
 import { UserResolver } from "./user-resolver.js";
 import { publishChunkedMail, publishMail } from "./nostr-publisher.js";
 import { stripAttachments } from "./stripAttachments.js";
+import { stampSpamMarker } from "./spam-marker.js";
 import { keySigner } from "./protocol/key-signer.js";
 import { bytesToMessageString, messageStringToBytes } from "./protocol/bytes.js";
 import { config } from "./config.js";
@@ -135,7 +136,10 @@ export async function handleMessage(
   // Content-Type; decoding as UTF-8 here would corrupt any message that
   // isn't UTF-8 (ISO-8859-1, Shift-JIS, ...) before the parser ever sees
   // the declared charset. See docs/ARCHITECTURE.md §4.
-  const messageRaw = bytesToMessageString(raw);
+  // The bridge is the last hop and signs the wrap, so it owns the spam
+  // verdict: strip anything the sender supplied and write the one
+  // authoritative marker (see spam-marker.ts).
+  const messageRaw = bytesToMessageString(stampSpamMarker(raw));
 
   const outcome = await publishWithAttachmentFallback(recipient, lookup.pubkey, messageRaw, relays);
   if (outcome === "too-large") {

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist, type PersistStorage } from 'zustand/middleware'
-import type { Email, EmailFolder, MailFlags } from '@/app/types/mail'
+import type { Email, MailFlags } from '@/app/types/mail'
 
 /**
  * Per-mail state (read / filed folder), keyed by gift-wrap id.
@@ -222,7 +222,7 @@ interface MailState {
   /** Gift-wrap ids permanently deleted on this device; never shown again. */
   deletedIds: Set<string>
   selectedId: string | null
-  folder: EmailFolder
+  folder: string
   query: string
   /**
    * Set when a cross-device delete removed the mail the user had open, so the
@@ -255,7 +255,7 @@ interface MailState {
    * Returns the merged flags for the caller to publish as the mail's meta event.
    */
   markDeleted: (id: string, wrapIds?: string[]) => MailFlags
-  setFolder: (folder: EmailFolder) => void
+  setFolder: (folder: string) => void
   setSelected: (id: string | null) => void
   setQuery: (query: string) => void
   setInboxFilter: (address: string | null, keepSelection?: boolean) => void
@@ -274,7 +274,7 @@ export const useMailStore = create<MailState>()(
       wrapKeys: {},
       deletedIds: new Set(),
       selectedId: null,
-      folder: 'inbox' as EmailFolder,
+      folder: 'inbox',
       query: '',
       inboxFilter: null,
       selectionClearedReason: null,

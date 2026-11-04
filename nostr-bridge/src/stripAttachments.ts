@@ -65,6 +65,17 @@ export async function stripAttachments(raw: Buffer): Promise<string | null> {
   if (parsed.attachments.length === 0) return null;
   if (isPgpMime(parsed)) return null;
 
+  // The bridge's spam verdict must survive the rebuild. Everything else is
+  // reconstructible from the fields below; this header is the one piece of
+  // delivery-time state that no later stage can recover.
+  const rawBridgeSpam = parsed.headers.get("x-bridge-spam");
+  const bridgeSpam =
+    typeof rawBridgeSpam === "string"
+      ? rawBridgeSpam
+      : Array.isArray(rawBridgeSpam)
+        ? rawBridgeSpam.join(", ")
+        : undefined;
+
   const composer = new MailComposer({
     from: parsed.from?.text,
     to: addressText(parsed.to),
@@ -86,6 +97,7 @@ export async function stripAttachments(raw: Buffer): Promise<string | null> {
     date: parsed.date,
     references: parsed.references,
     inReplyTo: parsed.inReplyTo,
+    ...(bridgeSpam ? { headers: { "X-Bridge-Spam": bridgeSpam } } : {}),
   });
 
   const rebuilt = await composer.compile().build();

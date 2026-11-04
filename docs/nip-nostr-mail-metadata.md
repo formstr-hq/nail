@@ -78,10 +78,22 @@ A message's folder is the `folder` field of its metadata event; a message with n
 | `from` | the sender address equals an entry, or ends with `@` or `.` followed by one |
 | `subject` | the subject contains an entry |
 | `has_attachment` | the message carries an attachment, or none when `false` |
+| `spam` | the receiving server marked the message as spam |
 
-Entries of one field are OR; the fields are AND. Text is compared case-insensitively.
+Entries of one field are OR; the fields are AND. Text is compared case-insensitively. A `match` with no fields matches nothing.
+
+`spam` is a property of the message, not user state: it comes from the receiving
+server's authenticated marker. A client SHOULD prefer a marker added by the
+bridge that wrapped the message (the bridge is the last hop and strips
+sender-supplied spam headers), falling back to `X-Spam-Flag` for mail from other
+bridges or older messages.
 
 A message is in the folder named by its `folder` field; failing that, the first folder (by `position`) whose `match` it matches; failing that, unfiled.
+
+An explicit `folder` — **including `"inbox"`** — always wins over a match.
+Storing `"inbox"` is how a client rescues a matched message (the default Spam
+folder's `spam` rule) without inventing a second flag; a client that treats an
+absent folder and `"inbox"` as identical cannot implement "Not spam".
 
 ## Labels
 
