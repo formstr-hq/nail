@@ -112,7 +112,7 @@ describe('EmailList happy path', () => {
 
   it('files trashed mail into Trash and offers empty-trash', () => {
     useMailStore.getState().addEmail(email())
-    useMailStore.getState().setFlag('a'.repeat(64), { trashed: true })
+    useMailStore.getState().setFlag('a'.repeat(64), { folder: 'trash' })
     useAccountStore.setState({ account: { pubkey: 'd'.repeat(64) } as never, active: FAKE_ACTIVE })
 
     useMailStore.setState({ folder: 'trash' })

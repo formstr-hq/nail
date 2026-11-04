@@ -1,4 +1,6 @@
 import { useMailStore } from '@/app/store/mail'
+import { useSettingsStore } from '@/app/store/settings'
+import { foldersOf, matchesMatch, resolveFolder, resolveLabels, labelsOf } from '@/app/lib/mail/folders'
 import { useMailActions } from '@/app/hooks/useMailActions'
 import { useProfile } from '@/app/hooks/useProfile'
 import { useSenderIdentity } from '@/app/hooks/useSenderIdentity'
@@ -32,7 +34,10 @@ interface EmailViewProps {
 export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) {
   const { emails, selectedId, mailState, setSelected } = useMailStore()
   const email = selectedId ? emails[selectedId] : null
-  const { archive, unarchive, trash, restore, deleteForever } = useMailActions()
+  const { archive, unarchive, trash, restore, deleteForever, notSpam, toggleLabel } = useMailActions()
+  const settings = useSettingsStore((s) => s.settings)
+  const folders = foldersOf(settings)
+  const labelDefs = labelsOf(settings)
   // Live sender identity for the open message. Derived, never read off the
   // stored email: a bridge resolution landing after decode must repaint this
   // header, and a spoofed header must never be shown as the sender.
@@ -67,6 +72,8 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
   })
 
   const flags = mailState[email.id]
+  const folderId = resolveFolder(email, flags, folders)
+  const labels = resolveLabels(email, flags, labelDefs)
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-surface-read">
@@ -119,6 +126,37 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
       </header>
 
       <div className="flex-1 overflow-y-auto px-5 py-5 md:px-6">
+        {folderId === 'spam' && (
+          <div className="mb-4 flex max-w-[68ch] items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
+            <span className="text-[12px] leading-snug text-destructive">
+              The receiving server marked this message as spam.
+            </span>
+            <Button
+              variant="secondary"
+              onClick={() => notSpam(email.id)}
+              className="flex-none"
+            >
+              Not spam
+            </Button>
+          </div>
+        )}
+
+        {labels.length > 0 && (
+          <div className="mb-3 flex max-w-[68ch] flex-wrap gap-1.5">
+            {labels.map((id) => {
+              const def = labelDefs.find((l) => l.id === id)
+              return (
+                <span
+                  key={id}
+                  className="rounded-full border border-border px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-muted-foreground"
+                >
+                  {def?.name ?? id}
+                </span>
+              )
+            })}
+          </div>
+        )}
+
         <div className="max-w-[68ch]">
           <MessageBody email={email} senderAddress={from.address} />
         </div>
@@ -154,7 +192,40 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
 
         <span className="flex-1" />
 
-        {flags?.trashed ? (
+        {labelDefs.length > 0 && (
+          <details className="relative">
+            <summary className="cursor-pointer list-none rounded-md border border-input px-3 py-1.5 text-[13px] text-foreground hover:bg-accent [&::-webkit-details-marker]:hidden">
+              Labels
+            </summary>
+            <div className="absolute bottom-full right-0 z-10 mb-2 w-56 rounded-md border border-border bg-card p-2 shadow-lg">
+              {labelDefs.map((label) => {
+                const matched = label.match ? matchesMatch(label.match, email) : false
+                const explicit = !!flags?.labels?.includes(label.id)
+                return (
+                  <label
+                    key={label.id}
+                    className="flex items-center gap-2 rounded px-1 py-1 text-[12px] text-foreground"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={explicit || matched}
+                      disabled={matched}
+                      onChange={() => toggleLabel(email.id, label.id)}
+                    />
+                    <span>{label.name}</span>
+                    {matched && (
+                      <span className="ml-auto font-mono text-[9px] uppercase tracking-[0.08em] text-subtle">
+                        rule
+                      </span>
+                    )}
+                  </label>
+                )
+              })}
+            </div>
+          </details>
+        )}
+
+        {flags?.folder === 'trash' ? (
           <>
             <Button onClick={fileAway(restore)} title="Move back to Inbox">
               <InboxIcon className="h-3.5 w-3.5" />
@@ -172,11 +243,11 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
         ) : (
           <>
             <Button
-              onClick={fileAway(flags?.archived ? unarchive : archive)}
-              title={flags?.archived ? 'Move back to Inbox' : 'Archive'}
+              onClick={fileAway(flags?.folder === 'archive' ? unarchive : archive)}
+              title={flags?.folder === 'archive' ? 'Move back to Inbox' : 'Archive'}
             >
               <ArchiveIcon className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">{flags?.archived ? 'Unarchive' : 'Archive'}</span>
+              <span className="hidden sm:inline">{flags?.folder === 'archive' ? 'Unarchive' : 'Archive'}</span>
             </Button>
             <Button onClick={fileAway(trash)} title="Move to Trash">
               <TrashIcon className="h-3.5 w-3.5" />

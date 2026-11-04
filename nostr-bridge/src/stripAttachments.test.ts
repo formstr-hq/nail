@@ -12,6 +12,7 @@ async function buildRaw(opts: {
   text?: string;
   html?: string;
   attachments?: { filename: string; content: Buffer; contentType?: string }[];
+  headers?: Record<string, string>;
 }): Promise<Buffer> {
   const composer = new MailComposer({
     from: "Alice <alice@example.org>",
@@ -21,6 +22,7 @@ async function buildRaw(opts: {
     text: opts.text,
     html: opts.html,
     attachments: opts.attachments,
+    headers: opts.headers,
     messageId: "<fixed-id@example.org>",
     date: new Date("2026-01-01T00:00:00Z"),
   });
@@ -69,6 +71,18 @@ describe("stripAttachments", () => {
     expect(addressText(parsed.from)).toContain("alice@example.org");
     expect(addressText(parsed.to)).toContain("bob@mailstr.app");
     expect(addressText(parsed.cc)).toContain("carol@example.org");
+  });
+
+  it("keeps the bridge's spam marker across the rebuild", async () => {
+    const original = await buildRaw({
+      text: "body",
+      attachments: [{ filename: "a.bin", content: Buffer.alloc(100, 1) }],
+      headers: { "X-Bridge-Spam": "yes" },
+    });
+
+    const stripped = await stripAttachments(original);
+    const parsed = await parseBack(stripped!);
+    expect(parsed.headers.get("x-bridge-spam")).toBe("yes");
   });
 
   it("keeps the HTML body when there is no text alternative", async () => {

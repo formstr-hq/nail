@@ -1,5 +1,6 @@
 import type { Event } from 'nostr-tools'
 import type { ActiveSigner } from '@formstr/signer'
+import type { FolderEntry, LabelEntry } from '@/app/types/mail'
 import { fetchDmRelays } from './relays'
 import { getLocalRelay, queryLocal } from './localRelay'
 import { withSignerTimeout } from './signer'
@@ -46,6 +47,14 @@ export interface MailSettings {
   onboardedAt?: number     // ms epoch the user finished relay onboarding; its
                            // presence is the "seen once, any device" flag —
                            // this event is NIP-44 synced across devices
+  /**
+   * Folder definitions (NIP-XX § Folders). Absent means the client's defaults
+   * (Inbox, Sent, Archive, Spam with `match: { spam: true }`, Trash). The
+   * per-message folder lives in kind-34578, keyed by gift-wrap id.
+   */
+  folders?: FolderEntry[]
+  /** Label definitions (§ Labels). Unlike folders, a message may carry many. */
+  labels?: LabelEntry[]
   mailIndexKey?: string    // 32-byte hex secret keying the HMAC that obfuscates
                            // per-mail metadata coordinates (see mailMeta.ts).
                            // Generated once, then synced here so every device

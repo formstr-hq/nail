@@ -16,6 +16,7 @@ import { AddressesSection } from '@/app/components/settings/sections/AddressesSe
 import { WorkspaceSection } from '@/app/components/settings/sections/WorkspaceSection'
 import { RelaysSection } from '@/app/components/settings/sections/RelaysSection'
 import { ComposingSection } from '@/app/components/settings/sections/ComposingSection'
+import { FoldersSection } from '@/app/components/settings/sections/FoldersSection'
 import { AppearanceSection } from '@/app/components/settings/sections/AppearanceSection'
 import { HelpSection } from '@/app/components/settings/sections/HelpSection'
 import { KeyBackupSection } from '@/app/components/settings/sections/KeyBackupSection'
@@ -253,6 +254,8 @@ export function SettingsModal({
                 <ComposingSection signature={signature} onChange={setSignature} />
               )}
 
+              {section === 'folders' && <FoldersSection />}
+
               {section === 'encryption' && <PgpSettings />}
 
               {section === 'security' && <KeyBackupSection />}
@@ -269,7 +272,7 @@ export function SettingsModal({
               {section === 'help' && <HelpSection />}
 
               <p className="mt-auto border-t border-border pt-4 text-[11px] leading-relaxed text-subtle">
-                Your address, signature and sender settings are encrypted and
+                Your address, signature, folders and labels are encrypted and
                 synced to your relays as a kind 30078 event. Theme is kept on
                 this device only.
               </p>
