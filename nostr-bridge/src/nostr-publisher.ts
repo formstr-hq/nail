@@ -236,6 +236,39 @@ export async function buildInboundChunkWraps(params: {
   return { msgid, totalBytes, parts: slices.length, wraps };
 }
 
+/**
+ * Chunked messages this process has already published, by msgid.
+ *
+ * Postfix retries whenever the LMTP 250 is lost (connection drop, a publish
+ * that outlives the socket timeout, a bridge restart mid-response). Without
+ * this, a retry re-wraps and re-publishes every part: more relay events, and a
+ * recipient that mixes the two attempts sees different wrap ids for the same
+ * slice. Re-ACKing a msgid we already published is the idempotent answer.
+ *
+ * In-memory on purpose: a restart loses it, but that is the rare case and the
+ * fallback is the old behaviour (republish), not corruption.
+ */
+const PUBLISHED_TTL_MS = 60 * 60 * 1000;
+const PUBLISHED_MAX = 500;
+const recentlyPublished = new Map<string, number>();
+
+function wasPublished(msgid: string): boolean {
+  const at = recentlyPublished.get(msgid);
+  if (at === undefined) return false;
+  if (Date.now() - at > PUBLISHED_TTL_MS) {
+    recentlyPublished.delete(msgid);
+    return false;
+  }
+  return true;
+}
+
+function rememberPublished(msgid: string): void {
+  recentlyPublished.set(msgid, Date.now());
+  if (recentlyPublished.size <= PUBLISHED_MAX) return;
+  const oldest = recentlyPublished.keys().next().value;
+  if (oldest !== undefined) recentlyPublished.delete(oldest);
+}
+
 export type ChunkedPublishResult = {
   ok: boolean;
   parts: number;
@@ -281,24 +314,58 @@ export async function publishChunkedMail(params: {
     };
   }
 
+  // A retry after a lost LMTP response must not re-publish the whole set.
+  if (wasPublished(prepared.msgid)) {
+    console.warn(
+      `nostr-bridge: msgid ${prepared.msgid.slice(0, 12)} already published; ` +
+        "re-ACKing without re-publishing",
+    );
+    return { ok: true, parts: prepared.parts, msgid: prepared.msgid };
+  }
+
   const relays = [...new Set(params.relays)];
   const publish = (wrap: Event) =>
     Promise.all(relays.map((relay) => publishToRelay(relay, wrap, params.signer))).then(
       (results) => results.some(Boolean),
     );
 
-  for (const wrap of prepared.wraps) {
-    // One retry per chunk: a single relay timeout should not cost the whole
-    // message a 451 and a full duplicate resend.
-    if (!(await publish(wrap)) && !(await publish(wrap))) {
-      return {
-        ok: false,
-        parts: prepared.parts,
-        msgid: prepared.msgid,
-        reason: "failed",
-      };
+  // Publishing used to be strictly sequential: a 38-part message spent 60 s+
+  // in relay round-trips and the LMTP client gave up (Postfix 421, then a
+  // retry). Four parts in flight keeps a 64-part message well inside the socket
+  // timeout without opening scores of sockets at once.
+  const CHUNK_CONCURRENCY = 4;
+  let cursor = 0;
+  let failed = false;
+
+  const worker = async () => {
+    while (!failed) {
+      const index = cursor++;
+      if (index >= prepared.wraps.length) return;
+      const wrap = prepared.wraps[index];
+      // One retry per chunk: a single relay timeout should not cost the whole
+      // message a 451 and a full duplicate resend.
+      if (!(await publish(wrap)) && !(await publish(wrap))) {
+        failed = true;
+      }
     }
+  };
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(CHUNK_CONCURRENCY, prepared.wraps.length) },
+      () => worker(),
+    ),
+  );
+
+  if (failed) {
+    return {
+      ok: false,
+      parts: prepared.parts,
+      msgid: prepared.msgid,
+      reason: "failed",
+    };
   }
 
+  rememberPublished(prepared.msgid);
   return { ok: true, parts: prepared.parts, msgid: prepared.msgid };
 }
