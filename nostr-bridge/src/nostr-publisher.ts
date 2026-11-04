@@ -1,6 +1,7 @@
 import type { Event } from "nostr-tools";
 import { generateSecretKey } from "nostr-tools/pure";
 import { buildMailRumor, sealAndWrap } from "./protocol/mail.js";
+import { chunkTags, splitMessage } from "./protocol/chunked-mail.js";
 import type { ProtocolSigner } from "./protocol/types.js";
 import { KIND_CLIENT_AUTH } from "./protocol/constants.js";
 import { RelayWebSocket as WebSocket } from "./relay-socket.js";
@@ -173,4 +174,131 @@ export async function publishMail(params: {
     relays.map((relay) => publishToRelay(relay, wrap, params.signer)),
   );
   return results.some(Boolean);
+}
+
+export interface PreparedChunks {
+  /** sha256 of the whole message — the reassembly key and integrity check. */
+  msgid: string;
+  totalBytes: number;
+  /** How many parts the message split into (wraps is empty when over budget). */
+  parts: number;
+  wraps: Event[];
+}
+
+/**
+ * Wrap a message that is too large for one gift wrap into ordered chunks.
+ *
+ * Each chunk is an independent kind-1059 with its own ephemeral key (so each
+ * remains individually deletable via its `wrapkey` tag), carrying a byte range
+ * of the original in its rumor. All tags live inside the rumor: putting
+ * `chunk` on the wrap would tell relays how many parts a message has and let
+ * them correlate the set, defeating NIP-59's ephemeral keys.
+ *
+ * Chunk sizing is done by `splitMessage` in encoded-JSON bytes, not raw bytes;
+ * see the derivation in protocol/chunked-mail.ts.
+ */
+export async function buildInboundChunkWraps(params: {
+  raw: string;
+  recipientPubkey: string;
+  signer: ProtocolSigner;
+  /**
+   * When set, skip wrapping entirely if the message needs more parts than
+   * this. Building hundreds of wraps only to reject them is what the budget
+   * check exists to avoid (each wrap is two NIP-44 encryptions).
+   */
+  maxChunks?: number;
+}): Promise<PreparedChunks> {
+  const senderPubkey = await params.signer.getPublicKey();
+  const { msgid, totalBytes, slices } = await splitMessage(params.raw, {
+    senderPubkey,
+    recipientPubkey: params.recipientPubkey,
+  });
+
+  if (params.maxChunks !== undefined && slices.length > params.maxChunks) {
+    return { msgid, totalBytes, parts: slices.length, wraps: [] };
+  }
+
+  const wraps: Event[] = [];
+  for (let i = 0; i < slices.length; i++) {
+    const ephemeralSk = generateSecretKey();
+    const rumor = buildMailRumor({
+      senderPubkey,
+      recipientPubkey: params.recipientPubkey,
+      rfc2822: slices[i],
+      wrapSecret: ephemeralSk,
+      extraTags: chunkTags(msgid, i, slices.length, totalBytes),
+    });
+    wraps.push(
+      await sealAndWrap(rumor, params.recipientPubkey, params.signer, { ephemeralSk }),
+    );
+  }
+
+  return { msgid, totalBytes, parts: slices.length, wraps };
+}
+
+export type ChunkedPublishResult = {
+  ok: boolean;
+  parts: number;
+  msgid?: string;
+  /**
+   * `too-many`: the split exceeds the configured part budget, so this message
+   * cannot be delivered over Nostr at all (permanent). `failed`: at least one
+   * chunk reached no relay (transient — the caller should let it retry).
+   */
+  reason?: "too-many" | "failed";
+};
+
+/**
+ * Publish a chunked message, one chunk at a time, to every relay.
+ *
+ * Chunks are published sequentially with relays in parallel: a 15-part message
+ * therefore opens at most 8 sockets at once rather than 120. (Batching all
+ * chunks onto one connection per relay is a follow-up; `publishToRelay` opens
+ * a socket per event today.)
+ *
+ * Success requires *every* chunk to be accepted by at least one relay. A
+ * partially delivered set is unreadable, so it is reported as `failed` and the
+ * caller returns LMTP 451, letting Postfix retry the message. The already-
+ * accepted chunks are harmless duplicates: `msgid` (sha256 of the whole
+ * message) lets the recipient collapse them.
+ */
+export async function publishChunkedMail(params: {
+  raw: string;
+  recipientPubkey: string;
+  signer: ProtocolSigner;
+  relays: string[];
+  maxChunks?: number;
+}): Promise<ChunkedPublishResult> {
+  const maxChunks = params.maxChunks ?? 64;
+  const prepared = await buildInboundChunkWraps({ ...params, maxChunks });
+
+  if (prepared.wraps.length === 0) {
+    return {
+      ok: false,
+      parts: prepared.parts,
+      msgid: prepared.msgid,
+      reason: "too-many",
+    };
+  }
+
+  const relays = [...new Set(params.relays)];
+  const publish = (wrap: Event) =>
+    Promise.all(relays.map((relay) => publishToRelay(relay, wrap, params.signer))).then(
+      (results) => results.some(Boolean),
+    );
+
+  for (const wrap of prepared.wraps) {
+    // One retry per chunk: a single relay timeout should not cost the whole
+    // message a 451 and a full duplicate resend.
+    if (!(await publish(wrap)) && !(await publish(wrap))) {
+      return {
+        ok: false,
+        parts: prepared.parts,
+        msgid: prepared.msgid,
+        reason: "failed",
+      };
+    }
+  }
+
+  return { ok: true, parts: prepared.parts, msgid: prepared.msgid };
 }

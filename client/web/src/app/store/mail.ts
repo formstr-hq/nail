@@ -227,10 +227,11 @@ interface MailState {
   saveWrapKey: (id: string, wrapKey: string) => void
   /**
    * Locally finalize a permanent delete: tombstone the wrap, purge the mail,
-   * its wrap key, and set the deleted flag. Returns the merged flags for the
-   * caller to publish as the mail's meta event.
+   * its wrap keys, and set the deleted flag. `wrapIds` covers the remaining
+   * parts of a chunked message, so a relay replay of any part is skipped too.
+   * Returns the merged flags for the caller to publish as the mail's meta event.
    */
-  markDeleted: (id: string) => MailFlags
+  markDeleted: (id: string, wrapIds?: string[]) => MailFlags
   setFolder: (folder: EmailFolder) => void
   setSelected: (id: string | null) => void
   setQuery: (query: string) => void
@@ -268,7 +269,11 @@ export const useMailStore = create<MailState>()(
         const read = email.read || !!get().mailState[email.id]?.read
         set((s) => ({
           emails: { ...s.emails, [email.id]: { ...email, read } },
-          seenIds: new Set([...s.seenIds, email.id]),
+          // Every part of a chunked message is marked seen: leaving the other
+          // wraps unmarked means a later replay decodes them into an assembler
+          // that will never see chunk 0 again, so the message silently vanishes
+          // from an inbox rebuilt after reload.
+          seenIds: new Set([...s.seenIds, email.id, ...(email.wrapIds ?? [])]),
         }))
       },
 
@@ -349,7 +354,7 @@ export const useMailStore = create<MailState>()(
         set((s) => ({ wrapKeys: { ...s.wrapKeys, [id]: wrapKey } }))
       },
 
-      markDeleted: (id) => {
+      markDeleted: (id, wrapIds) => {
         const merged: MailFlags = {
           ...get().mailState[id],
           deleted: true,
@@ -361,6 +366,10 @@ export const useMailStore = create<MailState>()(
 
           const wrapKeys = { ...s.wrapKeys }
           delete wrapKeys[id]
+          for (const part of wrapIds ?? []) {
+            deletedIds.add(part)
+            delete wrapKeys[part]
+          }
 
           // The merged flags are returned for publishing, not stored: the
           // tombstone set is the durable local record and keeping a flags

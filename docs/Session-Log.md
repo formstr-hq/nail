@@ -1975,3 +1975,63 @@ Code in `formstr-backend` branch `fiat_payments` and in `client/` here. Nothing 
 ### Not verified here
 Real Stripe Managed Payments sandbox (fees, tax, embedded Checkout), Apple/Google sandbox purchases, an on-device run, iOS (needs macOS).
 
+
+## 2026-11-04 — Chunked mail: bodies that cannot fit one gift wrap
+
+A 412 KB Mandrill bounce to `emirates.imitate@mailstr.app` was permanently
+bounced with `552 5.3.4 Message too large to deliver over Nostr`. Root cause:
+NIP-44 caps a plaintext at 65 535 bytes and NIP-59 wraps the seal in a second
+NIP-44 layer, so one kind-1059 carries only ~28 KB of raw mail. The body was
+inlined text, not an attachment, so the strip fallback had nothing to drop —
+`stripAttachments` returned null and `publishWithAttachmentFallback` chose the
+permanent 552.
+
+### Protocol
+
+`nostr-bridge/src/protocol/chunked-mail.ts` splits the raw byte-string into
+slices whose *encoded* rumor JSON stays at or below **28 672 bytes** (the top
+inner NIP-44 padding step that still fits a 64 KiB event). Measured against the
+real wrap code: ASCII 28 275 B, CRLF 27 586 B, 8-bit 14 156 B all produce a
+55 134-byte event; one byte more lands at 66 058 and is over the cap. Sizing is
+therefore in encoded bytes, never raw bytes.
+
+Tags live inside the rumor (never on the wrap, which would let relays correlate
+the set): `["chunk", sha256(raw), i, n]`, `["chunk-size", total]`, plus the
+existing per-part `wrapkey`. Reassembly verifies the whole-message hash, so a
+missing or tampered part is reported instead of stitched.
+
+`publishChunkedMail` publishes every part to every relay sequentially (relays
+in parallel) with one retry per part; any part reaching no relay is a 451, not
+an ACK. `MAX_CHUNK_COUNT` (64, ~1.8 MB) bounds the relay cost and is checked
+before wrapping.
+
+### Rollout
+
+`CHUNKED_MAIL_ENABLED` defaults to **false**. Until the client reassembles,
+chunked delivery would render N broken messages — worse than a bounce.
+
+### Client
+
+- `chunkAssembler.ts` groups parts by msgid, dedupes replays, expires
+  incomplete groups after 24 h, and returns chunk 0's wrap id as `Email.id`
+  plus `wrapIds` for the rest. Keeping the wrap id (rather than the msgid)
+  leaves read/filed state and the kind-34578 metadata keyed exactly as before.
+- `receive.ts` split into `unwrapGiftWrap` / `decodeRumor` / `decodeOrAssemble`
+  so chunk content is intercepted before the RFC 2822 parser.
+- `DecodeQueue` gained an `ignored` outcome (buffered part) and carries an
+  array of `{ id, secret }` wrap keys instead of one.
+- `addEmail` marks *every* part seen. Marking only chunk 0 would leave the rest
+  to decode into a group that can never complete, losing the mail after reload.
+- Delete-forever publishes one NIP-09 per part, each signed with that part's
+  own embedded key (`Email.wrapIds`), and `markDeleted(id, wrapIds)` tombstones
+  and purges all of them. Deleting only chunk 0 would resurrect the mail from
+  part 1 upward.
+
+Outbound (composer → `/v1/relay` → SMTP) is deliberately not chunked yet: the
+bridge listener refuses a chunk part rather than injecting a truncated message.
+
+### Verification
+
+- bridge: `pnpm build` clean, 171 tests (12 new in `chunked-mail.test.ts`).
+- client: `tsc -b` clean, 455 tests (9 new in `chunkAssembler.test.ts`, plus
+  decode-queue and store coverage for multi-part delete).
