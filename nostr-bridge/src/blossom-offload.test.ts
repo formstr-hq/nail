@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { simpleParser } from "mailparser";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure";
 
 // config.ts validates these at module load; this test imports through it.
 vi.hoisted(() => {
@@ -13,6 +14,7 @@ vi.mock("./blossom-client.js", () => ({ uploadEncryptedAttachment: vi.fn() }));
 import type { Attachment } from "mailparser";
 import {
   blossomCandidates,
+  blossomServersFromEvents,
   imetaTags,
   offloadAttachments,
 } from "./blossom-offload.js";
@@ -57,6 +59,53 @@ describe("blossomCandidates", () => {
     expect(
       blossomCandidates(["https://nos.example", "wss://not-http", "https://nos.example"], env),
     ).toEqual([env]);
+  });
+});
+
+describe("blossomServersFromEvents", () => {
+  const sk = generateSecretKey();
+  const pubkey = getPublicKey(sk);
+  const sign = (createdAt: number, servers: string[]) =>
+    finalizeEvent(
+      {
+        kind: 10063,
+        created_at: createdAt,
+        tags: servers.map((server) => ["server", server]),
+        content: "",
+      },
+      sk,
+    );
+
+  it("uses the newest signed list", () => {
+    const older = sign(100, ["https://old.example"]);
+    const newer = sign(200, ["https://new.example"]);
+    expect(blossomServersFromEvents([older, newer], pubkey)).toEqual([
+      "https://new.example",
+    ]);
+  });
+
+  it("ignores a tampered newer list and falls back to the valid one", () => {
+    const older = sign(100, ["https://old.example"]);
+    const tampered = {
+      ...sign(200, ["https://old.example"]),
+      tags: [["server", "https://evil.example"]],
+    };
+    expect(blossomServersFromEvents([tampered, older], pubkey)).toEqual([
+      "https://old.example",
+    ]);
+  });
+
+  it("ignores a list signed by another key", () => {
+    const other = finalizeEvent(
+      {
+        kind: 10063,
+        created_at: 300,
+        tags: [["server", "https://evil.example"]],
+        content: "",
+      },
+      generateSecretKey(),
+    );
+    expect(blossomServersFromEvents([other], pubkey)).toEqual([]);
   });
 });
 

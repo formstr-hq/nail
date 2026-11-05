@@ -21,6 +21,7 @@
 
 import { simpleParser, type Attachment } from "mailparser";
 import type { Event } from "nostr-tools";
+import { getEventHash, verifyEvent } from "nostr-tools/pure";
 import { config } from "./config.js";
 import { uploadEncryptedAttachment, type UploadedAttachment } from "./blossom-client.js";
 import { RelayWebSocket } from "./relay-socket.js";
@@ -131,9 +132,38 @@ function queryRelay(
 }
 
 /**
- * The recipient's BUD-03 server list, newest `kind:10063` event across their
- * DM relays plus the bridge's relays. Empty list means "use the operator's".
+ * The recipient's BUD-03 server list, newest verified `kind:10063` event across
+ * their DM relays plus the bridge's relays.
+ *
+ * The list decides where the bridge uploads ciphertext, so it is authenticated:
+ * the event must be signed by the recipient, not just claim their pubkey. A
+ * forged list from a malicious relay could otherwise point uploads at an
+ * arbitrary (possibly internal) host.
  */
+export function blossomServersFromEvents(
+  events: readonly Event[],
+  pubkey: string,
+): string[] {
+  const latest = events
+    .filter((event) => event.kind === 10063 && event.pubkey === pubkey)
+    .filter((event) => {
+      try {
+        // verifyEvent only checks the signature over event.id; re-hash so a
+        // relay cannot swap the tags while keeping a valid id/sig pair.
+        return getEventHash(event) === event.id && verifyEvent(event);
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => b.created_at - a.created_at)[0];
+  if (!latest) return [];
+
+  return latest.tags
+    .filter((tag) => tag[0] === "server" && typeof tag[1] === "string")
+    .map((tag) => tag[1]!.trim())
+    .filter(Boolean);
+}
+
 export async function fetchBlossomServers(
   pubkey: string,
   relays: readonly string[],
@@ -151,16 +181,7 @@ export async function fetchBlossomServers(
     ),
   );
 
-  const latest = results
-    .flat()
-    .filter((event) => event.kind === 10063 && event.pubkey === pubkey)
-    .sort((a, b) => b.created_at - a.created_at)[0];
-  if (!latest) return [];
-
-  return latest.tags
-    .filter((tag) => tag[0] === "server" && typeof tag[1] === "string")
-    .map((tag) => tag[1]!.trim())
-    .filter(Boolean);
+  return blossomServersFromEvents(results.flat(), pubkey);
 }
 
 async function uploadOne(
