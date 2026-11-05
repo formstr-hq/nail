@@ -33,15 +33,18 @@ vi.mock("./nostr-publisher.js", () => ({
   publishMail: vi.fn(),
   publishChunkedMail: vi.fn(),
 }));
+vi.mock("./blossom-offload.js", () => ({ offloadAttachments: vi.fn() }));
 
 import { handleMessage, LmtpError } from "./lmtp-server.js";
 import { lookupNip05, type Nip05Result } from "./nip05.js";
 import { publishChunkedMail, publishMail } from "./nostr-publisher.js";
+import { offloadAttachments } from "./blossom-offload.js";
 import { UserResolver } from "./user-resolver.js";
 
 const mockedLookup = vi.mocked(lookupNip05);
 const mockedPublish = vi.mocked(publishMail);
 const mockedPublishChunked = vi.mocked(publishChunkedMail);
+const mockedOffload = vi.mocked(offloadAttachments);
 
 const PUBKEY = "a".repeat(64);
 const RAW = Buffer.from(
@@ -91,6 +94,8 @@ describe("handleMessage", () => {
     mockedLookup.mockReset();
     mockedPublish.mockReset();
     mockedPublishChunked.mockReset();
+    mockedOffload.mockReset();
+    mockedOffload.mockResolvedValue(null);
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -218,6 +223,27 @@ describe("handleMessage", () => {
     expect(Buffer.byteLength(publishedRaw, "latin1")).toBeLessThan(50_000);
     const parsed = await simpleParser(Buffer.from(publishedRaw, "latin1"));
     expect(parsed.attachments.map((a) => a.filename)).toContain("attachments_error.txt");
+  });
+
+  it("publishes the offloaded body with imeta tags", async () => {
+    mockedLookup.mockResolvedValue(foundResult());
+    mockedPublish.mockResolvedValue(true);
+    const tags = [["imeta", "url https://blossom.example/x", "m application/pdf"]];
+    mockedOffload.mockResolvedValue({ raw: "From: bob@example.com\r\n\r\nbody", tags });
+    const resolver = makeUserResolver();
+
+    await expect(
+      handleMessage(
+        Buffer.from(`From: bob@example.com\r\n\r\n${"x".repeat(200_000)}`, "utf8"),
+        "alice@mailstr.app",
+        resolver,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(mockedPublish).toHaveBeenCalledWith(
+      expect.objectContaining({ extraTags: tags }),
+    );
+    expect(mockedPublishChunked).not.toHaveBeenCalled();
   });
 
   it("chunks a plain-text body that is over the ceiling instead of bouncing it", async () => {

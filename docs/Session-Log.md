@@ -2105,3 +2105,29 @@ successful publish, queue still deferred).
 
 Verified with a 1 MB body: 38 parts, one logical message, and the LMTP
 transaction completes in time. bridge: 174 tests; client: 500 tests.
+
+## 2026-11-05 — Inbound attachments: offload to Blossom instead of dropping
+
+A 10.5 MB external mail to a mailstr address was accepted after raising
+`MAIL_MAX_BYTES`, but the attachment was still replaced by
+`attachments_error.txt`: the inbound path only ever stripped.
+
+`nostr-bridge/src/blossom-offload.ts` now encrypts each attachment and uploads
+it before the strip/rebuild:
+
+1. the recipient's BUD-03 `kind:10063` servers, in order;
+2. if they have none, or every one of theirs fails, `BLOSSOM_SERVER_URL`
+   (`https://nostr.download` by default).
+
+It writes `imeta` tags (`url`, `m`, `filename`, `size`, `decryption-key`,
+`decryption-nonce`, `x`) onto the rumor; every chunk carries them too, so the
+existing client's hosted-attachment fetch/decrypt path works with no client
+change. If every upload fails (or the message is PGP/MIME / fits one wrap), the
+existing strip-with-notice fallback still delivers the body.
+
+`MAIL_MAX_BYTES` must be large enough to buffer the message before upload
+(20 MiB was used for the 10.5 MB test). The bridge has no cgroup memory cap on
+production, so the strip/upload peak fits.
+
+Tests: bridge 185 tests, including upload-server fallback order and the
+no-notice rebuild; tsc clean.

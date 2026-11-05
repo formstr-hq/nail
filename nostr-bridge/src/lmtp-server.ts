@@ -4,6 +4,7 @@ import { UserResolver } from "./user-resolver.js";
 import { publishChunkedMail, publishMail } from "./nostr-publisher.js";
 import { stripAttachments } from "./stripAttachments.js";
 import { stampSpamMarker } from "./spam-marker.js";
+import { offloadAttachments } from "./blossom-offload.js";
 import { keySigner } from "./protocol/key-signer.js";
 import { bytesToMessageString, messageStringToBytes } from "./protocol/bytes.js";
 import { config } from "./config.js";
@@ -143,9 +144,28 @@ export async function handleMessage(
   // The bridge is the last hop and signs the wrap, so it owns the spam
   // verdict: strip anything the sender supplied and write the one
   // authoritative marker (see spam-marker.ts).
-  const messageRaw = bytesToMessageString(stampSpamMarker(raw));
+  const stamped = stampSpamMarker(raw);
+  const messageRaw = bytesToMessageString(stamped);
 
-  const outcome = await publishWithAttachmentFallback(recipient, lookup.pubkey, messageRaw, relays);
+  // Attachments that cannot fit one wrap are encrypted and uploaded to
+  // Blossom (recipient's BUD-03 servers first, then BLOSSOM_SERVER_URL) and
+  // referenced by imeta tags. If that fails, the existing strip-and-notice
+  // fallback runs instead.
+  const offload = await offloadAttachments(stamped, {
+    recipientPubkey: lookup.pubkey,
+    relays,
+    recipient,
+  });
+  const outgoing = offload?.raw ?? messageRaw;
+  const extraTags = offload?.tags ?? [];
+
+  const outcome = await publishWithAttachmentFallback(
+    recipient,
+    lookup.pubkey,
+    outgoing,
+    relays,
+    extraTags,
+  );
   if (outcome === "too-large") {
     // Permanent: the message cannot fit a wrap the relays accept, and no
     // amount of Postfix retrying changes its size. 552 bounces it now.
@@ -195,10 +215,17 @@ async function publishWithAttachmentFallback(
   recipientPubkey: string,
   messageRaw: string,
   relays: string[],
+  extraTags: string[][] = [],
 ): Promise<"full" | "stripped" | "chunked" | "failed" | "too-large"> {
-  const publish = async (raw: string): Promise<boolean> => {
+  const publish = async (raw: string, tags: string[][]): Promise<boolean> => {
     try {
-      return await publishMail({ raw, recipientPubkey, signer: bridgeSigner, relays });
+      return await publishMail({
+        raw,
+        recipientPubkey,
+        signer: bridgeSigner,
+        relays,
+        extraTags: tags,
+      });
     } catch (error) {
       console.error("nostr-bridge: publish threw:", (error as Error).message);
       return false;
@@ -206,7 +233,7 @@ async function publishWithAttachmentFallback(
   };
 
   if (messageRaw.length <= MAX_WRAPPABLE_MESSAGE_BYTES) {
-    if (await publish(messageRaw)) return "full";
+    if (await publish(messageRaw, extraTags)) return "full";
   } else {
     console.warn(
       `nostr-bridge: message for ${recipient} is ${messageRaw.length} bytes, over the ` +
@@ -219,13 +246,16 @@ async function publishWithAttachmentFallback(
   // octet-stream part is the whole message), so it falls through to chunking
   // and is delivered intact rather than bounced.
   let candidate = messageRaw;
+  let candidateTags = extraTags;
   try {
     const stripped = await stripAttachments(Buffer.from(messageStringToBytes(messageRaw)));
     if (stripped !== null) {
       if (stripped.length <= MAX_WRAPPABLE_MESSAGE_BYTES) {
-        return (await publish(stripped)) ? "stripped" : "failed";
+        // The attachment was dropped, not offloaded: there is nothing to link.
+        return (await publish(stripped, [])) ? "stripped" : "failed";
       }
       candidate = stripped;
+      candidateTags = [];
     }
   } catch (error) {
     console.error("nostr-bridge: stripping attachments failed:", (error as Error).message);
@@ -249,6 +279,7 @@ async function publishWithAttachmentFallback(
     signer: bridgeSigner,
     relays,
     maxChunks: config.maxChunkCount,
+    extraTags: candidateTags,
   });
 
   if (chunked.ok) {

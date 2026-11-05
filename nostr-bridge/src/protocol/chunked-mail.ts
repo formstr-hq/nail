@@ -136,6 +136,8 @@ interface MeasureParams {
   recipientPubkey: string;
   msgid: string;
   totalBytes: number;
+  /** Extra rumor tags every chunk carries (e.g. inbound `imeta`). */
+  extraTags?: string[][];
 }
 
 /**
@@ -154,7 +156,10 @@ function rumorJsonBytes(content: string, params: MeasureParams): number {
     wrapSecret: new Uint8Array(32),
     // `total` is fixed at the widest 3-digit value: every 3-digit string is
     // the same length, so the measurement is independent of the real count.
-    extraTags: chunkTags(params.msgid, 0, 999, params.totalBytes),
+    extraTags: [
+      ...chunkTags(params.msgid, 0, 999, params.totalBytes),
+      ...(params.extraTags ?? []),
+    ],
   });
   return utf8Length(JSON.stringify(rumor));
 }
@@ -167,7 +172,11 @@ function rumorJsonBytes(content: string, params: MeasureParams): number {
  */
 export async function splitMessage(
   raw: string,
-  params: { senderPubkey: string; recipientPubkey: string },
+  params: {
+    senderPubkey: string;
+    recipientPubkey: string;
+    extraTags?: string[][];
+  },
 ): Promise<SplitMessage> {
   const totalBytes = messageStringToBytes(raw).length;
   const msgid = await hashMessage(raw);

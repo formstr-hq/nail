@@ -31,6 +31,10 @@ export const ATTACHMENT_DROP_FILENAME = "attachments_error.txt";
 export const ATTACHMENT_DROP_NOTICE =
   "This mail contained attachments which could not be delivered. Attachments are still a work in progress.";
 
+/** Body used when the attachments were uploaded and are linked via `imeta`. */
+export const ATTACHMENT_LINKED_NOTICE =
+  "This mail contained attachments which are attached as links.";
+
 const ARMOR_MARKER = "-----BEGIN PGP MESSAGE-----";
 
 function addressText(
@@ -41,7 +45,7 @@ function addressText(
 }
 
 /** The RFC 3156 shape — see the module doc for why it must never be stripped. */
-function isPgpMime(parsed: ParsedMail): boolean {
+export function isPgpMime(parsed: ParsedMail): boolean {
   if (parsed.text?.includes(ARMOR_MARKER)) return true;
   return parsed.attachments.some(
     (a) =>
@@ -60,7 +64,20 @@ function isPgpMime(parsed: ParsedMail): boolean {
  * The return is the byte-string representation (§4), the same convention the
  * rest of the pipeline uses for `rumor.content`.
  */
-export async function stripAttachments(raw: Buffer): Promise<string | null> {
+export interface StripAttachmentsOptions {
+  /**
+   * Default true. False rebuilds without `attachments_error.txt` and without
+   * the could-not-deliver notice; used after the attachments were encrypted and
+   * uploaded to Blossom, where the `imeta` tags carry the links.
+   */
+  notice?: boolean;
+}
+
+export async function stripAttachments(
+  raw: Buffer,
+  options: StripAttachmentsOptions = {},
+): Promise<string | null> {
+  const withNotice = options.notice ?? true;
   const parsed = await simpleParser(raw);
   if (parsed.attachments.length === 0) return null;
   if (isPgpMime(parsed)) return null;
@@ -82,17 +99,27 @@ export async function stripAttachments(raw: Buffer): Promise<string | null> {
     cc: addressText(parsed.cc),
     replyTo: addressText(parsed.replyTo),
     subject: parsed.subject,
-    // The notice is the body too when the original was attachment-only,
-    // otherwise the rebuilt message would carry no human-readable body at all.
-    text: parsed.text ?? (parsed.html ? undefined : ATTACHMENT_DROP_NOTICE),
+    // With a notice, it is the body too when the original was attachment-only.
+    // Without one (the Blossom path), the links live in the rumor's imeta tags.
+    text:
+      parsed.text ??
+      (parsed.html
+        ? undefined
+        : withNotice
+          ? ATTACHMENT_DROP_NOTICE
+          : ATTACHMENT_LINKED_NOTICE),
     html: parsed.html || undefined,
-    attachments: [
-      {
-        filename: ATTACHMENT_DROP_FILENAME,
-        content: Buffer.from(`${ATTACHMENT_DROP_NOTICE}\n`, "utf8"),
-        contentType: "text/plain",
-      },
-    ],
+    ...(withNotice
+      ? {
+          attachments: [
+            {
+              filename: ATTACHMENT_DROP_FILENAME,
+              content: Buffer.from(`${ATTACHMENT_DROP_NOTICE}\n`, "utf8"),
+              contentType: "text/plain",
+            },
+          ],
+        }
+      : {}),
     messageId: parsed.messageId,
     date: parsed.date,
     references: parsed.references,

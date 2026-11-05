@@ -73,6 +73,20 @@ describe("stripAttachments", () => {
     expect(addressText(parsed.cc)).toContain("carol@example.org");
   });
 
+  it("can rebuild without the error notice when the attachments were offloaded", async () => {
+    const original = await buildRaw({
+      text: "body",
+      attachments: [{ filename: "a.bin", content: Buffer.alloc(100, 1) }],
+    });
+
+    const stripped = await stripAttachments(original, { notice: false });
+    const parsed = await parseBack(stripped!);
+
+    expect(parsed.attachments).toHaveLength(0);
+    expect(parsed.text).toContain("body");
+    expect(parsed.text).not.toContain(ATTACHMENT_DROP_NOTICE);
+  });
+
   it("keeps the bridge's spam marker across the rebuild", async () => {
     const original = await buildRaw({
       text: "body",

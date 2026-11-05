@@ -196,6 +196,37 @@ describe("readChunkMeta", () => {
 });
 
 describe("wrapped chunks", () => {
+  it("carries extra rumor tags on every chunk without exceeding the cap", async () => {
+    const raw = "a".repeat(100_000);
+    const extraTags = [
+      [
+        "imeta",
+        "url https://blossom.example/abc",
+        "m application/pdf",
+        "filename a.pdf",
+        `decryption-key ${"a".repeat(64)}`,
+        `decryption-nonce ${"b".repeat(24)}`,
+      ],
+    ];
+    const prepared = await buildInboundChunkWraps({
+      raw,
+      recipientPubkey: RECIPIENT_PUB,
+      signer: SENDER,
+      extraTags,
+    });
+
+    expect(prepared.wraps.length).toBeGreaterThan(1);
+    for (const wrap of prepared.wraps) {
+      expect(utf8(JSON.stringify(wrap))).toBeLessThanOrEqual(64 * 1024);
+    }
+
+    const first = await unwrapAndVerify(prepared.wraps[0], RECIPIENT, {
+      maxAgeSeconds: 3 * 24 * 3600,
+    });
+    expect(first.ok).toBe(true);
+    if (first.ok) expect(first.rumor.tags.some((t) => t[0] === "imeta")).toBe(true);
+  });
+
   it("keeps every kind-1059 under 64 KiB and round-trips through unwrap", async () => {
     const raw = "a".repeat(200_000);
     const prepared = await buildInboundChunkWraps({

@@ -147,6 +147,7 @@ export async function buildInboundWrap(
   raw: string,
   recipientPubkey: string,
   signer: ProtocolSigner,
+  extraTags: string[][] = [],
 ): Promise<Event> {
   // Generate the wrap's ephemeral key first and pass the SAME key into the
   // rumor (as the deletable-mail WRAP_KEY_TAG) and the wrap itself — splitting
@@ -157,6 +158,7 @@ export async function buildInboundWrap(
     recipientPubkey,
     rfc2822: raw,
     wrapSecret: ephemeralSk,
+    extraTags,
   });
   return sealAndWrap(rumor, recipientPubkey, signer, { ephemeralSk });
 }
@@ -167,8 +169,14 @@ export async function publishMail(params: {
   recipientPubkey: string;
   signer: ProtocolSigner;
   relays: string[];
+  extraTags?: string[][];
 }): Promise<boolean> {
-  const wrap = await buildInboundWrap(params.raw, params.recipientPubkey, params.signer);
+  const wrap = await buildInboundWrap(
+    params.raw,
+    params.recipientPubkey,
+    params.signer,
+    params.extraTags,
+  );
   const relays = [...new Set(params.relays)];
   const results = await Promise.all(
     relays.map((relay) => publishToRelay(relay, wrap, params.signer)),
@@ -207,11 +215,14 @@ export async function buildInboundChunkWraps(params: {
    * check exists to avoid (each wrap is two NIP-44 encryptions).
    */
   maxChunks?: number;
+  /** Extra rumor tags every chunk carries (e.g. inbound `imeta`). */
+  extraTags?: string[][];
 }): Promise<PreparedChunks> {
   const senderPubkey = await params.signer.getPublicKey();
   const { msgid, totalBytes, slices } = await splitMessage(params.raw, {
     senderPubkey,
     recipientPubkey: params.recipientPubkey,
+    extraTags: params.extraTags,
   });
 
   if (params.maxChunks !== undefined && slices.length > params.maxChunks) {
@@ -226,7 +237,10 @@ export async function buildInboundChunkWraps(params: {
       recipientPubkey: params.recipientPubkey,
       rfc2822: slices[i],
       wrapSecret: ephemeralSk,
-      extraTags: chunkTags(msgid, i, slices.length, totalBytes),
+      extraTags: [
+        ...chunkTags(msgid, i, slices.length, totalBytes),
+        ...(params.extraTags ?? []),
+      ],
     });
     wraps.push(
       await sealAndWrap(rumor, params.recipientPubkey, params.signer, { ephemeralSk }),
@@ -301,6 +315,8 @@ export async function publishChunkedMail(params: {
   signer: ProtocolSigner;
   relays: string[];
   maxChunks?: number;
+  /** Extra rumor tags every chunk carries (e.g. inbound `imeta`). */
+  extraTags?: string[][];
 }): Promise<ChunkedPublishResult> {
   const maxChunks = params.maxChunks ?? 64;
   const prepared = await buildInboundChunkWraps({ ...params, maxChunks });
