@@ -1,9 +1,9 @@
 import { create } from 'zustand'
 import { persist, type PersistStorage } from 'zustand/middleware'
-import type { Email, EmailFolder, MailFlags } from '@/app/types/mail'
+import type { Email, MailFlags } from '@/app/types/mail'
 
 /**
- * Per-mail state (read / archived / trashed), keyed by gift-wrap id.
+ * Per-mail state (read / filed folder), keyed by gift-wrap id.
  *
  * This is the local, always-fast mirror of the kind-34578 metadata events that
  * carry mail state across devices (see lib/nostr/mailMeta.ts and the useMailMeta
@@ -87,6 +87,29 @@ function foldLegacyReadState(state: Record<string, MailFlags>): Record<string, M
     // Ignore a malformed legacy value.
     return state
   }
+}
+
+/**
+ * Fold the pre-folder filing shape into `folder`. Old builds stored a mail's
+ * filing as `archived`/`trashed` booleans; the state event now carries a single
+ * folder id. Runs on hydration so a device upgraded in place keeps its filing.
+ */
+function foldLegacyFiling(state: Record<string, MailFlags>): Record<string, MailFlags> {
+  let changed = false
+  const out: Record<string, MailFlags> = {}
+  for (const [id, flags] of Object.entries(state)) {
+    const legacy = flags as MailFlags & { archived?: boolean; trashed?: boolean }
+    if (legacy.archived || legacy.trashed) {
+      changed = true
+      const rest = { ...legacy }
+      delete rest.archived
+      delete rest.trashed
+      out[id] = { ...rest, folder: legacy.trashed ? 'trash' : 'archive' }
+    } else {
+      out[id] = flags
+    }
+  }
+  return changed ? out : state
 }
 
 /**
@@ -182,9 +205,9 @@ const mailStorage: PersistStorage<{
   },
 }
 
-/** True when the mail is filed away (archived or trashed), so it leaves Inbox. */
+/** True when the mail is explicitly filed somewhere other than the Inbox. */
 export function isFiled(flags: MailFlags | undefined): boolean {
-  return !!(flags?.archived || flags?.trashed)
+  return !!flags?.folder && flags.folder !== 'inbox'
 }
 
 interface MailState {
@@ -193,13 +216,13 @@ interface MailState {
   /** kind-34578 metadata event ids already decoded this session, so a relay
    *  replay never pays a second signer round-trip (mirrors `seenIds`). */
   seenMetaIds: Set<string>
-  mailState: Record<string, MailFlags> // read/archived/trashed/deleted by gift-wrap id
+  mailState: Record<string, MailFlags> // read/folder/deleted by gift-wrap id
   /** Wrap-author ephemeral keys captured at unwrap; powers NIP-09 delete. */
   wrapKeys: Record<string, string>
   /** Gift-wrap ids permanently deleted on this device; never shown again. */
   deletedIds: Set<string>
   selectedId: string | null
-  folder: EmailFolder
+  folder: string
   query: string
   /**
    * Set when a cross-device delete removed the mail the user had open, so the
@@ -227,11 +250,12 @@ interface MailState {
   saveWrapKey: (id: string, wrapKey: string) => void
   /**
    * Locally finalize a permanent delete: tombstone the wrap, purge the mail,
-   * its wrap key, and set the deleted flag. Returns the merged flags for the
-   * caller to publish as the mail's meta event.
+   * its wrap keys, and set the deleted flag. `wrapIds` covers the remaining
+   * parts of a chunked message, so a relay replay of any part is skipped too.
+   * Returns the merged flags for the caller to publish as the mail's meta event.
    */
-  markDeleted: (id: string) => MailFlags
-  setFolder: (folder: EmailFolder) => void
+  markDeleted: (id: string, wrapIds?: string[]) => MailFlags
+  setFolder: (folder: string) => void
   setSelected: (id: string | null) => void
   setQuery: (query: string) => void
   setInboxFilter: (address: string | null, keepSelection?: boolean) => void
@@ -250,7 +274,7 @@ export const useMailStore = create<MailState>()(
       wrapKeys: {},
       deletedIds: new Set(),
       selectedId: null,
-      folder: 'inbox' as EmailFolder,
+      folder: 'inbox',
       query: '',
       inboxFilter: null,
       selectionClearedReason: null,
@@ -268,7 +292,11 @@ export const useMailStore = create<MailState>()(
         const read = email.read || !!get().mailState[email.id]?.read
         set((s) => ({
           emails: { ...s.emails, [email.id]: { ...email, read } },
-          seenIds: new Set([...s.seenIds, email.id]),
+          // Every part of a chunked message is marked seen: leaving the other
+          // wraps unmarked means a later replay decodes them into an assembler
+          // that will never see chunk 0 again, so the message silently vanishes
+          // from an inbox rebuilt after reload.
+          seenIds: new Set([...s.seenIds, email.id, ...(email.wrapIds ?? [])]),
         }))
       },
 
@@ -336,9 +364,9 @@ export const useMailStore = create<MailState>()(
             mailState[ref] = flags
             const email = emails[ref]
             if (email && email.read !== !!flags.read) emails[ref] = { ...email, read: !!flags.read }
-            // Archived/trashed are deliberately NOT mirrored onto the email
-            // entry: `mailState` is the single source of truth for filing, and
-            // `EmailList` derives the folder from these flags via isFiled (D2).
+            // The folder is deliberately NOT mirrored onto the email entry:
+            // `mailState` is the single source of truth for filing, and
+            // `EmailList` derives the folder from these flags (D2).
           }
           if (!changed) return s
           return { mailState, emails, deletedIds, wrapKeys, selectedId, selectionClearedReason }
@@ -349,7 +377,7 @@ export const useMailStore = create<MailState>()(
         set((s) => ({ wrapKeys: { ...s.wrapKeys, [id]: wrapKey } }))
       },
 
-      markDeleted: (id) => {
+      markDeleted: (id, wrapIds) => {
         const merged: MailFlags = {
           ...get().mailState[id],
           deleted: true,
@@ -361,6 +389,10 @@ export const useMailStore = create<MailState>()(
 
           const wrapKeys = { ...s.wrapKeys }
           delete wrapKeys[id]
+          for (const part of wrapIds ?? []) {
+            deletedIds.add(part)
+            delete wrapKeys[part]
+          }
 
           // The merged flags are returned for publishing, not stored: the
           // tombstone set is the durable local record and keeping a flags
@@ -451,7 +483,7 @@ export const useMailStore = create<MailState>()(
         }
         return {
           ...current,
-          mailState: foldLegacyReadState(slices.mailState ?? {}),
+          mailState: foldLegacyFiling(foldLegacyReadState(slices.mailState ?? {})),
           wrapKeys: slices.wrapKeys ?? current.wrapKeys,
           deletedIds: new Set(slices.deletedIds ?? []),
         }

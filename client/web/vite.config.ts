@@ -58,6 +58,12 @@ export default defineConfig({
     // syntax is universally supported since Safari 14 / iOS 14.
     target: ['es2020', 'chrome87', 'firefox78', 'safari14'],
   },
+  // The drive-sdk is a dynamic import used only when a message carries a
+  // drive share link. Pre-bundle it so a first download does not trigger a
+  // dev-server re-optimization mid-session.
+  optimizeDeps: {
+    include: ['@formstr/drive-sdk'],
+  },
   worker: {
     // Ship the local-relay worker as a classic script (single IIFE bundle),
     // not an ES module: Safari before 15 rejects `{ type: "module" }` workers

@@ -1,8 +1,10 @@
 import { SMTPServer } from "smtp-server";
 import { lookupNip05 } from "./nip05.js";
 import { UserResolver } from "./user-resolver.js";
-import { publishMail } from "./nostr-publisher.js";
+import { publishChunkedMail, publishMail } from "./nostr-publisher.js";
 import { stripAttachments } from "./stripAttachments.js";
+import { stampSpamMarker } from "./spam-marker.js";
+import { offloadAttachments } from "./blossom-offload.js";
 import { keySigner } from "./protocol/key-signer.js";
 import { bytesToMessageString, messageStringToBytes } from "./protocol/bytes.js";
 import { config } from "./config.js";
@@ -45,6 +47,10 @@ export function createLmtpServer(userResolver: UserResolver): SMTPServer {
     lmtp: true,
     secure: false,
     disabledCommands: ["AUTH", "STARTTLS"],
+    // A chunked publish can outlive the 60 s default before it ACKs; Postfix
+    // would then 421 and retry, re-publishing every part.
+    socketTimeout: config.lmtpSocketTimeoutMs,
+    closeTimeout: 30_000,
     onData(stream, session, callback) {
       const chunks: Buffer[] = [];
       let received = 0;
@@ -135,9 +141,30 @@ export async function handleMessage(
   // Content-Type; decoding as UTF-8 here would corrupt any message that
   // isn't UTF-8 (ISO-8859-1, Shift-JIS, ...) before the parser ever sees
   // the declared charset. See docs/ARCHITECTURE.md §4.
-  const messageRaw = bytesToMessageString(raw);
+  // The bridge is the last hop and signs the wrap, so it owns the spam
+  // verdict: strip anything the sender supplied and write the one
+  // authoritative marker (see spam-marker.ts).
+  const stamped = stampSpamMarker(raw);
+  const messageRaw = bytesToMessageString(stamped);
 
-  const outcome = await publishWithAttachmentFallback(recipient, lookup.pubkey, messageRaw, relays);
+  // Attachments that cannot fit one wrap are encrypted with the Formstr Drive
+  // SDK and uploaded to Blossom (recipient's BUD-03 servers first, then
+  // BLOSSOM_SERVER_URL). The rebuilt message carries their drive share links
+  // in an `attachments.txt` part. If that fails, the existing strip-and-notice
+  // fallback runs instead.
+  const offload = await offloadAttachments(stamped, {
+    recipientPubkey: lookup.pubkey,
+    relays,
+    recipient,
+  });
+  const outgoing = offload?.raw ?? messageRaw;
+
+  const outcome = await publishWithAttachmentFallback(
+    recipient,
+    lookup.pubkey,
+    outgoing,
+    relays,
+  );
   if (outcome === "too-large") {
     // Permanent: the message cannot fit a wrap the relays accept, and no
     // amount of Postfix retrying changes its size. 552 bounces it now.
@@ -148,39 +175,54 @@ export async function handleMessage(
     throw new LmtpError("4.3.0 No relay accepted the message", 451);
   }
 
-  console.log(
-    `nostr-bridge: delivered mail for ${recipient} to ${relays.length} relay(s)` +
-      (outcome === "stripped" ? " (without attachments)" : ""),
-  );
+  // Chunked deliveries log their own line with the part count; everything
+  // else logs here.
+  if (outcome !== "chunked") {
+    console.log(
+      `nostr-bridge: delivered mail for ${recipient} to ${relays.length} relay(s)` +
+        (outcome === "stripped" ? " (without attachments)" : ""),
+    );
+  }
 }
 
 /**
- * Publish a message, falling back to a stripped copy when the full form
- * cannot be delivered.
+ * Publish a message, falling back to a stripped copy or to chunked delivery
+ * when the full form cannot fit one gift wrap.
  *
- * Two ways the full form fails, and they are handled differently:
+ * The three ways a full wrap fails, handled differently:
  *
  * 1. **Too big to attempt.** A message over `MAX_WRAPPABLE_MESSAGE_BYTES`
  *    wraps to an event the relays reject on size regardless, and building it
  *    is what OOM-killed the process. The full attempt is skipped entirely —
- *    the message goes straight to the strip path.
- * 2. **Attempted and refused.** A smaller message that a relay still rejects
- *    (e.g. a strict content cap) is stripped and retried, as before.
+ *    the message goes straight to the fallbacks.
+ * 2. **Attachments.** They are not carried inline (the product path is a
+ *    share link), so the message is rebuilt with a notice before anything
+ *    else is attempted. If the stripped form fits one wrap, that is the end
+ *    of it.
+ * 3. **Still too big.** The remaining bytes are split into ordered chunks
+ *    (protocol/chunked-mail.ts) and published as one wrap each. This is what
+ *    keeps a large *body* — or a PGP/MIME message, which is deliberately not
+ *    stripped — deliverable instead of permanently bounced.
  *
  * Never ACK a message that reached no relay: `failed` becomes LMTP 451, so
  * Postfix retries and eventually bounces to the real sender. `too-large`
- * (nothing left to strip, still unwrappable) is 552 instead — permanent, so
- * the sender is told now rather than after days of retries.
+ * (the split exceeds `MAX_CHUNK_COUNT`) is 552 instead — permanent, so the
+ * sender is told now rather than after days of retries.
  */
 async function publishWithAttachmentFallback(
   recipient: string,
   recipientPubkey: string,
   messageRaw: string,
   relays: string[],
-): Promise<"full" | "stripped" | "failed" | "too-large"> {
+): Promise<"full" | "stripped" | "chunked" | "failed" | "too-large"> {
   const publish = async (raw: string): Promise<boolean> => {
     try {
-      return await publishMail({ raw, recipientPubkey, signer: bridgeSigner, relays });
+      return await publishMail({
+        raw,
+        recipientPubkey,
+        signer: bridgeSigner,
+        relays,
+      });
     } catch (error) {
       console.error("nostr-bridge: publish threw:", (error as Error).message);
       return false;
@@ -196,24 +238,60 @@ async function publishWithAttachmentFallback(
     );
   }
 
-  let stripped: string | null = null;
+  // Attachments are not carried inline any more: strip them first, then chunk
+  // whatever remains. A PGP/MIME message intentionally returns null here (its
+  // octet-stream part is the whole message), so it falls through to chunking
+  // and is delivered intact rather than bounced.
+  let candidate = messageRaw;
   try {
-    stripped = await stripAttachments(Buffer.from(messageStringToBytes(messageRaw)));
+    const stripped = await stripAttachments(Buffer.from(messageStringToBytes(messageRaw)));
+    if (stripped !== null) {
+      if (stripped.length <= MAX_WRAPPABLE_MESSAGE_BYTES) {
+        // The attachment was dropped, not offloaded: there is nothing to link.
+        return (await publish(stripped)) ? "stripped" : "failed";
+      }
+      candidate = stripped;
+    }
   } catch (error) {
     console.error("nostr-bridge: stripping attachments failed:", (error as Error).message);
   }
-  if (stripped === null) {
-    // Nothing strippable. If the original cannot fit a wrap either, this is
-    // permanent; otherwise it is a relay refusal a retry may survive.
-    return messageRaw.length > MAX_WRAPPABLE_MESSAGE_BYTES ? "too-large" : "failed";
+
+  // Nothing left to try: the single-wrap publish above already failed and
+  // there is nothing to strip or chunk.
+  if (candidate.length <= MAX_WRAPPABLE_MESSAGE_BYTES) return "failed";
+
+  if (!config.chunkedMailEnabled) {
+    console.warn(
+      `nostr-bridge: message for ${recipient} needs chunking, but ` +
+        "CHUNKED_MAIL_ENABLED is false; refusing permanently",
+    );
+    return "too-large";
   }
 
-  // A stripped message that is still over the ceiling (a huge body, not an
-  // attachment) cannot be delivered either.
-  if (stripped.length > MAX_WRAPPABLE_MESSAGE_BYTES) return "too-large";
+  const chunked = await publishChunkedMail({
+    raw: candidate,
+    recipientPubkey,
+    signer: bridgeSigner,
+    relays,
+    maxChunks: config.maxChunkCount,
+  });
 
-  console.warn(
-    `nostr-bridge: no relay accepted mail for ${recipient}; retrying without attachments`,
-  );
-  return (await publish(stripped)) ? "stripped" : "failed";
+  if (chunked.ok) {
+    console.log(
+      `nostr-bridge: delivered mail for ${recipient} to ${relays.length} relay(s) ` +
+        `(chunked, ${chunked.parts} part${chunked.parts === 1 ? "" : "s"}, ` +
+        `msgid ${chunked.msgid?.slice(0, 12)})`,
+    );
+    return "chunked";
+  }
+
+  if (chunked.reason === "too-many") {
+    console.error(
+      `nostr-bridge: message for ${recipient} needs ${chunked.parts} chunks, over ` +
+        `MAX_CHUNK_COUNT=${config.maxChunkCount}; permanent failure`,
+    );
+    return "too-large";
+  }
+
+  return "failed";
 }

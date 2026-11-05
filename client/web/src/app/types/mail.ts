@@ -6,15 +6,23 @@ export interface MailAddress {
 export interface Attachment {
   filename: string
   contentType: string
-  /** Undefined for Blossom-hosted files, whose size is unknown until fetched. */
+  /** Known for inline files and NIP-FS-hosted ones. */
   size?: number
   // Inline MIME part: the bytes travelled inside the message itself.
   data?: Uint8Array
-  // Blossom-hosted: fetched on demand. Key and nonce are absent when the
-  // sender hosted the file unencrypted, which `imeta` permits.
+  // Blossom-hosted: fetched on demand. Key is absent when the sender hosted
+  // the file unencrypted, which `imeta` permits.
   blossomUrl?: string
   blossomKey?: string
+  // Legacy one-shot-AES-GCM format only (what the bridge used to write).
   blossomNonce?: string
+  // NIP-FS / drive-sdk format only — required alongside key + size to decrypt
+  // via `@formstr/drive-sdk`'s `decryptFileBytes`.
+  blossomBlobHash?: string
+  blossomFileHash?: string
+  // A drive share link carried in the body/attachments.txt for recipients
+  // without a Mailstr client. Our own reader resolves it on download.
+  shareUrl?: string
 }
 
 /**
@@ -80,6 +88,12 @@ export interface RumorDebug {
 
 export interface Email {
   id: string               // Kind 1059 gift-wrap event ID
+  /**
+   * Wrap ids for a chunked message, in order. `id` is chunk 0; each part has
+   * its own wrap and its own ephemeral key, so permanent delete must publish
+   * one NIP-09 per id. Absent for ordinary single-wrap mail.
+   */
+  wrapIds?: string[]
   messageId?: string       // RFC 2822 Message-ID header
   inReplyTo?: string       // RFC 2822 In-Reply-To header
   references?: string[]    // RFC 2822 References header
@@ -100,10 +114,49 @@ export interface Email {
   read: boolean
   labelEventIds: string[]  // Kind 1985 event IDs managing this email's labels
   labels: string[]         // e.g. ['trash', 'flag:starred', 'state:read']
+  /**
+   * The receiving server marked this message as spam (`X-Spam-Flag`).
+   *
+   * Derived at decode time from the message itself, never stored: it is a
+   * property of the mail, not user state. Folder `match` rules consume it, and
+   * an explicit `folder` (including `inbox`) overrides it, so "Not spam" is a
+   * normal filing action rather than a second flag.
+   */
+  spam?: boolean
   debug?: RumorDebug       // raw decoded rumor, for the reader's debug view
 }
 
 export type EmailFolder = 'inbox' | 'sent' | 'trash' | 'archive' | 'spam'
+
+/**
+ * A folder or label `match` condition. All present fields must match; entries
+ * within one field are OR-ed. Text comparisons are case-insensitive.
+ */
+export interface FolderMatch {
+  /** Sender address equals an entry, or ends with `@` or `.` + entry. */
+  from?: string[]
+  /** Subject contains an entry. */
+  subject?: string[]
+  /** The message has (or has no) attachments. */
+  has_attachment?: boolean
+  /** The receiving server marked the message as spam. */
+  spam?: boolean
+}
+
+/** A folder or label definition, synced in the mail settings event. */
+export interface FolderEntry {
+  /** Client-chosen, unique among folders, stable for the folder's life. */
+  id: string
+  /** 1–64 characters, unique case-insensitively after trimming. */
+  name: string
+  color?: string
+  /** Ascending sort key; absent sorts last, ties broken by name. */
+  position?: number
+  match?: FolderMatch
+}
+
+/** Labels are folder-shaped but non-exclusive. */
+export type LabelEntry = FolderEntry
 
 /**
  * Per-mail state synced across devices as a kind-34578 metadata event, keyed by
@@ -111,13 +164,25 @@ export type EmailFolder = 'inbox' | 'sent' | 'trash' | 'archive' | 'spam'
  * resolve which of two versions of the same mail's state is newer, so a stale
  * relay replay never clobbers a fresh local or cross-device change.
  *
- * `spam` is deliberately absent: spam is reported to and held by the server, not
- * expressed as a client-side metadata event.
+ * Spam is deliberately NOT a flag here: it is derived from the message and
+ * expressed through a folder `match`. What *is* stored is the explicit folder,
+ * which overrides a match — that is how a user rescues a false positive (and
+ * why `folder: 'inbox'` is a meaningful stored value, not just the default).
  */
 export interface MailFlags {
   read?: boolean
-  archived?: boolean
-  trashed?: boolean
+  /**
+   * The folder the mail is filed in, by id. Absent means the folder resolved
+   * from `match` rules, or the natural mailbox (Sent when the user authored
+   * it, Inbox otherwise). An explicit `'inbox'` is stored only to override a
+   * match (e.g. "Not spam"); otherwise Inbox is the implicit default.
+   */
+  folder?: string
+  /**
+   * Labels the message carries, by id. Unlike `folder`, a message may carry
+   * any number. Definitions live in settings alongside the folders.
+   */
+  labels?: string[]
   /**
    * Permanently deleted. The kind-5 deletion is a separate, best-effort purge
    * of the wrap from relays (see lib/nostr/delete.ts); THIS flag is the

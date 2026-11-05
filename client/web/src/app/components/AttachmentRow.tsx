@@ -61,7 +61,9 @@ export function AttachmentRow({ attachment }: { attachment: Attachment }) {
         // Downloading contacts a host the sender chose, which reveals the
         // reader's IP. Say so before they click rather than after.
         <p className="pl-[1.375rem] text-[10.5px] leading-relaxed text-subtle">
-          Stored outside the message. Downloading contacts the sender's host.
+          {attachment.shareUrl
+            ? 'Shared from outside this message. Downloading resolves it from Nostr and the sender’s host.'
+            : "Stored outside the message. Downloading contacts the sender's host."}
         </p>
       )}
     </div>

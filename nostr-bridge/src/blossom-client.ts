@@ -45,34 +45,50 @@ export async function uploadEncryptedAttachment(
   plaintext: Buffer,
   derivedSecretKey: Uint8Array,
   blossomServerUrl: string,
+  timeoutMs = 120_000,
 ): Promise<UploadedAttachment> {
   const { ciphertext, key, iv } = encryptAesGcm(plaintext);
   const sha256Hex = createHash("sha256").update(ciphertext).digest("hex");
   const authEvent = buildUploadAuthEvent(sha256Hex, derivedSecretKey);
   const authHeader = Buffer.from(JSON.stringify(authEvent)).toString("base64");
 
-  const res = await fetch(`${blossomServerUrl}/upload`, {
-    method: "PUT",
-    headers: {
-      Authorization: `Nostr ${authHeader}`,
-      "Content-Type": "application/octet-stream",
-    },
-    body: new Uint8Array(ciphertext),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${blossomServerUrl}/upload`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Nostr ${authHeader}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: new Uint8Array(ciphertext),
+      signal: controller.signal,
+    });
 
-  if (!res.ok) {
-    throw new Error(`Blossom upload failed: ${res.status} ${await res.text()}`);
+    if (!res.ok) {
+      throw new Error(`Blossom upload failed: ${res.status} ${await res.text()}`);
+    }
+
+    const body = (await res.json()) as { url?: string; sha256?: string };
+    // Some servers return a path; the client fetches this from the browser.
+    let url = `${blossomServerUrl}/${sha256Hex}`;
+    if (body.url) {
+      try {
+        url = new URL(body.url, blossomServerUrl).toString();
+      } catch {
+        url = body.url;
+      }
+    }
+
+    return {
+      url,
+      sha256: body.sha256 ?? sha256Hex,
+      encryptionKey: key.toString("hex"),
+      decryptionNonce: iv.toString("hex"),
+    };
+  } finally {
+    clearTimeout(timer);
   }
-
-  const body = (await res.json()) as { url?: string; sha256?: string };
-  const url = body.url ?? `${blossomServerUrl}/${sha256Hex}`;
-
-  return {
-    url,
-    sha256: body.sha256 ?? sha256Hex,
-    encryptionKey: key.toString("hex"),
-    decryptionNonce: iv.toString("hex"),
-  };
 }
 
 export async function fetchAndDecryptAttachment(

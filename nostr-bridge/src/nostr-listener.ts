@@ -4,6 +4,7 @@ import type { Event } from "nostr-tools";
 import { config } from "./config.js";
 import { keySigner } from "./protocol/key-signer.js";
 import { unwrapAndVerify, deliverTargets, buildMailRumor, buildRumor, sealAndWrap } from "./protocol/mail.js";
+import { readChunkMeta } from "./protocol/chunked-mail.js";
 import { messageStringToBytes } from "./protocol/bytes.js";
 import {
   KIND_GIFTWRAP,
@@ -130,6 +131,18 @@ export async function handleWrap(
   }
 
   const { seal, rumor } = result;
+
+  // Chunked *outbound* mail is not implemented yet (the composer does not
+  // split). Refuse a part rather than injecting a truncated message into
+  // Postfix, which a recipient would receive as corrupt mail. Inbound
+  // chunking is the LMTP side and lives in lmtp-server.ts.
+  if (readChunkMeta(rumor.tags)) {
+    console.warn(
+      `nostr-bridge: refusing chunked outbound rumor ${rumor.id.slice(0, 8)}: ` +
+        "outbound chunk reassembly is not supported yet",
+    );
+    return;
+  }
 
   // Health-ping loopback: our own self-test wrap has come back through the live
   // subscription, proving the receive path works. Resolve the waiting self-test

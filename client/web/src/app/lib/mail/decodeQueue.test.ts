@@ -58,9 +58,28 @@ describe('DecodeQueue', () => {
     const q = new DecodeQueue(1, { onEmail, onFailure: vi.fn(), onPendingChange: vi.fn() })
     q.push(
       wrapEvent('a'),
-      () => Promise.resolve({ email: { id: 'm1' } as never, wrapSecret: 'secret' }),
+      () =>
+        Promise.resolve({
+          email: { id: 'm1' } as never,
+          wrapSecrets: [{ id: 'm1', secret: 'secret' }],
+        }),
     )
-    await vi.waitFor(() => expect(onEmail).toHaveBeenCalledWith({ id: 'm1' }, 'secret'))
+    await vi.waitFor(() =>
+      expect(onEmail).toHaveBeenCalledWith({ id: 'm1' }, [{ id: 'm1', secret: 'secret' }]),
+    )
+  })
+
+  it('silently drops a buffered chunk and moves the queue on', async () => {
+    const onEmail = vi.fn()
+    const onFailure = vi.fn()
+    const q = new DecodeQueue(1, { onEmail, onFailure, onPendingChange: vi.fn() })
+    q.push(wrapEvent('c'), () => Promise.resolve({ ignored: true }))
+    q.push(wrapEvent('d'), () => Promise.resolve({ email: { id: 'm2' } as never }))
+
+    await vi.waitFor(() => expect(onEmail).toHaveBeenCalledTimes(1))
+    expect(onEmail).toHaveBeenCalledWith({ id: 'm2' }, undefined)
+    expect(onFailure).not.toHaveBeenCalled()
+    expect(q.pending).toBe(0)
   })
 
   it('reports only non-routine failures', async () => {

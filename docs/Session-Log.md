@@ -1975,3 +1975,184 @@ Code in `formstr-backend` branch `fiat_payments` and in `client/` here. Nothing 
 ### Not verified here
 Real Stripe Managed Payments sandbox (fees, tax, embedded Checkout), Apple/Google sandbox purchases, an on-device run, iOS (needs macOS).
 
+
+## 2026-11-04 — Chunked mail: bodies that cannot fit one gift wrap
+
+A 412 KB Mandrill bounce to `emirates.imitate@mailstr.app` was permanently
+bounced with `552 5.3.4 Message too large to deliver over Nostr`. Root cause:
+NIP-44 caps a plaintext at 65 535 bytes and NIP-59 wraps the seal in a second
+NIP-44 layer, so one kind-1059 carries only ~28 KB of raw mail. The body was
+inlined text, not an attachment, so the strip fallback had nothing to drop —
+`stripAttachments` returned null and `publishWithAttachmentFallback` chose the
+permanent 552.
+
+### Protocol
+
+`nostr-bridge/src/protocol/chunked-mail.ts` splits the raw byte-string into
+slices whose *encoded* rumor JSON stays at or below **28 672 bytes** (the top
+inner NIP-44 padding step that still fits a 64 KiB event). Measured against the
+real wrap code: ASCII 28 275 B, CRLF 27 586 B, 8-bit 14 156 B all produce a
+55 134-byte event; one byte more lands at 66 058 and is over the cap. Sizing is
+therefore in encoded bytes, never raw bytes.
+
+Tags live inside the rumor (never on the wrap, which would let relays correlate
+the set): `["chunk", sha256(raw), i, n]`, `["chunk-size", total]`, plus the
+existing per-part `wrapkey`. Reassembly verifies the whole-message hash, so a
+missing or tampered part is reported instead of stitched.
+
+`publishChunkedMail` publishes every part to every relay sequentially (relays
+in parallel) with one retry per part; any part reaching no relay is a 451, not
+an ACK. `MAX_CHUNK_COUNT` (64, ~1.8 MB) bounds the relay cost and is checked
+before wrapping.
+
+### Rollout
+
+`CHUNKED_MAIL_ENABLED` defaults to **false**. Until the client reassembles,
+chunked delivery would render N broken messages — worse than a bounce.
+
+### Client
+
+- `chunkAssembler.ts` groups parts by msgid, dedupes replays, expires
+  incomplete groups after 24 h, and returns chunk 0's wrap id as `Email.id`
+  plus `wrapIds` for the rest. Keeping the wrap id (rather than the msgid)
+  leaves read/filed state and the kind-34578 metadata keyed exactly as before.
+- `receive.ts` split into `unwrapGiftWrap` / `decodeRumor` / `decodeOrAssemble`
+  so chunk content is intercepted before the RFC 2822 parser.
+- `DecodeQueue` gained an `ignored` outcome (buffered part) and carries an
+  array of `{ id, secret }` wrap keys instead of one.
+- `addEmail` marks *every* part seen. Marking only chunk 0 would leave the rest
+  to decode into a group that can never complete, losing the mail after reload.
+- Delete-forever publishes one NIP-09 per part, each signed with that part's
+  own embedded key (`Email.wrapIds`), and `markDeleted(id, wrapIds)` tombstones
+  and purges all of them. Deleting only chunk 0 would resurrect the mail from
+  part 1 upward.
+
+Outbound (composer → `/v1/relay` → SMTP) is deliberately not chunked yet: the
+bridge listener refuses a chunk part rather than injecting a truncated message.
+
+### Verification
+
+- bridge: `pnpm build` clean, 171 tests (12 new in `chunked-mail.test.ts`).
+- client: `tsc -b` clean, 455 tests (9 new in `chunkAssembler.test.ts`, plus
+  decode-queue and store coverage for multi-part delete).
+## 2026-11-04 — Folder spec implemented; spam becomes a folder rule
+
+`docs/nip-nostr-mail-metadata.md` existed but only the kind-34578 `folder`/
+`labels` fields were implemented; folder definitions, the match engine, and the
+spam signal were not.
+
+### Protocol
+
+- `match` gains `spam` (the receiving server's verdict). An explicit `folder`,
+  including `"inbox"`, always wins over a match — that is what makes "Not spam"
+  a normal filing action rather than a second flag.
+- `docs/nip-nostr-mail-metadata.md` updated to match exactly.
+
+### Client
+
+- `lib/mail/folders.ts`: one pure engine — `matchesMatch` (from / subject /
+  has_attachment / spam, AND across fields, OR within), `resolveFolder`
+  (explicit → first match by position → unfiled), `resolveLabels` (explicit ∪
+  matched), plus default folders, id/name/colour helpers and validation.
+- Settings carry `folders`/`labels`; defaults are Inbox, Sent, Archive, Spam
+  (`match: { spam: true }`), Trash. Inbox/Sent are always present.
+- The sidebar, list, unread badge and reader all use the resolver. Spam is no
+  longer `labels.includes('spam')`; it is a folder match, and the reader shows
+  a "Not spam" action that stores an explicit `folder: "inbox"`.
+- New Settings → Folders & labels editor: rename, colour, order, match rules,
+  add/remove (built-ins protected, non-empty folders cannot be removed), and
+  label definitions. Explicit labels can be toggled from the reader; matched
+  labels are shown as rule-derived and cannot be removed by hand.
+- `Email.spam` is derived at decode time from headers, never synced.
+
+### Server / bridge
+
+- The bridge stamps `X-Bridge-Spam: yes|no` after stripping every
+  `X-Spam*`/`X-Rspamd*`/`X-Bridge-Spam` header the sender supplied, so the
+  marker the client trusts is the last hop's. The verdict comes from the MTA
+  (mail-server rspamd `X-Spam-Flag`), which removes a forged flag before adding
+  its own on the spam action. The rebuild path (`stripAttachments`) preserves
+  the marker.
+- The mail-server PR (`spam/accept-and-mark`) supplies the accept-and-mark
+  behaviour; this branch consumes it.
+
+### Verification
+
+- client: `tsc -b` clean, 487 tests (27 new in folders.test.ts and receive).
+- bridge: `tsc` clean, 160 tests (6 new in spam-marker.test.ts, plus marker
+  preservation in stripAttachments).
+
+## 2026-11-04 — Chunked mail: long-message LMTP timeout and retry amplification
+
+A 1 MB staging test split into 38 parts and published them sequentially. That
+took longer than `smtp-server`'s 60 s default socket timeout, so Postfix saw
+`421 Timeout`, deferred the message, and retried — and every retry re-wrapped
+and re-published all 38 parts (three "over the wrap ceiling" lines, one
+successful publish, queue still deferred).
+
+- The LMTP server now sets `socketTimeout` from `LMTP_SOCKET_TIMEOUT_MS`
+  (default 300 s) with a 30 s close timeout.
+- `publishChunkedMail` publishes four parts in flight instead of one, keeping a
+  64-part message well inside the socket timeout without opening scores of
+  sockets at once.
+- A successfully published msgid is cached for one hour and re-ACKed without
+  re-publishing. Postfix retries whenever the 250 is lost; the retry must not
+  duplicate the message on relays.
+- The client assembler now treats an identical slice carried by a different
+  wrap id as a re-published copy, not a conflict. It keeps the first copy for
+  assembly and includes every wrap/key in `wrapIds`/`wrapSecrets`, so
+  delete-forever purges all of them.
+
+Verified with a 1 MB body: 38 parts, one logical message, and the LMTP
+transaction completes in time. bridge: 174 tests; client: 500 tests.
+
+## 2026-11-05 — Inbound attachments: offload to Blossom instead of dropping
+
+A 10.5 MB external mail to a mailstr address was accepted after raising
+`MAIL_MAX_BYTES`, but the attachment was still replaced by
+`attachments_error.txt`: the inbound path only ever stripped.
+
+`nostr-bridge/src/blossom-offload.ts` now encrypts each attachment and uploads
+it before the strip/rebuild:
+
+1. the recipient's BUD-03 `kind:10063` servers, in order;
+2. if they have none, or every one of theirs fails, `BLOSSOM_SERVER_URL`
+   (`https://nostr.download` by default).
+
+It writes `imeta` tags (`url`, `m`, `filename`, `size`, `decryption-key`,
+`decryption-nonce`, `x`) onto the rumor; every chunk carries them too, so the
+existing client's hosted-attachment fetch/decrypt path works with no client
+change. If every upload fails (or the message is PGP/MIME / fits one wrap), the
+existing strip-with-notice fallback still delivers the body.
+
+`MAIL_MAX_BYTES` must be large enough to buffer the message before upload
+(20 MiB was used for the 10.5 MB test). The bridge has no cgroup memory cap on
+production, so the strip/upload peak fits.
+
+Tests: bridge 185 tests, including upload-server fallback order and the
+no-notice rebuild; tsc clean.
+
+## 2026-11-05 — Inbound attachments: drive-sdk share links
+
+The inbound offload now uses the drive path from `pr/mail-share-links` instead
+of the bridge's one-shot AES-GCM/imeta shape:
+
+- `nostr-bridge/src/drive-share.ts` encrypts with `@formstr/drive-sdk`
+  (`encryptFile`, NIP-FS segmented AES-256-GCM), uploads with
+  `uploadEncryptedFile`, publishes a `shared-file` event with a throwaway key,
+  and returns the `https://drive.formstr.app/#shared=<naddr>&k=<hex>` link.
+- Upload and share signing keys are throwaway, so Blossom and the relays never
+  learn the bridge's identity; the link itself is the bearer token.
+- `blossom-offload.ts` still tries the recipient's BUD-03 servers first (now
+  hash- and signature-verified), then `BLOSSOM_SERVER_URL`
+  (`https://nostr.download` by default). Uploads share one 240 s deadline.
+- The rebuilt message carries the links in the real `attachments.txt` MIME
+  part; the client parses it back into attachment chips and resolves them via
+  `resolveShare` + `downloadFile`. The same `attachments.txt` format is kept
+  for now; a clearer/clickable presentation is a follow-up.
+- The client also reads NIP-FS `imeta` for mail already on relays, and the
+  protocol parser gained `x`/`ox`/`size` so those attachments still decrypt.
+
+Verified with a live `nostr.download` round-trip: encrypt → upload → publish
+share event → resolve link → download/decrypt. Bridge: 189 tests, tsc clean.
+Client: 507 tests, tsc clean.

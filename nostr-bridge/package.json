@@ -11,6 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@formstr/drive-sdk": "^0.2.1",
     "express": "^4.19.2",
     "lru-cache": "^10.2.2",
     "mailparser": "^3.7.1",

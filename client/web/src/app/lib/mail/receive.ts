@@ -3,17 +3,23 @@ import {
   unwrapAndVerify,
   messageStringToBytes,
   parseImetaTags,
+  readChunkMeta,
   type ProtocolSigner,
+  type Rumor,
+  type UnwrapResult,
 } from '@protocol'
+import type { ChunkAssembler, WrapSecret } from './chunkAssembler'
 import { parseRfc2822 } from './rfc2822'
+import {
+  parseAttachmentLinks,
+  stripAttachmentLinksHtml,
+} from './attachmentLinks'
+import { splitMimeAttachments, type ParsedMimeAttachment } from './mimeAttachments'
+import { spamFromHeaders } from './folders'
 import type { Attachment, Email } from '@/app/types/mail'
 
 /** The shape postal-mime hands back; imported structurally to avoid a dep. */
-type ParsedAttachment = {
-  filename?: string | null
-  mimeType?: string
-  content: ArrayBuffer | Uint8Array | string
-}
+type ParsedAttachment = ParsedMimeAttachment
 
 export interface DecodeFailure {
   reason: string
@@ -38,29 +44,6 @@ export type DecodeResult =
       wrapSecret?: string
     }
   | { failure: DecodeFailure }
-
-/**
- * MIME parts carried in the message body itself.
- *
- * postal-mime types `content` as a union, so normalise to bytes here rather
- * than leaving every consumer to guess which shape it got. A string only
- * appears when the parser was asked for an encoding we do not request, so it
- * is decoded as UTF-8 rather than dropped.
- */
-function inlineAttachments(parsed: ParsedAttachment[] | undefined): Attachment[] {
-  return (parsed ?? []).map((a) => {
-    const data =
-      typeof a.content === 'string'
-        ? new TextEncoder().encode(a.content)
-        : new Uint8Array(a.content instanceof Uint8Array ? a.content : new Uint8Array(a.content))
-    return {
-      filename: a.filename ?? 'attachment',
-      contentType: a.mimeType ?? 'application/octet-stream',
-      size: data.byteLength,
-      data,
-    }
-  })
-}
 
 /**
  * Pull an RFC 3156 PGP/MIME body out of the parsed attachment list.
@@ -109,11 +92,28 @@ function hostedAttachments(tags: string[][]): Attachment[] {
   return parseImetaTags(tags).map((a) => ({
     filename: a.filename,
     contentType: a.mimeType,
-    size: undefined,
+    size: a.size,
     blossomUrl: a.url,
     blossomKey: a.encryptionKey,
     blossomNonce: a.decryptionNonce,
+    blossomBlobHash: a.blobHash,
+    blossomFileHash: a.unencryptedFileHash,
   }))
+}
+
+/**
+ * The same share link can arrive in the body and in `Attachments.txt`. Keep
+ * one chip per URL; inline files have no URL and are never deduped by name.
+ */
+function dedupeLinkedAttachments(attachments: Attachment[]): Attachment[] {
+  const seen = new Set<string>()
+  return attachments.filter((attachment) => {
+    const key = attachment.shareUrl ?? attachment.blossomUrl
+    if (!key) return true
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 /**
@@ -132,23 +132,119 @@ export async function decodeGiftWrap(
   signer: ProtocolSigner,
   ownPubkey: string | null = null,
 ): Promise<DecodeResult> {
+  const result = await unwrapGiftWrap(event, signer)
+  if (!result.ok) return { failure: failureFor(result.reason) }
+
+  const decoded = await decodeRumor(result.rumor, result.seal, ownPubkey, {
+    id: event.id,
+  })
+  if ('failure' in decoded) return decoded
+  return result.wrapSecret ? { ...decoded, wrapSecret: result.wrapSecret } : decoded
+}
+
+/** Decode an already-unwrapped rumor (a full RFC 2822 message). */
+export type RumorDecodeResult = { email: Email } | { failure: DecodeFailure }
+
+/**
+ * Unwrap and verify one gift wrap.
+ *
+ * Split out from the RFC 2822 work because a chunked message's rumor carries a
+ * byte range, not a message: the inbox must inspect the tags and buffer the
+ * part before anything is parsed.
+ */
+export async function unwrapGiftWrap(
+  event: Event,
+  signer: ProtocolSigner,
+): Promise<UnwrapResult> {
   // No staleness bound here: unlike the bridge, a mailbox legitimately shows
   // mail from months ago, and the replay concern (re-relaying a message) does
   // not apply to rendering one.
-  const result = await unwrapAndVerify(event, signer, { maxAgeSeconds: Infinity })
+  return unwrapAndVerify(event, signer, { maxAgeSeconds: Infinity })
+}
 
-  if (!result.ok) {
-    return {
-      failure: {
-        reason: result.reason,
-        routine: result.reason === 'not-for-us',
-        retryable: result.reason === 'signer-error',
-      },
-    }
+function failureFor(reason: string): DecodeFailure {
+  return {
+    reason,
+    routine: reason === 'not-for-us',
+    retryable: reason === 'signer-error',
+  }
+}
+
+/** Outcome of the inbox decode step, which may buffer a chunk instead. */
+export type InboxDecodeOutcome =
+  | { email: Email; wrapSecrets: WrapSecret[] }
+  | { buffered: { have: number; total: number } }
+  /** A part already assembled and delivered (relay replay). */
+  | { ignored: true }
+  | { failure: DecodeFailure }
+
+/**
+ * Inbox entry point: decode a wrap, or buffer its chunk.
+ *
+ * A chunk's content is a byte range, so it must be intercepted here rather
+ * than handed to `decodeRumor`/`parseRfc2822`. Only the completed message is
+ * parsed, with chunk 0's wrap id as the email id and every part listed in
+ * `wrapIds` for delete-forever.
+ */
+export async function decodeOrAssemble(
+  event: Event,
+  signer: ProtocolSigner,
+  ownPubkey: string | null,
+  assembler: ChunkAssembler,
+): Promise<InboxDecodeOutcome> {
+  const result = await unwrapGiftWrap(event, signer)
+  if (!result.ok) return { failure: failureFor(result.reason) }
+
+  const { rumor, seal, wrapSecret } = result
+  const wrapSecrets: WrapSecret[] = wrapSecret
+    ? [{ id: event.id, secret: wrapSecret }]
+    : []
+
+  if (!readChunkMeta(rumor.tags)) {
+    const decoded = await decodeRumor(rumor, seal, ownPubkey, { id: event.id })
+    return 'failure' in decoded ? decoded : { email: decoded.email, wrapSecrets }
   }
 
-  const { seal, rumor, wrapSecret } = result
+  const added = await assembler.add({
+    tags: rumor.tags,
+    content: rumor.content,
+    wrapId: event.id,
+    wrapSecret,
+  })
 
+  if (added.status === 'buffered') {
+    return { buffered: { have: added.have, total: added.total } }
+  }
+  if (added.status === 'duplicate') return { ignored: true }
+  if (added.status === 'invalid') {
+    return { failure: { reason: `chunk: ${added.reason}`, routine: false } }
+  }
+
+  const decoded = await decodeRumor(
+    { ...rumor, content: added.message.raw },
+    seal,
+    ownPubkey,
+    { id: added.message.id, wrapIds: added.message.wrapIds },
+  )
+  return 'failure' in decoded
+    ? decoded
+    : { email: decoded.email, wrapSecrets: added.message.wrapSecrets }
+}
+
+/**
+ * Turn a verified rumor into a displayable email.
+ *
+ * `opts.id` is the wrap event id that becomes `Email.id`; for a chunked
+ * message it is chunk 0's wrap id and `wrapIds` lists the rest, so the
+ * existing wrap-keyed state (delete, read flags) keeps working while delete
+ * can reach every part.
+ */
+export async function decodeRumor(
+  rumor: Rumor,
+  seal: Event,
+  ownPubkey: string | null,
+  opts: { id: string; wrapIds?: string[] },
+): Promise<RumorDecodeResult> {
   try {
     // §4: content is a byte string. postal-mime must be handed real bytes —
     // given a string it re-encodes to UTF-8 before applying the declared
@@ -175,6 +271,20 @@ export async function decodeGiftWrap(
     // attachments.
     const pgpMime = looksLikeMail ? extractPgpMime(parsed.attachments) : null
 
+    // SMTP-bound messages carry drive share links in the body because the
+    // bridge cannot read the rumor's `imeta` tags. Pull that list out and turn
+    // it into ordinary attachments, so our reader sees chips, not raw URLs.
+    // A PGP/MIME body is ciphertext — its links live inside the armor and are
+    // parsed after decryption.
+    const bodyText = pgpMime ? pgpMime.armored : looksLikeMail ? (parsed.text ?? '') : rawBody
+    const linked = pgpMime ? { body: bodyText, attachments: [] } : parseAttachmentLinks(bodyText)
+    const bodyHtml =
+      looksLikeMail && linked.attachments.length > 0
+        ? stripAttachmentLinksHtml(parsed.html ?? undefined)
+        : looksLikeMail
+          ? (parsed.html ?? undefined)
+          : undefined
+
     // The claimed `From:` header, kept verbatim. Never display it directly —
     // use useSenderIdentity / deriveSenderIdentity, which decide whether it is
     // backed by the sealing key. A header-less message gets an empty address;
@@ -191,10 +301,18 @@ export async function decodeGiftWrap(
 
     const ccAddresses = (parsed.cc ?? []).map(toDisplay)
 
+    const { inline, shared } = splitMimeAttachments(
+      pgpMime
+        ? (parsed.attachments ?? []).filter(
+            (a) => a !== pgpMime.dataPart && a.mimeType !== 'application/pgp-encrypted',
+          )
+        : parsed.attachments,
+    )
+
     return {
-      wrapSecret,
       email: {
-        id: event.id,
+        id: opts.id,
+        ...(opts.wrapIds ? { wrapIds: opts.wrapIds } : {}),
         messageId: parsed.messageId,
         inReplyTo: parsed.inReplyTo,
         references: parsed.references?.split(/\s+/).filter(Boolean),
@@ -202,23 +320,18 @@ export async function decodeGiftWrap(
         to: (parsed.to ?? []).map(toDisplay),
         cc: ccAddresses.length ? ccAddresses : undefined,
         subject: parsed.subject ?? '(no subject)',
-        body: pgpMime ? pgpMime.armored : looksLikeMail ? (parsed.text ?? '') : rawBody,
-        bodyHtml: looksLikeMail ? (parsed.html ?? undefined) : undefined,
-        // Attachments are out of scope for this pass. Surface that they exist
-        // rather than dropping them silently, so a user is never unaware that
-        // a message carried one. The PGP/MIME control+data parts are the
-        // message body, not attachments, so they are excluded here once lifted
-        // into `body` above.
-        attachments: [
-          ...inlineAttachments(
-            pgpMime
-              ? (parsed.attachments ?? []).filter(
-                  (a) => a !== pgpMime.dataPart && a.mimeType !== 'application/pgp-encrypted',
-                )
-              : parsed.attachments,
-          ),
+        body: linked.body,
+        bodyHtml,
+        // Inline MIME parts, legacy `imeta` attachments, drive links parsed
+        // from the body, and the real `attachments.txt` part. The PGP/MIME
+        // control+data parts are the message body, not attachments, so they
+        // are excluded here once lifted into `body` above.
+        attachments: dedupeLinkedAttachments([
+          ...inline,
           ...hostedAttachments(rumor.tags),
-        ],
+          ...linked.attachments,
+          ...shared,
+        ]),
         timestamp: rumor.created_at,
         senderPubkey: seal.pubkey,
         // Our own outgoing copies (the self-wrap that files under Sent) are
@@ -228,6 +341,10 @@ export async function decodeGiftWrap(
         read: ownPubkey !== null && seal.pubkey === ownPubkey,
         labelEventIds: [],
         labels: [],
+        // Derived from the receiving server's marker, never stored: a folder
+        // `match: { spam: true }` files it (see lib/mail/folders.ts), and an
+        // explicit folder overrides that match ("Not spam").
+        spam: spamFromHeaders(parsed.headers),
         // Ground truth for the reader's debug disclosure — what actually
         // arrived, before any RFC 2822 interpretation.
         debug: {

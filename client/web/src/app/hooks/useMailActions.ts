@@ -86,12 +86,38 @@ export function useMailActions() {
   return {
     markRead: useCallback((id: string) => apply(id, { read: true }), [apply]),
     markUnread: useCallback((id: string) => apply(id, { read: false }), [apply]),
-    archive: useCallback((id: string) => apply(id, { archived: true, trashed: false }), [apply]),
-    unarchive: useCallback((id: string) => apply(id, { archived: false }), [apply]),
-    trash: useCallback((id: string) => apply(id, { trashed: true, archived: false }), [apply]),
-    // Restore drops both filing flags, so a mail returns to the Inbox whether it
-    // was archived or trashed.
-    restore: useCallback((id: string) => apply(id, { archived: false, trashed: false }), [apply]),
+    archive: useCallback((id: string) => apply(id, { folder: 'archive' }), [apply]),
+    unarchive: useCallback((id: string) => apply(id, { folder: undefined }), [apply]),
+    trash: useCallback((id: string) => apply(id, { folder: 'trash' }), [apply]),
+    // Restore drops the folder, so the mail returns to its resolved mailbox —
+    // Inbox, Sent, or a folder `match` (a rescued spam message deliberately
+    // uses `notSpam`, which stores an explicit inbox instead).
+    restore: useCallback((id: string) => apply(id, { folder: undefined }), [apply]),
+
+    /** File into any folder id, including custom ones. */
+    moveToFolder: useCallback(
+      (id: string, folder: string) => apply(id, { folder }),
+      [apply],
+    ),
+    /**
+     * Explicit Inbox state. This is the only way to override a folder `match`
+     * (the Spam folder), because an absent folder would match again on the
+     * next decode. Stored as `folder: 'inbox'`, per the spec's precedence.
+     */
+    notSpam: useCallback((id: string) => apply(id, { folder: 'inbox' }), [apply]),
+    markSpam: useCallback((id: string) => apply(id, { folder: 'spam' }), [apply]),
+    /** Add or remove an explicit label. Matched labels cannot be removed this
+     *  way — they are recomputed from the folder/label rule on every decode. */
+    toggleLabel: useCallback(
+      (id: string, labelId: string) => {
+        const current = useMailStore.getState().mailState[id]?.labels ?? []
+        const labels = current.includes(labelId)
+          ? current.filter((l) => l !== labelId)
+          : [...current, labelId]
+        apply(id, { labels })
+      },
+      [apply],
+    ),
 
     /**
      * Permanent delete. The mail vanishes locally at once (tombstoned so no
@@ -107,9 +133,17 @@ export function useMailActions() {
       const deleteStore = useMailStore.getState()
       if (deleteStore.deletedIds.has(id) || deleteStore.mailState[id]?.deleted) return
 
-      // Read the wrap key before markDeleted purges it.
-      const wrapSecret = useMailStore.getState().wrapKeys[id]
-      const merged = useMailStore.getState().markDeleted(id)
+      // Read the wrap keys before markDeleted purges them. A chunked message
+      // has one wrap (and one embedded ephemeral key) per part; deleting only
+      // chunk 0 would leave the rest readable on relays, so the next replay
+      // would resurrect the mail from part 1 upward.
+      const before = useMailStore.getState()
+      const wrapIds = before.emails[id]?.wrapIds ?? []
+      const secrets = [id, ...wrapIds].map((wrapId) => ({
+        giftwrapId: wrapId,
+        wrapSecret: before.wrapKeys[wrapId],
+      }))
+      const merged = useMailStore.getState().markDeleted(id, wrapIds)
       const session = sessionEpoch()
 
       void (async () => {
@@ -128,12 +162,14 @@ export function useMailActions() {
           }
         }
         try {
-          await publishGiftwrapDeletion({
-            giftwrapId: id,
-            wrapSecret,
-            pubkey: account.pubkey,
-            active,
-          })
+          for (const secret of secrets) {
+            await publishGiftwrapDeletion({
+              giftwrapId: secret.giftwrapId,
+              wrapSecret: secret.wrapSecret,
+              pubkey: account.pubkey,
+              active,
+            })
+          }
         } catch (e) {
           // Local removal stands; a failed relay round just means relays keep
           // ciphertext they cannot read, and the tombstone keeps it hidden.

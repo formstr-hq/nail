@@ -8,7 +8,7 @@ import { isSignerFailure } from '@protocol'
 import { KIND_MAIL_META } from './constants'
 
 /**
- * Per-mail state (read / archived / trashed) as NIP-Metadata events.
+ * Per-mail state (read / filed folder) as NIP-Metadata events.
  *
  * Each mail's state is one addressable kind-34578 event whose content is a JSON
  * blob NIP-44 encrypted to the author's own key. The archive/trash "labels" the
@@ -18,7 +18,7 @@ import { KIND_MAIL_META } from './constants'
  * The privacy problem this solves: the natural coordinate for "state about mail
  * X" is the gift-wrap id, but the wrap is p-tagged publicly to the recipient, so
  * a plaintext coordinate would let anyone serving the relay learn exactly which
- * of your mail you archived, trashed, or read. Instead the `d` tag is a keyed
+ * of your mail you filed, deleted, or read. Instead the `d` tag is a keyed
  * HMAC of the gift-wrap id under a secret only you hold (the mail index key,
  * kept in your encrypted settings). The mapping is deterministic — so the same
  * mail always resolves to the same coordinate, giving free upsert semantics —
@@ -33,8 +33,8 @@ interface MailMetaContent {
   v: number
   ref: string // gift-wrap (kind 1059) event id this state is about
   read?: boolean
-  archived?: boolean
-  trashed?: boolean
+  folder?: string // filed folder id — see MailFlags.folder
+  labels?: string[] // carried label ids — see MailFlags.labels
   deleted?: boolean // permanently deleted — see MailFlags.deleted
 }
 
@@ -92,8 +92,8 @@ export async function publishMailMeta(
     v: CONTENT_VERSION,
     ref: giftwrapId,
     read: flags.read,
-    archived: flags.archived,
-    trashed: flags.trashed,
+    folder: flags.folder,
+    labels: flags.labels,
     deleted: flags.deleted,
   }
 
@@ -155,13 +155,24 @@ export async function decodeMailMeta(
     return null
   }
   if (parsed?.v !== CONTENT_VERSION || typeof parsed.ref !== 'string') return null
+  // Old builds stored filing as `archived`/`trashed` booleans; fold them into
+  // `folder` so a state event written by an older client still files correctly.
+  const legacy = parsed as MailMetaContent & { archived?: boolean; trashed?: boolean }
+  const folder =
+    typeof parsed.folder === 'string'
+      ? parsed.folder
+      : legacy.trashed
+        ? 'trash'
+        : legacy.archived
+          ? 'archive'
+          : undefined
   return {
     ref: parsed.ref,
     eventId: event.id,
     flags: {
       read: !!parsed.read,
-      archived: !!parsed.archived,
-      trashed: !!parsed.trashed,
+      folder,
+      labels: Array.isArray(parsed.labels) ? parsed.labels : undefined,
       deleted: !!parsed.deleted,
       updatedAt: event.created_at,
     },

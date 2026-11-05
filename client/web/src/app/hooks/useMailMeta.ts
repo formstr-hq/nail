@@ -43,7 +43,7 @@ function writeCursor(pubkey: string, value: number): void {
 
 /**
  * Keep the mail store's per-mail state in step with the kind-34578 metadata
- * events on the relays, so read/archived/trashed status follows the user across
+ * events on the relays, so read/folder status follows the user across
  * devices.
  *
  * This mirrors useInbox: the local relay replays cached events first (offline

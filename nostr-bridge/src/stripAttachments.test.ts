@@ -12,6 +12,7 @@ async function buildRaw(opts: {
   text?: string;
   html?: string;
   attachments?: { filename: string; content: Buffer; contentType?: string }[];
+  headers?: Record<string, string>;
 }): Promise<Buffer> {
   const composer = new MailComposer({
     from: "Alice <alice@example.org>",
@@ -21,6 +22,7 @@ async function buildRaw(opts: {
     text: opts.text,
     html: opts.html,
     attachments: opts.attachments,
+    headers: opts.headers,
     messageId: "<fixed-id@example.org>",
     date: new Date("2026-01-01T00:00:00Z"),
   });
@@ -69,6 +71,51 @@ describe("stripAttachments", () => {
     expect(addressText(parsed.from)).toContain("alice@example.org");
     expect(addressText(parsed.to)).toContain("bob@mailstr.app");
     expect(addressText(parsed.cc)).toContain("carol@example.org");
+  });
+
+  it("can rebuild without the error notice when the attachments were offloaded", async () => {
+    const original = await buildRaw({
+      text: "body",
+      attachments: [{ filename: "a.bin", content: Buffer.alloc(100, 1) }],
+    });
+
+    const stripped = await stripAttachments(original, { notice: false });
+    const parsed = await parseBack(stripped!);
+
+    expect(parsed.attachments).toHaveLength(0);
+    expect(parsed.text).toContain("body");
+    expect(parsed.text).not.toContain(ATTACHMENT_DROP_NOTICE);
+  });
+
+  it("puts drive share links in a real attachments.txt part", async () => {
+    const original = await buildRaw({
+      text: "body",
+      attachments: [{ filename: "a.bin", content: Buffer.alloc(90_000, 1) }],
+    });
+    const link = `https://drive.formstr.app/#shared=naddr1example&k=${"a".repeat(64)}`;
+
+    const stripped = await stripAttachments(original, {
+      notice: false,
+      links: [{ filename: "a.bin", url: link }],
+    });
+    const parsed = await parseBack(stripped!);
+
+    expect(parsed.attachments).toHaveLength(1);
+    expect(parsed.attachments[0].filename).toBe("attachments.txt");
+    expect(parsed.attachments[0].content.toString("utf8")).toContain(link);
+    expect(parsed.text).toContain("body");
+  });
+
+  it("keeps the bridge's spam marker across the rebuild", async () => {
+    const original = await buildRaw({
+      text: "body",
+      attachments: [{ filename: "a.bin", content: Buffer.alloc(100, 1) }],
+      headers: { "X-Bridge-Spam": "yes" },
+    });
+
+    const stripped = await stripAttachments(original);
+    const parsed = await parseBack(stripped!);
+    expect(parsed.headers.get("x-bridge-spam")).toBe("yes");
   });
 
   it("keeps the HTML body when there is no text alternative", async () => {

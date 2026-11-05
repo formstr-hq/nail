@@ -344,3 +344,55 @@ describe('decodeGiftWrap failure taxonomy', () => {
     expect(out).toEqual({ failure: { reason: 'not-for-us', routine: true, retryable: false } })
   })
 })
+
+describe('spam marker derivation', () => {
+  async function wrapWithHeaders(headers: string[]) {
+    const raw = [
+      'From: sender@example.com',
+      'To: me@mailstr.app',
+      'Subject: spam test',
+      'Message-ID: <spam@test>',
+      ...headers,
+      '',
+      'body',
+    ].join('\r\n')
+    const rumor = buildMailRumor({
+      senderPubkey: SENDER,
+      recipientPubkey: ME,
+      rfc2822: raw,
+    })
+    return sealAndWrap(rumor, ME, keySigner(SENDER_SK))
+  }
+
+  it('marks a message when the server set X-Spam-Flag', async () => {
+    const out = await decodeGiftWrap(
+      await wrapWithHeaders(['X-Spam-Flag: YES']),
+      keySigner(ME_SK),
+      ME,
+    )
+    expect('email' in out && out.email.spam).toBe(true)
+  })
+
+  it('prefers the bridge marker over a sender-supplied X-Spam-Flag', async () => {
+    const out = await decodeGiftWrap(
+      await wrapWithHeaders(['X-Spam-Flag: YES', 'X-Bridge-Spam: no']),
+      keySigner(ME_SK),
+      ME,
+    )
+    expect('email' in out && out.email.spam).toBe(false)
+  })
+
+  it('trusts the bridge marker even when X-Spam-Flag was stripped or forged', async () => {
+    const out = await decodeGiftWrap(
+      await wrapWithHeaders(['X-Spam-Flag: NO', 'X-Bridge-Spam: yes']),
+      keySigner(ME_SK),
+      ME,
+    )
+    expect('email' in out && out.email.spam).toBe(true)
+  })
+
+  it('leaves ordinary mail unmarked', async () => {
+    const out = await decodeGiftWrap(await wrapWithHeaders([]), keySigner(ME_SK), ME)
+    expect('email' in out && out.email.spam).toBe(false)
+  })
+})

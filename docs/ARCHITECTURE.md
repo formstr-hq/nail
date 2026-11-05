@@ -249,8 +249,9 @@ inbound, and byte-identical for client-composed outbound mail.
 
 NIP-44 v2 caps plaintext at **65535 bytes**. Base64 inflates attachments ~33%,
 so inline MIME attachments fail above roughly **40 KB of file**. Attachments
-therefore require Blossom offload with `imeta` tags, which makes offload the
-common case for real files rather than an edge case.
+therefore require Blossom offload: the bridge writes drive share links into a
+real `attachments.txt` part, and `imeta` is still read for mail already on
+relays. Offload is the common case for real files, not an edge case.
 
 The client reads both forms. Writing them is deferred — see
 [§10](#10-out-of-scope).
@@ -557,10 +558,20 @@ with `nostr-tools` as the sole dependency. The bridge's existing
   inlined. A file over that limit currently fails inside NIP-44 with an opaque
   error, so the send path needs an explicit size guard before it accepts one.
 
-  **Receiving attachments works.** The client merges inline MIME parts with
-  Blossom-hosted files referenced by `imeta`, fetching and AES-GCM-decrypting
-  the latter on demand. Downloads are per-file and opt-in, because contacting
-  the host reveals the reader's IP to whoever sent the message.
+  **Receiving attachments works.** The bridge encrypts attachments with the
+  Formstr Drive SDK and writes drive share links into a real `attachments.txt`
+  part. The client parses that part back into attachment chips and resolves
+  each link with `resolveShare` + `downloadFile`; legacy `imeta` is still read
+  for mail already on relays. Downloads are per-file and opt-in, because
+  contacting the host reveals the reader's IP to whoever sent the message.
+
+  The drive link is a bearer token: anyone who can read the mail can open the
+  file. There is no per-recipient ACL, and the bridge does not revoke the share
+  after delivery. Resolution needs the `shared-file` event and the Blob: the
+  local relay cache can serve a share this client has already seen, otherwise
+  it fetches from the link's relay hints. Offline, or after the event ages out
+  of those relays, the download fails and can be retried when connectivity
+  returns; there is no background prefetch.
 - **Send-as-external-identity.** The bridge fails closed on `From`. Mailing-list
   style `From` rewriting is a separate feature needing its own abuse review.
 - **Batching signer calls.** See §11.
@@ -628,11 +639,11 @@ Evidence gathered 2026-07-20 by executing the committed code, not by reading it.
     the client's own code. The suite passes against a real mailcow while the
     real client cannot talk to the bridge.
 
-11. ~~**Attachments are dropped inbound.**~~ *Fixed.* The bridge sends them as
-    `imeta` tags; `receive.ts` read only `parsed.attachments` from the RFC 2822
-    body. It now merges both sources, and `parseImetaTags` moved into the
-    protocol module so both sides parse the tag from one implementation.
-    Outbound remains out of scope — see [§10](#10-out-of-scope).
+11. ~~**Attachments are dropped inbound.**~~ *Fixed.* The bridge encrypts
+    them with the Formstr Drive SDK and writes drive share links into a real
+    `attachments.txt` part. `receive.ts` parses that part (and still reads
+    legacy `imeta`) and turns every link into an attachment chip. Outbound
+    remains out of scope — see [§10](#10-out-of-scope).
 
 ## Verification
 

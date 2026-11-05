@@ -16,6 +16,9 @@ vi.hoisted(() => {
   // cap (covered separately in lmtp-server.size.test.ts), so keep the buffer
   // cap out of the way.
   process.env.MAIL_MAX_BYTES = String(64 * 1024 * 1024);
+  // Chunked delivery is gated off by default until clients reassemble; these
+  // tests exercise the chunk path, so enable it explicitly.
+  process.env.CHUNKED_MAIL_ENABLED = "true";
 });
 
 // handleMessage is unit-tested against stubbed dependencies, not the network:
@@ -26,15 +29,22 @@ vi.hoisted(() => {
 // passed in as a parameter, so it's stubbed via vi.spyOn on a real instance
 // instead of a third vi.mock.
 vi.mock("./nip05.js", () => ({ lookupNip05: vi.fn() }));
-vi.mock("./nostr-publisher.js", () => ({ publishMail: vi.fn() }));
+vi.mock("./nostr-publisher.js", () => ({
+  publishMail: vi.fn(),
+  publishChunkedMail: vi.fn(),
+}));
+vi.mock("./blossom-offload.js", () => ({ offloadAttachments: vi.fn() }));
 
 import { handleMessage, LmtpError } from "./lmtp-server.js";
 import { lookupNip05, type Nip05Result } from "./nip05.js";
-import { publishMail } from "./nostr-publisher.js";
+import { publishChunkedMail, publishMail } from "./nostr-publisher.js";
+import { offloadAttachments } from "./blossom-offload.js";
 import { UserResolver } from "./user-resolver.js";
 
 const mockedLookup = vi.mocked(lookupNip05);
 const mockedPublish = vi.mocked(publishMail);
+const mockedPublishChunked = vi.mocked(publishChunkedMail);
+const mockedOffload = vi.mocked(offloadAttachments);
 
 const PUBKEY = "a".repeat(64);
 const RAW = Buffer.from(
@@ -83,8 +93,12 @@ describe("handleMessage", () => {
   beforeEach(() => {
     mockedLookup.mockReset();
     mockedPublish.mockReset();
+    mockedPublishChunked.mockReset();
+    mockedOffload.mockReset();
+    mockedOffload.mockResolvedValue(null);
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -211,12 +225,43 @@ describe("handleMessage", () => {
     expect(parsed.attachments.map((a) => a.filename)).toContain("attachments_error.txt");
   });
 
-  it("552s a message that is still over the ceiling after stripping — permanent, not retried", async () => {
+  it("publishes the offloaded body with its drive share link", async () => {
     mockedLookup.mockResolvedValue(foundResult());
     mockedPublish.mockResolvedValue(true);
+    const links = [
+      { filename: "a.pdf", url: "https://drive.formstr.app/#shared=naddr1example&k=" + "a".repeat(64) },
+    ];
+    mockedOffload.mockResolvedValue({
+      raw: `From: bob@example.com\r\n\r\nbody\n\n- a.pdf: ${links[0]!.url}`,
+      links,
+    });
     const resolver = makeUserResolver();
 
-    // A huge plain-text body: nothing to strip, so the message stays too big.
+    await expect(
+      handleMessage(
+        Buffer.from(`From: bob@example.com\r\n\r\n${"x".repeat(200_000)}`, "utf8"),
+        "alice@mailstr.app",
+        resolver,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(mockedPublish).toHaveBeenCalledWith(
+      expect.objectContaining({ raw: expect.stringContaining(links[0]!.url) }),
+    );
+    expect(mockedPublish).not.toHaveBeenCalledWith(
+      expect.objectContaining({ extraTags: expect.anything() }),
+    );
+    expect(mockedPublishChunked).not.toHaveBeenCalled();
+  });
+
+  it("chunks a plain-text body that is over the ceiling instead of bouncing it", async () => {
+    mockedLookup.mockResolvedValue(foundResult());
+    mockedPublish.mockResolvedValue(true);
+    mockedPublishChunked.mockResolvedValue({ ok: true, parts: 8, msgid: "a".repeat(64) });
+    const resolver = makeUserResolver();
+
+    // A huge plain-text body: nothing to strip, so chunking is the only path
+    // that does not lose the mail.
     const hugeText = [
       "From: bob@example.com",
       "To: alice@mailstr.app",
@@ -225,16 +270,22 @@ describe("handleMessage", () => {
       "x".repeat(200_000),
     ].join("\r\n");
 
-    const err = await captureLmtpError(
+    await expect(
       handleMessage(Buffer.from(hugeText, "utf8"), "alice@mailstr.app", resolver),
-    );
-    expect(err.responseCode).toBe(552);
+    ).resolves.toBeUndefined();
+
+    // The single-wrap publish is skipped entirely (over the ceiling)...
     expect(mockedPublish).not.toHaveBeenCalled();
+    // ...and the original bytes are handed to the chunker unchanged.
+    expect(mockedPublishChunked).toHaveBeenCalledTimes(1);
+    const raw: string = mockedPublishChunked.mock.calls[0][0].raw;
+    expect(raw.endsWith("x".repeat(200_000))).toBe(true);
   });
 
-  it("552s an over-ceiling message whose stripped form is still too big", async () => {
+  it("chunks the stripped form when attachments were removed but the body is still too big", async () => {
     mockedLookup.mockResolvedValue(foundResult());
     mockedPublish.mockResolvedValue(true);
+    mockedPublishChunked.mockResolvedValue({ ok: true, parts: 9, msgid: "b".repeat(64) });
     const resolver = makeUserResolver();
 
     // An attachment to strip, but also a body so large the rebuilt message
@@ -250,11 +301,58 @@ describe("handleMessage", () => {
     });
     const raw: Buffer = await composer.compile().build();
 
-    const err = await captureLmtpError(
+    await expect(
       handleMessage(raw, "alice@mailstr.app", resolver),
+    ).resolves.toBeUndefined();
+
+    const chunkedRaw: string = mockedPublishChunked.mock.calls[0][0].raw;
+    // The 1 MB attachment was dropped before chunking; the large body stayed.
+    expect(Buffer.byteLength(chunkedRaw, "latin1")).toBeLessThan(300_000);
+    const parsed = await simpleParser(Buffer.from(chunkedRaw, "latin1"));
+    expect(parsed.attachments.map((a) => a.filename)).toContain("attachments_error.txt");
+    expect(parsed.text?.length ?? 0).toBeGreaterThan(150_000);
+  });
+
+  it("552s when the split exceeds the chunk budget — permanent, not retried", async () => {
+    mockedLookup.mockResolvedValue(foundResult());
+    mockedPublish.mockResolvedValue(true);
+    mockedPublishChunked.mockResolvedValue({
+      ok: false,
+      parts: 99,
+      reason: "too-many",
+      msgid: "c".repeat(64),
+    });
+    const resolver = makeUserResolver();
+
+    const err = await captureLmtpError(
+      handleMessage(
+        Buffer.from(`From: a@b\r\n\r\n${"z".repeat(200_000)}`, "utf8"),
+        "alice@mailstr.app",
+        resolver,
+      ),
     );
     expect(err.responseCode).toBe(552);
-    expect(mockedPublish).not.toHaveBeenCalled();
+  });
+
+  it("451s when chunk publishing reaches no relay — transient, Postfix retries", async () => {
+    mockedLookup.mockResolvedValue(foundResult());
+    mockedPublish.mockResolvedValue(true);
+    mockedPublishChunked.mockResolvedValue({
+      ok: false,
+      parts: 8,
+      reason: "failed",
+      msgid: "d".repeat(64),
+    });
+    const resolver = makeUserResolver();
+
+    const err = await captureLmtpError(
+      handleMessage(
+        Buffer.from(`From: a@b\r\n\r\n${"z".repeat(200_000)}`, "utf8"),
+        "alice@mailstr.app",
+        resolver,
+      ),
+    );
+    expect(err.responseCode).toBe(451);
   });
 
   it("passes the byte-string form of the raw message to publishMail, not UTF-8-decoded text", async () => {

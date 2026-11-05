@@ -1,12 +1,17 @@
-/** The outcome of one queue item: a value, or a classified failure. */
+import type { WrapSecret } from './chunkAssembler'
+
+/** The outcome of one queue item: a value, nothing to emit, or a failure. */
 export type QueueOutcome<T> =
-  | { value: T; secret?: string }
+  | { value: T; secrets?: WrapSecret[] }
+  /** Decoded, but not emittable yet (a chunk waiting for its siblings). */
+  | { ignored: true }
   | { failure: { routine: boolean; reason: string; retryable?: boolean } }
 
 export interface BoundedQueueCallbacks<T> {
-  /** A successful decode. `secret` is whatever per-item credential the decode
-   *  surfaced (for mail: the wrap author's key that powers delete-forever). */
-  onResult: (value: T, secret: string | undefined) => void
+  /** A successful decode. `secrets` is whatever per-item credentials the
+   *  decode surfaced (for mail: the wrap authors' keys that power
+   *  delete-forever — one per chunk). */
+  onResult: (value: T, secrets: WrapSecret[] | undefined) => void
   /** A non-routine failure (addressed to us but undecodable). Routine failures
    *  — other people's ciphertext we cannot read — are not reported. */
   onFailure: (event: import('nostr-tools').Event, reason: string) => void
@@ -90,8 +95,11 @@ export class BoundedDecodeQueue<T> {
         .decode(item.event)
         .then((outcome) => {
           if (this.stopped) return
+          // Buffered (e.g. a chunk with siblings still in flight): nothing to
+          // report, but the item is done and the pump must move on.
+          if ('ignored' in outcome) return
           if ('value' in outcome) {
-            this.callbacks.onResult(outcome.value, outcome.secret)
+            this.callbacks.onResult(outcome.value, outcome.secrets)
             return
           }
           if (outcome.failure.retryable && item.attempt < MAX_RETRIES) {
@@ -125,14 +133,18 @@ export class BoundedDecodeQueue<T> {
 
 /** Mail-specific outcome — the shape receive.ts hands back. */
 export type DecodeOutcome =
-  | { email: import('@/app/types/mail').Email; wrapSecret?: string }
+  | { email: import('@/app/types/mail').Email; wrapSecrets?: WrapSecret[] }
+  | { ignored: true }
   | { failure: { routine: boolean; reason: string; retryable?: boolean } }
 
 export interface DecodeQueueCallbacks {
-  /** A wrap decoded into an email. Save the wrap key BEFORE the email:
-   *  delete-forever needs it on hand, and a crash between the two must not
-   *  strand the mail as undeletable. */
-  onEmail: (email: import('@/app/types/mail').Email, wrapSecret: string | undefined) => void
+  /** A wrap decoded into an email. Save the wrap keys BEFORE the email:
+   *  delete-forever needs them on hand, and a crash between the two must not
+   *  strand the mail as undeletable. A chunked message yields one per part. */
+  onEmail: (
+    email: import('@/app/types/mail').Email,
+    wrapSecrets: WrapSecret[] | undefined,
+  ) => void
   /** A non-routine failure (a wrap addressed to us that we could not decode).
    *  Routine failures — other people's mail we cannot read — are not reported. */
   onFailure: (event: import('nostr-tools').Event, reason: string) => void
@@ -167,8 +179,9 @@ export class DecodeQueue {
     this.inner.push(event, async (e) => {
       const outcome = await decode(e)
       if ('email' in outcome) {
-        return { value: outcome.email, secret: outcome.wrapSecret }
+        return { value: outcome.email, secrets: outcome.wrapSecrets }
       }
+      if ('ignored' in outcome) return { ignored: true }
       return { failure: outcome.failure }
     })
   }

@@ -12,7 +12,10 @@ vi.hoisted(() => {
 });
 
 vi.mock("./nip05.js", () => ({ lookupNip05: vi.fn() }));
-vi.mock("./nostr-publisher.js", () => ({ publishMail: vi.fn() }));
+vi.mock("./nostr-publisher.js", () => ({
+  publishMail: vi.fn(),
+  publishChunkedMail: vi.fn(),
+}));
 
 import { createLmtpServer } from "./lmtp-server.js";
 import { lookupNip05 } from "./nip05.js";
