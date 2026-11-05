@@ -28,7 +28,7 @@ import { isPgpMime, stripAttachments } from "./stripAttachments.js";
 
 const SERVER_QUERY_TIMEOUT_MS = 5_000;
 const UPLOAD_TIMEOUT_MS = 90_000;
-/** Total time one attachment may spend trying servers before the strip fallback. */
+/** Total time all attachments may spend uploading before the strip fallback. */
 const UPLOAD_BUDGET_MS = 240_000;
 const MAX_SERVER_QUERIES = 8;
 
@@ -167,8 +167,8 @@ async function uploadOne(
   plaintext: Buffer,
   candidates: readonly string[],
   recipient: string,
+  deadline: number,
 ): Promise<{ uploaded: UploadedAttachment; server: string } | null> {
-  const deadline = Date.now() + UPLOAD_BUDGET_MS;
   for (const server of candidates) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
@@ -240,11 +240,12 @@ export async function offloadAttachments(
   if (candidates.length === 0) return null;
 
   const tags: string[][] = [];
+  const deadline = Date.now() + UPLOAD_BUDGET_MS;
   for (const attachment of parsed.attachments) {
     const bytes = Buffer.isBuffer(attachment.content)
       ? attachment.content
       : Buffer.from(attachment.content);
-    const uploaded = await uploadOne(bytes, candidates, params.recipient);
+    const uploaded = await uploadOne(bytes, candidates, params.recipient, deadline);
     if (!uploaded) return null;
     tags.push(imetaTags(attachment, uploaded.uploaded));
   }

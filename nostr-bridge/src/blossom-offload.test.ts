@@ -152,4 +152,55 @@ describe("offloadAttachments", () => {
       }),
     ).toBeNull();
   });
+
+  it("shares one upload budget across every attachment", async () => {
+    let now = 1_000_000;
+    let call = 0;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    mockedUpload.mockReset();
+    mockedUpload.mockImplementation(async () => {
+      call += 1;
+      now += 100_000;
+      // First attachment: the user's server fails, the operator server works.
+      if (call === 2) return uploaded;
+      throw new Error("timed out");
+    });
+
+    try {
+      const composer = new MailComposer({
+        from: "a@example.com",
+        to: "b@example.com",
+        subject: "two attachments",
+        text: "body",
+        attachments: [
+          { filename: "a.pdf", content: Buffer.alloc(50_000, 1) },
+          { filename: "b.pdf", content: Buffer.alloc(50_000, 2) },
+        ],
+      });
+      const raw = await composer.compile().build();
+
+      expect(
+        await offloadAttachments(raw, {
+          recipientPubkey: "a".repeat(64),
+          relays: [],
+          recipient: "b@example.com",
+          userServers: ["https://user.example"],
+        }),
+      ).toBeNull();
+
+      // 240s budget: attachment 1 burns 200s (100s failing over to the
+      // operator), so attachment 2 gets only the remaining 40s — not a fresh
+      // 240s, which would let a multi-attachment mail outlive the LMTP socket.
+      expect(mockedUpload).toHaveBeenCalledTimes(3);
+      expect(mockedUpload).toHaveBeenNthCalledWith(
+        3,
+        expect.any(Buffer),
+        expect.any(Uint8Array),
+        "https://user.example",
+        40_000,
+      );
+    } finally {
+      clock.mockRestore();
+    }
+  });
 });
