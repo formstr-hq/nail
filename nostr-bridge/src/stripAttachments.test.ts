@@ -87,6 +87,25 @@ describe("stripAttachments", () => {
     expect(parsed.text).not.toContain(ATTACHMENT_DROP_NOTICE);
   });
 
+  it("puts drive share links in a real attachments.txt part", async () => {
+    const original = await buildRaw({
+      text: "body",
+      attachments: [{ filename: "a.bin", content: Buffer.alloc(90_000, 1) }],
+    });
+    const link = `https://drive.formstr.app/#shared=naddr1example&k=${"a".repeat(64)}`;
+
+    const stripped = await stripAttachments(original, {
+      notice: false,
+      links: [{ filename: "a.bin", url: link }],
+    });
+    const parsed = await parseBack(stripped!);
+
+    expect(parsed.attachments).toHaveLength(1);
+    expect(parsed.attachments[0].filename).toBe("attachments.txt");
+    expect(parsed.attachments[0].content.toString("utf8")).toContain(link);
+    expect(parsed.text).toContain("body");
+  });
+
   it("keeps the bridge's spam marker across the rebuild", async () => {
     const original = await buildRaw({
       text: "body",

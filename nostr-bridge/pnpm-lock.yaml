@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@formstr/drive-sdk':
+        specifier: ^0.2.1
+        version: 0.2.1(typescript@5.9.3)
       express:
         specifier: ^4.19.2
         version: 4.22.2
@@ -216,6 +219,9 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@formstr/drive-sdk@0.2.1':
+    resolution: {integrity: sha512-1e57sLPMPopjtFmuPXgxpsWKFcmK1DIahztwPmcS/RwVocjkydw/wG80mY+iZmF1UtM/CmjMjRIV23tIksqqxA==}
+
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
 
@@ -226,6 +232,10 @@ packages:
   '@noble/curves@2.0.1':
     resolution: {integrity: sha512-vs1Az2OOTBiP4q0pwjW5aF0xp9n4MxVrmkFBxc6EKZc6ddYx5gaZiAsZoq0uRRXWbi3AT/sBqn05eRPtn1JCPw==}
     engines: {node: '>= 20.19.0'}
+
+  '@noble/hashes@1.8.0':
+    resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
+    engines: {node: ^14.21.3 || >=16}
 
   '@noble/hashes@2.0.1':
     resolution: {integrity: sha512-XlOlEbQcE9fmuXxrVTXCTlG2nlRXa9Rj3rr5Ue/+tX+nmkgbX720YHh0VR3hBF9xDvwnb8D2shVGOwNx+ulArw==}
@@ -382,6 +392,9 @@ packages:
     resolution: {integrity: sha512-oELmoyA6ML9jDRMV3kgcMQFKxUfBU0yFVn6yTctVaLT5ygXnxH52I3TZEgV9EhXJC68/uFvE5Daj1/25c0Xa/A==}
     peerDependencies:
       selderee: ~0.12.0
+
+  '@sinclair/typebox@0.34.52':
+    resolution: {integrity: sha512-XiMQh7qqVlxZzcVD+kkGMNGMzcTrDMLWI7S4x7z1MkCkbDPrekpZXEUK0eZqZFMuHQg2a2DZOcDIh9o5v3Gonw==}
 
   '@types/body-parser@1.19.6':
     resolution: {integrity: sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==}
@@ -1167,6 +1180,14 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
+  '@formstr/drive-sdk@0.2.1(typescript@5.9.3)':
+    dependencies:
+      '@noble/hashes': 1.8.0
+      '@sinclair/typebox': 0.34.52
+      nostr-tools: 2.23.8(typescript@5.9.3)
+    transitivePeerDependencies:
+      - typescript
+
   '@jridgewell/sourcemap-codec@1.5.5': {}
 
   '@noble/ciphers@2.1.1': {}
@@ -1174,6 +1195,8 @@ snapshots:
   '@noble/curves@2.0.1':
     dependencies:
       '@noble/hashes': 2.0.1
+
+  '@noble/hashes@1.8.0': {}
 
   '@noble/hashes@2.0.1': {}
 
@@ -1270,6 +1293,8 @@ snapshots:
       domelementtype: 2.3.0
       domhandler: 5.0.3
       selderee: 0.12.0
+
+  '@sinclair/typebox@0.34.52': {}
 
   '@types/body-parser@1.19.6':
     dependencies:

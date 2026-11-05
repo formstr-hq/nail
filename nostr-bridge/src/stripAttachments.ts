@@ -1,6 +1,11 @@
 import { simpleParser, type AddressObject, type ParsedMail } from "mailparser";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { bytesToMessageString } from "./protocol/bytes.js";
+import {
+  ATTACHMENTS_TXT_FILENAME,
+  formatAttachmentLinks,
+  type AttachmentShareLink,
+} from "./protocol/attachment-links.js";
 
 /**
  * Fallback for inbound mail that relays will not carry.
@@ -68,9 +73,11 @@ export interface StripAttachmentsOptions {
   /**
    * Default true. False rebuilds without `attachments_error.txt` and without
    * the could-not-deliver notice; used after the attachments were encrypted and
-   * uploaded to Blossom, where the `imeta` tags carry the links.
+   * uploaded to Blossom, where the `attachments.txt` part carries the links.
    */
   notice?: boolean;
+  /** Drive share links to put in a real `attachments.txt` MIME part. */
+  links?: readonly AttachmentShareLink[];
 }
 
 export async function stripAttachments(
@@ -78,6 +85,7 @@ export async function stripAttachments(
   options: StripAttachmentsOptions = {},
 ): Promise<string | null> {
   const withNotice = options.notice ?? true;
+  const links = options.links ?? [];
   const parsed = await simpleParser(raw);
   if (parsed.attachments.length === 0) return null;
   if (isPgpMime(parsed)) return null;
@@ -100,7 +108,7 @@ export async function stripAttachments(
     replyTo: addressText(parsed.replyTo),
     subject: parsed.subject,
     // With a notice, it is the body too when the original was attachment-only.
-    // Without one (the Blossom path), the links live in the rumor's imeta tags.
+    // Without one (the drive path), the links live in `attachments.txt`.
     text:
       parsed.text ??
       (parsed.html
@@ -119,7 +127,17 @@ export async function stripAttachments(
             },
           ],
         }
-      : {}),
+      : links.length > 0
+        ? {
+            attachments: [
+              {
+                filename: ATTACHMENTS_TXT_FILENAME,
+                content: Buffer.from(formatAttachmentLinks(links), "utf8"),
+                contentType: "text/plain",
+              },
+            ],
+          }
+        : {}),
     messageId: parsed.messageId,
     date: parsed.date,
     references: parsed.references,

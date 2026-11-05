@@ -5,9 +5,11 @@
  * (with an `attachments_error.txt` notice). That loses the file even when the
  * sender and recipient both have Blossom servers available.
  *
- * This path encrypts each attachment, uploads it to Blossom, and puts the
- * resulting `imeta` tags on the rumor. The reader's client already renders
- * hosted attachments (fetch + AES-GCM decrypt), so no client change is needed.
+ * This path encrypts each attachment with the Formstr Drive SDK (NIP-FS),
+ * uploads it to Blossom, and publishes a drive share link. The rebuilt message
+ * carries those links in a real `attachments.txt` MIME part, so Mailstr
+ * readers turn them back into attachment chips and ordinary mail clients see
+ * that files were attached.
  *
  * Server order, per product requirement:
  *   1. the recipient's own BUD-03 `kind:10063` servers, in order;
@@ -19,16 +21,16 @@
  * just without the file.
  */
 
-import { simpleParser, type Attachment } from "mailparser";
+import { simpleParser } from "mailparser";
 import type { Event } from "nostr-tools";
 import { getEventHash, verifyEvent } from "nostr-tools/pure";
 import { config } from "./config.js";
-import { uploadEncryptedAttachment, type UploadedAttachment } from "./blossom-client.js";
+import { uploadDriveShare } from "./drive-share.js";
 import { RelayWebSocket } from "./relay-socket.js";
 import { isPgpMime, stripAttachments } from "./stripAttachments.js";
+import type { AttachmentShareLink } from "./protocol/attachment-links.js";
 
 const SERVER_QUERY_TIMEOUT_MS = 5_000;
-const UPLOAD_TIMEOUT_MS = 90_000;
 /** Total time all attachments may spend uploading before the strip fallback. */
 const UPLOAD_BUDGET_MS = 240_000;
 const MAX_SERVER_QUERIES = 8;
@@ -36,8 +38,8 @@ const MAX_SERVER_QUERIES = 8;
 export interface OffloadResult {
   /** The message rebuilt without its attachments (byte-string representation). */
   raw: string;
-  /** `imeta` tags to put on the rumor (every chunk carries them). */
-  tags: string[][];
+  /** Drive share links to put in the rebuilt message's `attachments.txt` part. */
+  links: AttachmentShareLink[];
 }
 
 function normalizeServer(raw: string): string | null {
@@ -62,23 +64,6 @@ export function blossomCandidates(userServers: readonly string[], envServer: str
   for (const server of userServers) add(server);
   add(envServer);
   return out;
-}
-
-/** The `imeta` tag shape `parseImetaTags` and the client's AttachmentRow read. */
-export function imetaTags(attachment: Attachment, uploaded: UploadedAttachment): string[] {
-  const tags = [
-    "imeta",
-    `url ${uploaded.url}`,
-    `m ${attachment.contentType || "application/octet-stream"}`,
-    `filename ${attachment.filename || "attachment"}`,
-  ];
-  if (typeof attachment.size === "number") tags.push(`size ${attachment.size}`);
-  tags.push(
-    `decryption-key ${uploaded.encryptionKey}`,
-    `decryption-nonce ${uploaded.decryptionNonce}`,
-    `x ${uploaded.sha256}`,
-  );
-  return tags;
 }
 
 /** One REQ against one relay; resolves with whatever arrived before EOSE/timeout. */
@@ -184,37 +169,6 @@ export async function fetchBlossomServers(
   return blossomServersFromEvents(results.flat(), pubkey);
 }
 
-async function uploadOne(
-  plaintext: Buffer,
-  candidates: readonly string[],
-  recipient: string,
-  deadline: number,
-): Promise<{ uploaded: UploadedAttachment; server: string } | null> {
-  for (const server of candidates) {
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) break;
-    try {
-      const uploaded = await uploadEncryptedAttachment(
-        plaintext,
-        config.bridgePrivkey,
-        server,
-        Math.min(UPLOAD_TIMEOUT_MS, remaining),
-      );
-      console.log(
-        `nostr-bridge: uploaded attachment for ${recipient} to ${server} ` +
-          `(${plaintext.length} bytes)`,
-      );
-      return { uploaded, server };
-    } catch (error) {
-      console.warn(
-        `nostr-bridge: Blossom upload to ${server} failed for ${recipient}: ` +
-          `${(error as Error).message}`,
-      );
-    }
-  }
-  return null;
-}
-
 /**
  * Encrypt and upload every attachment, then rebuild the message without them.
  * Returns null when the message fits a wrap, has nothing to offload, is
@@ -260,20 +214,31 @@ export async function offloadAttachments(
   const candidates = blossomCandidates(userServers, config.blossomServerUrl);
   if (candidates.length === 0) return null;
 
-  const tags: string[][] = [];
+  const links: AttachmentShareLink[] = [];
   const deadline = Date.now() + UPLOAD_BUDGET_MS;
   for (const attachment of parsed.attachments) {
     const bytes = Buffer.isBuffer(attachment.content)
       ? attachment.content
       : Buffer.from(attachment.content);
-    const uploaded = await uploadOne(bytes, candidates, params.recipient, deadline);
-    if (!uploaded) return null;
-    tags.push(imetaTags(attachment, uploaded.uploaded));
+    const shared = await uploadDriveShare(
+      bytes,
+      {
+        filename: attachment.filename || "attachment",
+        mimeType: attachment.contentType || "application/octet-stream",
+      },
+      { servers: candidates, relays: params.relays, deadline },
+    );
+    if (!shared) return null;
+    console.log(
+      `nostr-bridge: uploaded attachment for ${params.recipient} to ${shared.server} ` +
+        `(${bytes.length} bytes)`,
+    );
+    links.push({ filename: shared.filename, url: shared.shareUrl });
   }
 
   let stripped: string | null;
   try {
-    stripped = await stripAttachments(raw, { notice: false });
+    stripped = await stripAttachments(raw, { notice: false, links });
   } catch (error) {
     console.warn(
       `nostr-bridge: rebuild after upload failed for ${params.recipient}: ` +
@@ -284,8 +249,8 @@ export async function offloadAttachments(
   if (!stripped) return null;
 
   console.log(
-    `nostr-bridge: offloaded ${tags.length} attachment(s) for ${params.recipient}; ` +
-      "delivering the body with imeta links",
+    `nostr-bridge: offloaded ${links.length} attachment(s) for ${params.recipient}; ` +
+      "delivering the body with drive share links",
   );
-  return { raw: stripped, tags };
+  return { raw: stripped, links };
 }

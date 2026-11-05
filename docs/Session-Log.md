@@ -2131,3 +2131,28 @@ production, so the strip/upload peak fits.
 
 Tests: bridge 185 tests, including upload-server fallback order and the
 no-notice rebuild; tsc clean.
+
+## 2026-11-05 — Inbound attachments: drive-sdk share links
+
+The inbound offload now uses the drive path from `pr/mail-share-links` instead
+of the bridge's one-shot AES-GCM/imeta shape:
+
+- `nostr-bridge/src/drive-share.ts` encrypts with `@formstr/drive-sdk`
+  (`encryptFile`, NIP-FS segmented AES-256-GCM), uploads with
+  `uploadEncryptedFile`, publishes a `shared-file` event with a throwaway key,
+  and returns the `https://drive.formstr.app/#shared=<naddr>&k=<hex>` link.
+- Upload and share signing keys are throwaway, so Blossom and the relays never
+  learn the bridge's identity; the link itself is the bearer token.
+- `blossom-offload.ts` still tries the recipient's BUD-03 servers first (now
+  hash- and signature-verified), then `BLOSSOM_SERVER_URL`
+  (`https://nostr.download` by default). Uploads share one 240 s deadline.
+- The rebuilt message carries the links in the real `attachments.txt` MIME
+  part; the client parses it back into attachment chips and resolves them via
+  `resolveShare` + `downloadFile`. The same `attachments.txt` format is kept
+  for now; a clearer/clickable presentation is a follow-up.
+- The client also reads NIP-FS `imeta` for mail already on relays, and the
+  protocol parser gained `x`/`ox`/`size` so those attachments still decrypt.
+
+Verified with a live `nostr.download` round-trip: encrypt → upload → publish
+share event → resolve link → download/decrypt. Bridge: 189 tests, tsc clean.
+Client: 507 tests, tsc clean.

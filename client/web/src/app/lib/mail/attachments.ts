@@ -1,3 +1,5 @@
+import type { File as DriveFile } from '@formstr/drive-sdk'
+import { resolveSharedAttachment } from './shareLinkResolve'
 import type { Attachment } from '@/app/types/mail'
 
 /**
@@ -91,13 +93,17 @@ export async function decryptAttachment(
 /**
  * The attachment's bytes, wherever they live.
  *
- * Inline MIME parts already carry their bytes. Blossom-hosted ones are fetched
- * on demand, and decrypted when the sender supplied a key — `parseImetaTags`
- * allows attachments hosted in the clear, so an absent key is legitimate
- * rather than an error.
+ * Inline MIME parts already carry their bytes. A drive share link needs no
+ * key from the message: the link itself is the bearer token. Blossom-hosted
+ * files are fetched on demand and decrypted when the sender supplied a key.
+ * Two encrypted formats exist: the legacy one-shot AES-GCM (key + nonce) the
+ * bridge used to write, and the NIP-FS / drive-sdk segment format
+ * (key + `x`/`ox`/`size`) the bridge writes now.
  */
 export async function resolveAttachment(attachment: Attachment): Promise<Uint8Array> {
   if (attachment.data) return attachment.data
+
+  if (attachment.shareUrl) return resolveSharedAttachment(attachment.shareUrl)
 
   if (!attachment.blossomUrl) {
     throw new Error('This attachment has no contents and no link to fetch')
@@ -120,8 +126,68 @@ export async function resolveAttachment(attachment: Attachment): Promise<Uint8Ar
   }
   const blob = new Uint8Array(await res.arrayBuffer())
 
-  if (!attachment.blossomKey || !attachment.blossomNonce) return blob
-  return decryptAttachment(blob, attachment.blossomKey, attachment.blossomNonce)
+  if (!attachment.blossomKey) return blob
+
+  // Legacy: one AES-256-GCM blob, nonce carried in the tag.
+  if (attachment.blossomNonce) {
+    return decryptAttachment(blob, attachment.blossomKey, attachment.blossomNonce)
+  }
+
+  // NIP-FS: segmented ciphertext whose nonces are derived from segment index.
+  if (
+    attachment.blossomBlobHash &&
+    attachment.blossomFileHash &&
+    attachment.size !== undefined
+  ) {
+    return decryptDriveAttachment({
+      blob,
+      url: attachment.blossomUrl,
+      filename: attachment.filename,
+      contentType: attachment.contentType,
+      key: attachment.blossomKey,
+      blobHash: attachment.blossomBlobHash,
+      fileHash: attachment.blossomFileHash,
+      size: attachment.size,
+    })
+  }
+
+  // A key with no usable scheme is malformed, not "hosted in the clear" —
+  // returning the ciphertext would hand the reader an unopenable file.
+  throw new Error('Attachment is missing the fields needed to decrypt it')
+}
+
+/**
+ * Decrypt a NIP-FS blob with the drive-sdk. `decryptFileBytes` verifies both
+ * the ciphertext hash and the plaintext hash, so a tampered or truncated blob
+ * fails rather than producing garbage.
+ */
+async function decryptDriveAttachment(input: {
+  blob: Uint8Array
+  url: string
+  filename: string
+  contentType: string
+  key: string
+  blobHash: string
+  fileHash: string
+  size: number
+}): Promise<Uint8Array> {
+  // Loaded on demand: the drive-sdk is only needed for this format.
+  const { DEFAULT_CHUNK_SIZE, decryptFileBytes } = await import('@formstr/drive-sdk')
+
+  const file: DriveFile = {
+    name: input.filename || 'attachment',
+    type: input.contentType || 'application/octet-stream',
+    parent: '',
+    uploadedAt: 0,
+    servers: [input.url],
+    encryptionKey: input.key,
+    encryptionAlgorithm: 'aes-gcm',
+    blobHash: input.blobHash,
+    unencryptedFileHash: input.fileHash,
+    size: input.size,
+    chunkSize: DEFAULT_CHUNK_SIZE,
+  }
+  return decryptFileBytes(input.blob, file)
 }
 
 /** Hand bytes to the user as a file — browser download on the web, the native

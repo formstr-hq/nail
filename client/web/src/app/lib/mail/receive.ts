@@ -10,15 +10,16 @@ import {
 } from '@protocol'
 import type { ChunkAssembler, WrapSecret } from './chunkAssembler'
 import { parseRfc2822 } from './rfc2822'
+import {
+  parseAttachmentLinks,
+  stripAttachmentLinksHtml,
+} from './attachmentLinks'
+import { splitMimeAttachments, type ParsedMimeAttachment } from './mimeAttachments'
 import { spamFromHeaders } from './folders'
 import type { Attachment, Email } from '@/app/types/mail'
 
 /** The shape postal-mime hands back; imported structurally to avoid a dep. */
-type ParsedAttachment = {
-  filename?: string | null
-  mimeType?: string
-  content: ArrayBuffer | Uint8Array | string
-}
+type ParsedAttachment = ParsedMimeAttachment
 
 export interface DecodeFailure {
   reason: string
@@ -43,29 +44,6 @@ export type DecodeResult =
       wrapSecret?: string
     }
   | { failure: DecodeFailure }
-
-/**
- * MIME parts carried in the message body itself.
- *
- * postal-mime types `content` as a union, so normalise to bytes here rather
- * than leaving every consumer to guess which shape it got. A string only
- * appears when the parser was asked for an encoding we do not request, so it
- * is decoded as UTF-8 rather than dropped.
- */
-function inlineAttachments(parsed: ParsedAttachment[] | undefined): Attachment[] {
-  return (parsed ?? []).map((a) => {
-    const data =
-      typeof a.content === 'string'
-        ? new TextEncoder().encode(a.content)
-        : new Uint8Array(a.content instanceof Uint8Array ? a.content : new Uint8Array(a.content))
-    return {
-      filename: a.filename ?? 'attachment',
-      contentType: a.mimeType ?? 'application/octet-stream',
-      size: data.byteLength,
-      data,
-    }
-  })
-}
 
 /**
  * Pull an RFC 3156 PGP/MIME body out of the parsed attachment list.
@@ -114,11 +92,28 @@ function hostedAttachments(tags: string[][]): Attachment[] {
   return parseImetaTags(tags).map((a) => ({
     filename: a.filename,
     contentType: a.mimeType,
-    size: undefined,
+    size: a.size,
     blossomUrl: a.url,
     blossomKey: a.encryptionKey,
     blossomNonce: a.decryptionNonce,
+    blossomBlobHash: a.blobHash,
+    blossomFileHash: a.unencryptedFileHash,
   }))
+}
+
+/**
+ * The same share link can arrive in the body and in `Attachments.txt`. Keep
+ * one chip per URL; inline files have no URL and are never deduped by name.
+ */
+function dedupeLinkedAttachments(attachments: Attachment[]): Attachment[] {
+  const seen = new Set<string>()
+  return attachments.filter((attachment) => {
+    const key = attachment.shareUrl ?? attachment.blossomUrl
+    if (!key) return true
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
 }
 
 /**
@@ -276,6 +271,20 @@ export async function decodeRumor(
     // attachments.
     const pgpMime = looksLikeMail ? extractPgpMime(parsed.attachments) : null
 
+    // SMTP-bound messages carry drive share links in the body because the
+    // bridge cannot read the rumor's `imeta` tags. Pull that list out and turn
+    // it into ordinary attachments, so our reader sees chips, not raw URLs.
+    // A PGP/MIME body is ciphertext — its links live inside the armor and are
+    // parsed after decryption.
+    const bodyText = pgpMime ? pgpMime.armored : looksLikeMail ? (parsed.text ?? '') : rawBody
+    const linked = pgpMime ? { body: bodyText, attachments: [] } : parseAttachmentLinks(bodyText)
+    const bodyHtml =
+      looksLikeMail && linked.attachments.length > 0
+        ? stripAttachmentLinksHtml(parsed.html ?? undefined)
+        : looksLikeMail
+          ? (parsed.html ?? undefined)
+          : undefined
+
     // The claimed `From:` header, kept verbatim. Never display it directly —
     // use useSenderIdentity / deriveSenderIdentity, which decide whether it is
     // backed by the sealing key. A header-less message gets an empty address;
@@ -292,6 +301,14 @@ export async function decodeRumor(
 
     const ccAddresses = (parsed.cc ?? []).map(toDisplay)
 
+    const { inline, shared } = splitMimeAttachments(
+      pgpMime
+        ? (parsed.attachments ?? []).filter(
+            (a) => a !== pgpMime.dataPart && a.mimeType !== 'application/pgp-encrypted',
+          )
+        : parsed.attachments,
+    )
+
     return {
       email: {
         id: opts.id,
@@ -303,23 +320,18 @@ export async function decodeRumor(
         to: (parsed.to ?? []).map(toDisplay),
         cc: ccAddresses.length ? ccAddresses : undefined,
         subject: parsed.subject ?? '(no subject)',
-        body: pgpMime ? pgpMime.armored : looksLikeMail ? (parsed.text ?? '') : rawBody,
-        bodyHtml: looksLikeMail ? (parsed.html ?? undefined) : undefined,
-        // Attachments are out of scope for this pass. Surface that they exist
-        // rather than dropping them silently, so a user is never unaware that
-        // a message carried one. The PGP/MIME control+data parts are the
-        // message body, not attachments, so they are excluded here once lifted
-        // into `body` above.
-        attachments: [
-          ...inlineAttachments(
-            pgpMime
-              ? (parsed.attachments ?? []).filter(
-                  (a) => a !== pgpMime.dataPart && a.mimeType !== 'application/pgp-encrypted',
-                )
-              : parsed.attachments,
-          ),
+        body: linked.body,
+        bodyHtml,
+        // Inline MIME parts, legacy `imeta` attachments, drive links parsed
+        // from the body, and the real `attachments.txt` part. The PGP/MIME
+        // control+data parts are the message body, not attachments, so they
+        // are excluded here once lifted into `body` above.
+        attachments: dedupeLinkedAttachments([
+          ...inline,
           ...hostedAttachments(rumor.tags),
-        ],
+          ...linked.attachments,
+          ...shared,
+        ]),
         timestamp: rumor.created_at,
         senderPubkey: seal.pubkey,
         // Our own outgoing copies (the self-wrap that files under Sent) are

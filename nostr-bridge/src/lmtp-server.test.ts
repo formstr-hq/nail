@@ -225,11 +225,16 @@ describe("handleMessage", () => {
     expect(parsed.attachments.map((a) => a.filename)).toContain("attachments_error.txt");
   });
 
-  it("publishes the offloaded body with imeta tags", async () => {
+  it("publishes the offloaded body with its drive share link", async () => {
     mockedLookup.mockResolvedValue(foundResult());
     mockedPublish.mockResolvedValue(true);
-    const tags = [["imeta", "url https://blossom.example/x", "m application/pdf"]];
-    mockedOffload.mockResolvedValue({ raw: "From: bob@example.com\r\n\r\nbody", tags });
+    const links = [
+      { filename: "a.pdf", url: "https://drive.formstr.app/#shared=naddr1example&k=" + "a".repeat(64) },
+    ];
+    mockedOffload.mockResolvedValue({
+      raw: `From: bob@example.com\r\n\r\nbody\n\n- a.pdf: ${links[0]!.url}`,
+      links,
+    });
     const resolver = makeUserResolver();
 
     await expect(
@@ -241,7 +246,10 @@ describe("handleMessage", () => {
     ).resolves.toBeUndefined();
 
     expect(mockedPublish).toHaveBeenCalledWith(
-      expect.objectContaining({ extraTags: tags }),
+      expect.objectContaining({ raw: expect.stringContaining(links[0]!.url) }),
+    );
+    expect(mockedPublish).not.toHaveBeenCalledWith(
+      expect.objectContaining({ extraTags: expect.anything() }),
     );
     expect(mockedPublishChunked).not.toHaveBeenCalled();
   });

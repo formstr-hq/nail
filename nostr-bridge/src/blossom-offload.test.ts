@@ -10,35 +10,37 @@ vi.hoisted(() => {
   process.env.BLOSSOM_SERVER_URL = "https://env.example";
 });
 
-vi.mock("./blossom-client.js", () => ({ uploadEncryptedAttachment: vi.fn() }));
-import type { Attachment } from "mailparser";
+vi.mock("./drive-share.js", () => ({ uploadDriveShare: vi.fn() }));
 import {
   blossomCandidates,
   blossomServersFromEvents,
-  imetaTags,
   offloadAttachments,
 } from "./blossom-offload.js";
-import { uploadEncryptedAttachment } from "./blossom-client.js";
+import { uploadDriveShare, type DriveShareAttachment } from "./drive-share.js";
 
-const mockedUpload = vi.mocked(uploadEncryptedAttachment);
+const mockedShare = vi.mocked(uploadDriveShare);
 
-function attachment(over: Partial<Attachment> = {}): Attachment {
-  return {
-    filename: "report.pdf",
-    contentType: "application/pdf",
-    size: 1234,
-    content: Buffer.alloc(0),
-    contentDisposition: "attachment",
-    ...over,
-  } as Attachment;
-}
-
-const uploaded = {
-  url: "https://blossom.example/abc",
-  sha256: "f".repeat(64),
-  encryptionKey: "a".repeat(64),
-  decryptionNonce: "b".repeat(24),
+const shared: DriveShareAttachment = {
+  filename: "a.pdf",
+  mimeType: "application/pdf",
+  size: 90_000,
+  shareUrl: "https://drive.formstr.app/#shared=naddr1example&k=" + "a".repeat(64),
+  server: "https://env.example",
 };
+
+async function attachmentMessage(count = 1, bytes = 90_000): Promise<Buffer> {
+  const composer = new MailComposer({
+    from: "a@example.com",
+    to: "b@example.com",
+    subject: "attachment",
+    text: "body",
+    attachments: Array.from({ length: count }, (_, i) => ({
+      filename: `a${i}.pdf`,
+      content: Buffer.alloc(bytes, 1),
+    })),
+  });
+  return composer.compile().build();
+}
 
 describe("blossomCandidates", () => {
   const env = "https://nos.example";
@@ -109,30 +111,6 @@ describe("blossomServersFromEvents", () => {
   });
 });
 
-describe("imetaTags", () => {
-  it("writes the fields the client's parseImetaTags/AttachmentRow read", () => {
-    expect(imetaTags(attachment(), uploaded)).toEqual([
-      "imeta",
-      "url https://blossom.example/abc",
-      "m application/pdf",
-      "filename report.pdf",
-      "size 1234",
-      `decryption-key ${uploaded.encryptionKey}`,
-      `decryption-nonce ${uploaded.decryptionNonce}`,
-      `x ${uploaded.sha256}`,
-    ]);
-  });
-
-  it("defaults a missing filename and content type", () => {
-    const tags = imetaTags(
-      attachment({ filename: undefined, contentType: "application/octet-stream" }),
-      uploaded,
-    );
-    expect(tags).toContain("filename attachment");
-    expect(tags).toContain("m application/octet-stream");
-  });
-});
-
 describe("offloadAttachments", () => {
   it("does not touch a message that already fits one wrap", async () => {
     expect(
@@ -144,26 +122,11 @@ describe("offloadAttachments", () => {
     ).toBeNull();
   });
 
-  it("falls back to the operator's server when the user's server fails", async () => {
-    mockedUpload.mockImplementation(async (_bytes, _key, server) => {
-      if (server.startsWith("https://user.example")) throw new Error("nope");
-      return {
-        url: "https://env.example/abc",
-        sha256: "f".repeat(64),
-        encryptionKey: "a".repeat(64),
-        decryptionNonce: "b".repeat(24),
-      };
-    });
+  it("uploads through the drive path and writes an attachments.txt link", async () => {
+    mockedShare.mockReset();
+    mockedShare.mockResolvedValue(shared);
 
-    const composer = new MailComposer({
-      from: "a@example.com",
-      to: "b@example.com",
-      subject: "attachment",
-      text: "body",
-      attachments: [{ filename: "a.pdf", content: Buffer.alloc(90_000, 1) }],
-    });
-    const raw = await composer.compile().build();
-
+    const raw = await attachmentMessage();
     const result = await offloadAttachments(raw, {
       recipientPubkey: "a".repeat(64),
       relays: [],
@@ -171,24 +134,36 @@ describe("offloadAttachments", () => {
       userServers: ["https://user.example"],
     });
 
-    expect(mockedUpload).toHaveBeenNthCalledWith(
-      1,
-      expect.any(Buffer),
-      expect.any(Uint8Array),
-      "https://user.example",
-      expect.any(Number),
-    );
-    expect(mockedUpload).toHaveBeenNthCalledWith(
-      2,
-      expect.any(Buffer),
-      expect.any(Uint8Array),
-      "https://env.example",
-      expect.any(Number),
+    expect(mockedShare).toHaveBeenCalledWith(
+      expect.anything(),
+      { filename: "a0.pdf", mimeType: "application/pdf" },
+      {
+        servers: ["https://user.example", "https://env.example"],
+        relays: [],
+        deadline: expect.any(Number),
+      },
     );
     expect(result).not.toBeNull();
-    expect(result!.tags.some((t) => t[0] === "imeta")).toBe(true);
+    expect(result!.links).toEqual([{ filename: "a.pdf", url: shared.shareUrl }]);
+
     const parsed = await simpleParser(Buffer.from(result!.raw, "latin1"));
-    expect(parsed.attachments).toHaveLength(0);
+    expect(parsed.attachments).toHaveLength(1);
+    expect(parsed.attachments[0].filename).toBe("attachments.txt");
+    expect(parsed.attachments[0].content.toString()).toContain(shared.shareUrl);
+  });
+
+  it("returns null when the drive upload fails, so the strip fallback runs", async () => {
+    mockedShare.mockReset();
+    mockedShare.mockResolvedValue(null);
+
+    expect(
+      await offloadAttachments(await attachmentMessage(), {
+        recipientPubkey: "a".repeat(64),
+        relays: [],
+        recipient: "b@example.com",
+        userServers: ["https://user.example"],
+      }),
+    ).toBeNull();
   });
 
   it("returns null for an over-ceiling message with no attachments", async () => {
@@ -202,52 +177,30 @@ describe("offloadAttachments", () => {
     ).toBeNull();
   });
 
-  it("shares one upload budget across every attachment", async () => {
+  it("passes one upload deadline to every attachment", async () => {
     let now = 1_000_000;
-    let call = 0;
     const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
-    mockedUpload.mockReset();
-    mockedUpload.mockImplementation(async () => {
-      call += 1;
-      now += 100_000;
-      // First attachment: the user's server fails, the operator server works.
-      if (call === 2) return uploaded;
-      throw new Error("timed out");
+    mockedShare.mockReset();
+    mockedShare.mockImplementation(async () => {
+      now += 200_000;
+      return shared;
     });
 
     try {
-      const composer = new MailComposer({
-        from: "a@example.com",
-        to: "b@example.com",
-        subject: "two attachments",
-        text: "body",
-        attachments: [
-          { filename: "a.pdf", content: Buffer.alloc(50_000, 1) },
-          { filename: "b.pdf", content: Buffer.alloc(50_000, 2) },
-        ],
+      const result = await offloadAttachments(await attachmentMessage(2, 50_000), {
+        recipientPubkey: "a".repeat(64),
+        relays: [],
+        recipient: "b@example.com",
+        userServers: ["https://user.example"],
       });
-      const raw = await composer.compile().build();
 
-      expect(
-        await offloadAttachments(raw, {
-          recipientPubkey: "a".repeat(64),
-          relays: [],
-          recipient: "b@example.com",
-          userServers: ["https://user.example"],
-        }),
-      ).toBeNull();
-
-      // 240s budget: attachment 1 burns 200s (100s failing over to the
-      // operator), so attachment 2 gets only the remaining 40s — not a fresh
-      // 240s, which would let a multi-attachment mail outlive the LMTP socket.
-      expect(mockedUpload).toHaveBeenCalledTimes(3);
-      expect(mockedUpload).toHaveBeenNthCalledWith(
-        3,
-        expect.any(Buffer),
-        expect.any(Uint8Array),
-        "https://user.example",
-        40_000,
-      );
+      expect(result).not.toBeNull();
+      expect(mockedShare).toHaveBeenCalledTimes(2);
+      const first = mockedShare.mock.calls[0]![2];
+      const second = mockedShare.mock.calls[1]![2];
+      // 240s total, not a fresh budget per attachment.
+      expect(second.deadline).toBe(first.deadline);
+      expect(first.deadline).toBe(1_000_000 + 240_000);
     } finally {
       clock.mockRestore();
     }

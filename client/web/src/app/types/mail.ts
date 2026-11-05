@@ -6,15 +6,23 @@ export interface MailAddress {
 export interface Attachment {
   filename: string
   contentType: string
-  /** Undefined for Blossom-hosted files, whose size is unknown until fetched. */
+  /** Known for inline files and NIP-FS-hosted ones. */
   size?: number
   // Inline MIME part: the bytes travelled inside the message itself.
   data?: Uint8Array
-  // Blossom-hosted: fetched on demand. Key and nonce are absent when the
-  // sender hosted the file unencrypted, which `imeta` permits.
+  // Blossom-hosted: fetched on demand. Key is absent when the sender hosted
+  // the file unencrypted, which `imeta` permits.
   blossomUrl?: string
   blossomKey?: string
+  // Legacy one-shot-AES-GCM format only (what the bridge used to write).
   blossomNonce?: string
+  // NIP-FS / drive-sdk format only — required alongside key + size to decrypt
+  // via `@formstr/drive-sdk`'s `decryptFileBytes`.
+  blossomBlobHash?: string
+  blossomFileHash?: string
+  // A drive share link carried in the body/attachments.txt for recipients
+  // without a Mailstr client. Our own reader resolves it on download.
+  shareUrl?: string
 }
 
 /**
