@@ -9,8 +9,10 @@
  *
  * Both the upload and the share event use throwaway keys, so a public Blossom
  * server and the relays never learn the bridge's identity. The link is a
- * bearer token: anyone with it can resolve and decrypt the file, which is the
- * same property the old `imeta` key/nonce pair had.
+ * bearer token: possession of the URL is the only access control. Anyone who
+ * can read the mail can resolve and decrypt the file, exactly as with the old
+ * `imeta` key/nonce pair. There is no per-recipient ACL and the bridge does not
+ * revoke or delete the share after delivery.
  */
 
 import {

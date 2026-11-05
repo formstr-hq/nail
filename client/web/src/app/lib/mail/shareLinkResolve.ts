@@ -9,6 +9,10 @@ import { DEFAULT_RELAYS } from '@/app/lib/nostr/constants'
  * link's relay hints, decrypt its metadata with the link's `k`, then download
  * and decrypt the NIP-FS blob. No signer is needed — the blob is encrypted and
  * the key is in the link.
+ *
+ * Resolution is online-only unless the local relay already has the share
+ * event; there is no prefetch. A failed download is retryable once the relay
+ * or Blossom server is reachable again.
  */
 export async function resolveSharedAttachment(shareUrl: string): Promise<Uint8Array> {
   const { createFetchBlossomTransport, downloadFile, resolveShare } = await import(

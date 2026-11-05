@@ -8,6 +8,7 @@ vi.hoisted(() => {
   process.env.LOCAL_DOMAINS = "mailstr.app";
   process.env.NOSTR_BRIDGE_NSEC = "11".repeat(32);
   process.env.BLOSSOM_SERVER_URL = "https://env.example";
+  process.env.BRIDGE_RELAYS = "";
 });
 
 vi.mock("./drive-share.js", () => ({ uploadDriveShare: vi.fn() }));
@@ -164,6 +165,22 @@ describe("offloadAttachments", () => {
         userServers: ["https://user.example"],
       }),
     ).toBeNull();
+  });
+
+  it("is all-or-nothing when one of several attachments fails", async () => {
+    let call = 0;
+    mockedShare.mockReset();
+    mockedShare.mockImplementation(async () => (++call === 1 ? shared : null));
+
+    expect(
+      await offloadAttachments(await attachmentMessage(2, 50_000), {
+        recipientPubkey: "a".repeat(64),
+        relays: [],
+        recipient: "b@example.com",
+        userServers: ["https://user.example"],
+      }),
+    ).toBeNull();
+    expect(mockedShare).toHaveBeenCalledTimes(2);
   });
 
   it("returns null for an over-ceiling message with no attachments", async () => {

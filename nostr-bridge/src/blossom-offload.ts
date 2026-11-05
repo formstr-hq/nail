@@ -215,18 +215,26 @@ export async function offloadAttachments(
   if (candidates.length === 0) return null;
 
   const links: AttachmentShareLink[] = [];
-  const deadline = Date.now() + UPLOAD_BUDGET_MS;
+  const startedAt = Date.now();
+  const deadline = startedAt + UPLOAD_BUDGET_MS;
+  // Publish the share to the recipient's DM relays and the bridge's own set.
+  // The link's relay hints are whatever accepted it, so the extra copies make
+  // the share resolvable from the app's default relays too.
+  const shareRelays = [...new Set([...params.relays, ...config.bridgeRelays])];
   for (const attachment of parsed.attachments) {
     const bytes = Buffer.isBuffer(attachment.content)
       ? attachment.content
       : Buffer.from(attachment.content);
+    // All-or-nothing: a partial link list would silently drop the attachments
+    // that failed, so any failure returns null and the caller delivers the
+    // body with the existing attachments_error.txt notice instead.
     const shared = await uploadDriveShare(
       bytes,
       {
         filename: attachment.filename || "attachment",
         mimeType: attachment.contentType || "application/octet-stream",
       },
-      { servers: candidates, relays: params.relays, deadline },
+      { servers: candidates, relays: shareRelays, deadline },
     );
     if (!shared) return null;
     console.log(
@@ -249,8 +257,8 @@ export async function offloadAttachments(
   if (!stripped) return null;
 
   console.log(
-    `nostr-bridge: offloaded ${links.length} attachment(s) for ${params.recipient}; ` +
-      "delivering the body with drive share links",
+    `nostr-bridge: offloaded ${links.length} attachment(s) for ${params.recipient} ` +
+      `in ${Date.now() - startedAt}ms; delivering the body with drive share links`,
   );
   return { raw: stripped, links };
 }
