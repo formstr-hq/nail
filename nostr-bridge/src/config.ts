@@ -129,6 +129,8 @@ export const config = {
   // 451/552 retry, to reach only the permissive relays.
   maxWrappableMessageBytes: Math.floor(relayMaxEventBytes / WRAP_INFLATION),
 
+  // Stop-gap: a free public server. Move this default to
+  // https://blossom.formstr.app once paid accounts are available for users.
   blossomServerUrl: process.env.BLOSSOM_SERVER_URL ?? "https://nostr.download",
   bridgeDomain: process.env.BRIDGE_DOMAIN ?? "",
   // Domains this deployment accepts mail for and serves NIP-05 records for.
