@@ -256,3 +256,28 @@ describe('partial chunked messages', () => {
     expect(useMailStore.getState().seenIds.has(second)).toBe(false)
   })
 })
+
+describe('headerless chunk placeholders', () => {
+  it('replaces the placeholder when chunk 0 arrives and keeps it selected', () => {
+    const pending = 'pending:' + 'f'.repeat(64)
+    const real = '1'.repeat(64)
+    const s = useMailStore.getState()
+
+    s.upsertEmail({
+      ...email(pending),
+      partial: { have: 1, total: 2, missing: [0], headerless: true },
+    })
+    useMailStore.setState({ selectedId: pending })
+
+    useMailStore.getState().upsertEmail({
+      ...email(real),
+      pendingId: pending,
+      partial: { have: 2, total: 2, missing: [] },
+    })
+
+    const after = useMailStore.getState()
+    expect(after.emails[pending]).toBeUndefined()
+    expect(after.emails[real]).toBeDefined()
+    expect(after.selectedId).toBe(real)
+  })
+})

@@ -117,9 +117,21 @@ export interface Email {
   /**
    * Present while a chunked message is still arriving. The reader shows the
    * contiguous prefix and this progress, then replaces it when the last part
-   * lands. `missing` lets the UI name/retry the absent chunks.
+   * lands. `missing` lets the UI name/retry the absent chunks. `headerless`
+   * marks a placeholder created before chunk 0 arrived: the body is the parts
+   * we have, but the headers are still unknown.
    */
-  partial?: { have: number; total: number; missing: number[] }
+  partial?: {
+    have: number
+    total: number
+    missing: number[]
+    headerless?: boolean
+  }
+  /**
+   * Internal: the synthetic headerless-placeholder id this message replaces
+   * when chunk 0 arrives. Never rendered.
+   */
+  pendingId?: string
   /**
    * The receiving server marked this message as spam (`X-Spam-Flag`).
    *

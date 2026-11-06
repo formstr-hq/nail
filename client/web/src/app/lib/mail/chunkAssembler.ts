@@ -61,8 +61,10 @@ export type ChunkAddResult =
       status: 'partial'
       msgid: string
       raw: string
-      /** Chunk 0's wrap id; becomes the Email id once it has arrived. */
+      /** Chunk 0's wrap id, or a pending placeholder id before it arrives. */
       id: string
+      /** True when chunk 0 is still missing: `raw` is body fragments only. */
+      headerless?: boolean
       wrapIds: string[]
       wrapSecrets: WrapSecret[]
       have: number
@@ -214,15 +216,22 @@ export class ChunkAssembler {
    *  when chunk 0 has not arrived, because there is no message to parse yet. */
   private partialResult(group: Group, meta: ChunkMeta): ChunkAddResult {
     const chunk0 = group.parts.get(0)
-    if (!chunk0) {
-      return { status: 'buffered', have: group.parts.size, total: meta.total }
-    }
+    const headerless = !chunk0
 
     let raw = ''
-    for (let i = 0; i < meta.total; i++) {
-      const part = group.parts.get(i)
-      if (!part) break
-      raw += part.content
+    if (chunk0) {
+      for (let i = 0; i < meta.total; i++) {
+        const part = group.parts.get(i)
+        if (!part) break
+        raw += part.content
+      }
+    } else {
+      // No chunk 0 yet: show the body fragments we do have, in index order,
+      // rather than making the message invisible. Headers are still unknown.
+      raw = [...group.parts.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([, part]) => part.content)
+        .join('')
     }
 
     const wrapIds: string[] = []
@@ -242,7 +251,8 @@ export class ChunkAssembler {
       status: 'partial',
       msgid: meta.msgid,
       raw,
-      id: chunk0.wrapId,
+      id: chunk0?.wrapId ?? `pending:${meta.msgid}`,
+      ...(headerless ? { headerless: true } : {}),
       wrapIds,
       wrapSecrets,
       have: group.parts.size,

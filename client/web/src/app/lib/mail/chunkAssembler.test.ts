@@ -86,15 +86,18 @@ describe('ChunkAssembler', () => {
     )
   })
 
-  it('does not emit a partial message before chunk 0 arrives', async () => {
+  it('emits a headerless placeholder before chunk 0 arrives', async () => {
     const assembler = new ChunkAssembler()
     const parts = await partsFor(BIG)
 
-    await expect(assembler.add(parts[1])).resolves.toEqual({
-      status: 'buffered',
-      have: 1,
-      total: parts.length,
-    })
+    const result = await assembler.add(parts[1])
+    expect(result.status).toBe('partial')
+    if (result.status !== 'partial') return
+    expect(result.headerless).toBe(true)
+    expect(result.id).toMatch(/^pending:/)
+    expect(result.raw).toBe(parts[1].content)
+    expect(result.missing).toContain(0)
+    expect(result.have).toBe(1)
   })
 
   it('ignores a replayed part after the message was emitted', async () => {

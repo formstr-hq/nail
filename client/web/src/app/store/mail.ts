@@ -316,12 +316,21 @@ export const useMailStore = create<MailState>()(
         // message. The reverse (partial -> complete) is the normal path.
         if (existing && !existing.partial && email.partial) return
         const read = email.read || !!get().mailState[email.id]?.read
-        set((s) => ({
-          emails: { ...s.emails, [email.id]: { ...email, read } },
-          // Mark every known wrap seen so a reload does not re-decode the
-          // parts. A manual retry calls forgetSeen(ids) first to opt back in.
-          seenIds: new Set([...s.seenIds, email.id, ...(email.wrapIds ?? [])]),
-        }))
+        set((s) => {
+          const emails = { ...s.emails }
+          let selectedId = s.selectedId
+          const pendingId = email.pendingId
+          // Chunk 0 arrived: drop the headerless placeholder it supersedes,
+          // and keep the reader on the message if that placeholder was open.
+          if (pendingId && emails[pendingId]) {
+            delete emails[pendingId]
+            if (selectedId === pendingId) selectedId = email.id
+          }
+          emails[email.id] = { ...email, read }
+          const seen = new Set([...s.seenIds, email.id, ...(email.wrapIds ?? [])])
+          if (pendingId) seen.delete(pendingId)
+          return { emails, selectedId, seenIds: seen }
+        })
       },
 
       forgetSeen: (ids) => {

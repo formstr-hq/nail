@@ -133,9 +133,11 @@ export function EmailView({ onCompose, selfAddresses, onBack, onRetryPartial }: 
           <div className="mb-4 flex max-w-[68ch] items-center justify-between gap-3 rounded-md border border-border bg-accent px-3 py-2">
             <span className="text-[12px] leading-snug text-foreground">
               Receiving message… {email.partial.have}/{email.partial.total} parts
-              {email.partial.missing.length > 0
-                ? ` · missing ${email.partial.missing.map((i) => i + 1).join(', ')}`
-                : ''}
+              {email.partial.headerless
+                ? ' · waiting for the first part'
+                : email.partial.missing.length > 0
+                  ? ` · missing ${email.partial.missing.map((i) => i + 1).join(', ')}`
+                  : ''}
             </span>
             <Button
               variant="secondary"

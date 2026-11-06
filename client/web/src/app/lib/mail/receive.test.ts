@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { generateSecretKey, getPublicKey, getEventHash } from 'nostr-tools/pure'
-import { buildMailRumor, sealAndWrap, keySigner } from '@protocol'
-import { decodeGiftWrap, decodeRumor } from './receive'
+import { buildMailRumor, sealAndWrap, keySigner, splitMessage, chunkTags } from '@protocol'
+import { decodeGiftWrap, decodeRumor, decodeOrAssemble } from './receive'
+import { ChunkAssembler } from './chunkAssembler'
 import { clearProbeCache } from '@/app/lib/nostr/nip05'
 
 // The sender-proof branches are what the mailbox shows the reader, so the
@@ -427,5 +428,43 @@ describe('partial chunked rendering', () => {
     expect(out.email.body).toContain('Hello from the first chunk.')
     // Incomplete MIME parts must not appear as downloadable attachments.
     expect(out.email.attachments).toEqual([])
+  })
+})
+
+describe('headerless chunked rendering', () => {
+  it('shows a placeholder when chunk 0 has not arrived', async () => {
+    const raw = [
+      'From: Jack <jack@example.org>',
+      'To: me@mailstr.app',
+      'Subject: A large message',
+      '',
+      'x'.repeat(200_000),
+    ].join('\r\n')
+
+    const { slices, msgid, totalBytes } = await splitMessage(raw, {
+      senderPubkey: SENDER,
+      recipientPubkey: ME,
+    })
+    expect(slices.length).toBeGreaterThan(1)
+
+    // Publish chunk 1 only: no headers, so the client can only show fragments.
+    const rumor = buildMailRumor({
+      senderPubkey: SENDER,
+      recipientPubkey: ME,
+      rfc2822: slices[1],
+    })
+    rumor.tags = [...rumor.tags, ...chunkTags(msgid, 1, slices.length, totalBytes)]
+    rumor.id = getEventHash(rumor)
+
+    const wrap = await sealAndWrap(rumor, ME, keySigner(SENDER_SK))
+    const out = await decodeOrAssemble(wrap, keySigner(ME_SK), ME, new ChunkAssembler())
+
+    expect('email' in out).toBe(true)
+    if (!('email' in out)) return
+    expect(out.email.id).toMatch(/^pending:/)
+    expect(out.email.partial?.headerless).toBe(true)
+    expect(out.email.partial?.missing).toContain(0)
+    expect(out.email.subject).toBe('(receiving message…)')
+    expect(out.email.body.length).toBeGreaterThan(0)
   })
 })

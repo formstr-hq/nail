@@ -216,6 +216,27 @@ export async function decodeOrAssemble(
     return { buffered: { have: added.have, total: added.total } }
   }
   if (added.status === 'partial') {
+    if (added.headerless) {
+      // Chunk 0 is still missing, but the body fragments are useful. Show a
+      // headerless placeholder; it will be replaced when chunk 0 arrives.
+      return {
+        email: partialFallbackEmail(
+          { ...rumor, content: added.raw },
+          seal,
+          {
+            id: added.id,
+            wrapIds: added.wrapIds,
+            partial: {
+              have: added.have,
+              total: added.total,
+              missing: added.missing,
+              headerless: true,
+            },
+          },
+        ),
+        wrapSecrets: added.wrapSecrets,
+      }
+    }
     // Chunk 0 is present, so the contiguous prefix is a real (if truncated)
     // RFC 2822 message. Render it now and let later parts replace it.
     const decoded = await decodeRumor(
@@ -230,7 +251,10 @@ export async function decodeOrAssemble(
     )
     return 'failure' in decoded
       ? { buffered: { have: added.have, total: added.total } }
-      : { email: decoded.email, wrapSecrets: added.wrapSecrets }
+      : {
+          email: { ...decoded.email, pendingId: `pending:${added.msgid}` },
+          wrapSecrets: added.wrapSecrets,
+        }
   }
   if (added.status === 'duplicate') return { ignored: true }
   if (added.status === 'invalid') {
@@ -245,7 +269,10 @@ export async function decodeOrAssemble(
   )
   return 'failure' in decoded
     ? decoded
-    : { email: decoded.email, wrapSecrets: added.message.wrapSecrets }
+    : {
+        email: { ...decoded.email, pendingId: `pending:${added.message.msgid}` },
+        wrapSecrets: added.message.wrapSecrets,
+      }
 }
 
 /**
@@ -259,7 +286,12 @@ function partialFallbackEmail(
   opts: {
     id: string
     wrapIds?: string[]
-    partial?: { have: number; total: number; missing: number[] }
+    partial?: {
+      have: number
+      total: number
+      missing: number[]
+      headerless?: boolean
+    }
   },
 ): Email {
   const rawBody = new TextDecoder().decode(messageStringToBytes(rumor.content))
@@ -307,7 +339,12 @@ export async function decodeRumor(
     id: string
     wrapIds?: string[]
     /** Present while a chunked message is still arriving. */
-    partial?: { have: number; total: number; missing: number[] }
+    partial?: {
+      have: number
+      total: number
+      missing: number[]
+      headerless?: boolean
+    }
   },
 ): Promise<RumorDecodeResult> {
   try {
