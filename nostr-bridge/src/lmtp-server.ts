@@ -164,6 +164,7 @@ export async function handleMessage(
     lookup.pubkey,
     outgoing,
     relays,
+    Boolean(offload),
   );
   if (outcome === "too-large") {
     // Permanent: the message cannot fit a wrap the relays accept, and no
@@ -214,6 +215,10 @@ async function publishWithAttachmentFallback(
   recipientPubkey: string,
   messageRaw: string,
   relays: string[],
+  /** The rebuilt message already has its attachments replaced by drive links
+   *  in `attachments.txt`. Stripping it again would replace that link file
+   *  with `attachments_error.txt`. */
+  attachmentsOffloaded = false,
 ): Promise<"full" | "stripped" | "chunked" | "failed" | "too-large"> {
   const publish = async (raw: string): Promise<boolean> => {
     try {
@@ -243,17 +248,19 @@ async function publishWithAttachmentFallback(
   // octet-stream part is the whole message), so it falls through to chunking
   // and is delivered intact rather than bounced.
   let candidate = messageRaw;
-  try {
-    const stripped = await stripAttachments(Buffer.from(messageStringToBytes(messageRaw)));
-    if (stripped !== null) {
-      if (stripped.length <= MAX_WRAPPABLE_MESSAGE_BYTES) {
-        // The attachment was dropped, not offloaded: there is nothing to link.
-        return (await publish(stripped)) ? "stripped" : "failed";
+  if (!attachmentsOffloaded) {
+    try {
+      const stripped = await stripAttachments(Buffer.from(messageStringToBytes(messageRaw)));
+      if (stripped !== null) {
+        if (stripped.length <= MAX_WRAPPABLE_MESSAGE_BYTES) {
+          // The attachment was dropped, not offloaded: there is nothing to link.
+          return (await publish(stripped)) ? "stripped" : "failed";
+        }
+        candidate = stripped;
       }
-      candidate = stripped;
+    } catch (error) {
+      console.error("nostr-bridge: stripping attachments failed:", (error as Error).message);
     }
-  } catch (error) {
-    console.error("nostr-bridge: stripping attachments failed:", (error as Error).message);
   }
 
   // Nothing left to try: the single-wrap publish above already failed and
