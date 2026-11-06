@@ -21,6 +21,7 @@ import { ComposerMinimized, ComposerHeader, DiscardBanner } from '@/app/componen
 import { RecipientField, SubjectField } from '@/app/components/compose/RecipientField'
 import {
   ErrorBanner,
+  FromUnavailableBanner,
   DiscoveryBanner,
   EncryptedBanner,
   AliasFix,
@@ -102,19 +103,31 @@ export function ComposeModal({
   const panelRef = useRef<HTMLDivElement>(null)
 
   // A reply pins the account address the original message was delivered to;
-  // only an explicit pick in this composer can override it.
+  // only an explicit pick in this composer can override it. If that mailbox is
+  // not one the account can send from, do NOT fall back to another alias —
+  // start with no From and make the user choose explicitly.
   const preferredFrom = pickedFrom ?? draft?.from
+  const mustChooseFrom = Boolean(draft?.fromUnavailable) && !pickedFrom
 
   const fromAddress = useMemo(
     () =>
-      deriveFromAddress({
-        preferredFrom,
-        inboxFilter,
-        selfAddresses,
-        senderAddress: settings.senderAddress,
-        ownedAliases,
-      }),
-    [preferredFrom, inboxFilter, selfAddresses, settings.senderAddress, ownedAliases],
+      mustChooseFrom
+        ? ''
+        : deriveFromAddress({
+            preferredFrom,
+            inboxFilter,
+            selfAddresses,
+            senderAddress: settings.senderAddress,
+            ownedAliases,
+          }),
+    [
+      mustChooseFrom,
+      preferredFrom,
+      inboxFilter,
+      selfAddresses,
+      settings.senderAddress,
+      ownedAliases,
+    ],
   )
   const fromOptions = useMemo(
     () => deriveFromOptions(selfAddresses, fromAddress),
@@ -357,6 +370,8 @@ export function ComposeModal({
             fix={isUnregisteredSenderError(error) ? <AliasFix alias={ownedAliases[0]} onSwitch={switchToAlias} onBuyAddress={onBuyAddress} /> : undefined}
           />
         )}
+
+        {mustChooseFrom && <FromUnavailableBanner />}
 
         {bridgeResolving && !bridgeError && <BridgeResolvingBanner />}
 

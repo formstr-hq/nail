@@ -75,11 +75,21 @@ export function ComposerFooter(props: {
               No sending address
             </option>
           ) : (
-            fromOptions.map((a) => (
-              <option key={a} value={a} className="font-mono">
-                {a}
-              </option>
-            ))
+            <>
+              {fromAddress === '' && (
+                // A reply whose original mailbox isn't owned starts here. Keep
+                // the select on an explicit placeholder so Send cannot fall
+                // through to an unrelated default.
+                <option value="" disabled>
+                  Choose a sending address
+                </option>
+              )}
+              {fromOptions.map((a) => (
+                <option key={a} value={a} className="font-mono">
+                  {a}
+                </option>
+              ))}
+            </>
           )}
         </select>
         {/* No purchased alias yet: the npub is not a usable sender, so there

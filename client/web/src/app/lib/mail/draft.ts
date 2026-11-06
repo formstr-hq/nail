@@ -1,4 +1,5 @@
 import type { Email, MailAddress } from '@/app/types/mail'
+import { isSendableAddress } from './composeFields'
 
 /** A compose window's starting contents. Used verbatim — no further munging. */
 export interface Draft {
@@ -14,6 +15,13 @@ export interface Draft {
    * forward, where the composer derives the From normally.
    */
   from?: string
+  /**
+   * True when the original message had no sendable address of this account in
+   * To/Cc/From. The composer must ask for a From instead of silently
+   * substituting another alias — the correspondent would see a different
+   * identity than the one they wrote to.
+   */
+  fromUnavailable?: boolean
   inReplyTo?: string
   references?: string[]
 }
@@ -67,10 +75,14 @@ function threadRefs(email: Email): string[] | undefined {
  */
 function deliveredTo(email: Email, self: string[]): string | undefined {
   if (self.length === 0) return undefined
-  const mine = new Set(self.map((a) => a.trim().toLowerCase()).filter(Boolean))
+  const mine = new Map(self.map((a) => [a.trim().toLowerCase(), a.trim()]))
   for (const { address } of [...email.to, ...(email.cc ?? []), email.fromHeader]) {
     const trimmed = address.trim()
-    if (trimmed && mine.has(trimmed.toLowerCase())) return trimmed
+    const match = mine.get(trimmed.toLowerCase())
+    // The npub mailbox is receive-only for the bridge and cannot hold a PGP
+    // key, so it is not a usable reply From. Treat it like any other
+    // unavailable mailbox rather than silently falling back to an alias.
+    if (match && isSendableAddress(match)) return trimmed
   }
   return undefined
 }
@@ -90,14 +102,18 @@ function quote(email: Email, sender: MailAddress): string {
 export function replyDraft(
   email: Email,
   sender?: MailAddress,
-  self: string[] = [],
+  self?: string[],
 ): Draft {
   const who = senderOf(email, sender)
+  const from = self ? deliveredTo(email, self) : undefined
   return {
     to: who.address,
     subject: prefixOnce(email.subject, 'Re'),
     body: quote(email, who),
-    from: deliveredTo(email, self),
+    ...(from ? { from } : {}),
+    // `self` being supplied (even as an empty list) means the caller knows the
+    // account's addresses. If none matched, do not fall back to a default.
+    ...(self && !from ? { fromUnavailable: true } : {}),
     inReplyTo: email.messageId,
     references: threadRefs(email),
   }

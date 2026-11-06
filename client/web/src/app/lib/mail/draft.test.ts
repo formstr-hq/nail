@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { replyDraft, replyAllDraft, forwardDraft } from './draft'
 import type { Email } from '@/app/types/mail'
 
+const NPUB = 'npub1' + 'q'.repeat(58)
+
 function email(overrides: Partial<Email> = {}): Email {
   return {
     id: 'wrap1',
@@ -77,6 +79,28 @@ describe('replyDraft', () => {
   it('leaves From unset when none of the recipients are the user', () => {
     const d = replyDraft(email(), undefined, ['someone-else@mailstr.app'])
     expect(d.from).toBeUndefined()
+    expect(d.fromUnavailable).toBe(true)
+  })
+
+  it('treats the npub mailbox as unavailable rather than falling back', () => {
+    const d = replyDraft(
+      email({ to: [{ address: `${NPUB}@mailstr.app` }] }),
+      undefined,
+      [`${NPUB}@mailstr.app`, 'me@mailstr.app'],
+    )
+    expect(d.from).toBeUndefined()
+    expect(d.fromUnavailable).toBe(true)
+  })
+
+  it('does not flag availability when no self list is supplied', () => {
+    const d = replyDraft(email())
+    expect(d.fromUnavailable).toBeUndefined()
+  })
+
+  it('flags availability when the self list is known but empty', () => {
+    const d = replyDraft(email(), undefined, [])
+    expect(d.from).toBeUndefined()
+    expect(d.fromUnavailable).toBe(true)
   })
 
   // Sent mail lists correspondents in To, so the fallback is our own From.
@@ -123,6 +147,12 @@ describe('replyAllDraft', () => {
   it('pins From to the mailbox the original was delivered to', () => {
     const d = replyAllDraft(email(), ['me@mailstr.app'])
     expect(d.from).toBe('me@mailstr.app')
+  })
+
+  it('propagates the unavailable-From flag', () => {
+    const d = replyAllDraft(email(), ['someone-else@mailstr.app'])
+    expect(d.from).toBeUndefined()
+    expect(d.fromUnavailable).toBe(true)
   })
 })
 

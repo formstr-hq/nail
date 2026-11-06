@@ -215,6 +215,39 @@ describe('ComposeModal happy path', () => {
     )
     expect(document.querySelector('select')).toHaveValue('me@mailstr.app')
   })
+
+  // If the mailbox the original was delivered to is not one this account can
+  // send from, never silently substitute another alias. Start with no From,
+  // show the warning, and keep Send disabled until the user chooses.
+  it('forces an explicit From when the reply mailbox is not owned', async () => {
+    const user = userEvent.setup()
+    render(
+      <ComposeModal
+        {...PROPS}
+        selfAddresses={[...SELF, 'other@mailstr.app']}
+        ownedAliases={['me@mailstr.app', 'other@mailstr.app']}
+        draft={{
+          to: 'friend@mailstr.app',
+          subject: 'Re: Hi',
+          body: 'A reply!',
+          fromUnavailable: true,
+          inReplyTo: 'x',
+        }}
+      />,
+    )
+
+    const select = document.querySelector('select') as HTMLSelectElement
+    expect(select.value).toBe('')
+    expect(screen.getByText('Choose a sending address')).toBeInTheDocument()
+    expect(screen.getByText(/wasn.t delivered to one of your addresses/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^send$/i })).toBeDisabled()
+
+    await user.selectOptions(select, 'me@mailstr.app')
+
+    expect(select.value).toBe('me@mailstr.app')
+    expect(screen.queryByText(/wasn.t delivered to one of your addresses/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^send$/i })).toBeEnabled()
+  })
 })
 
 // Helper kept out of the describe body for readability.
