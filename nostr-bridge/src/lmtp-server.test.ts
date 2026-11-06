@@ -40,6 +40,7 @@ import { lookupNip05, type Nip05Result } from "./nip05.js";
 import { publishChunkedMail, publishMail } from "./nostr-publisher.js";
 import { offloadAttachments } from "./blossom-offload.js";
 import { UserResolver } from "./user-resolver.js";
+import { bytesToMessageString, messageStringToBytes } from "./protocol/bytes.js";
 
 const mockedLookup = vi.mocked(lookupNip05);
 const mockedPublish = vi.mocked(publishMail);
@@ -252,6 +253,51 @@ describe("handleMessage", () => {
       expect.objectContaining({ extraTags: expect.anything() }),
     );
     expect(mockedPublishChunked).not.toHaveBeenCalled();
+  });
+
+  it("does not re-strip an offloaded message and replace its drive link with the error notice", async () => {
+    mockedLookup.mockResolvedValue(foundResult());
+    mockedPublish.mockResolvedValue(true);
+    mockedPublishChunked.mockResolvedValue({ ok: true, parts: 2, msgid: "b".repeat(64) });
+
+    const link = "https://drive.formstr.app/#shared=naddr1example&k=" + "a".repeat(64);
+    const linkList = [
+      "--- Mailstr attachments ---",
+      `- ticket.pdf: ${link}`,
+      "--- End Mailstr attachments ---",
+      "",
+    ].join("\n");
+    const composer = new MailComposer({
+      from: "bob@example.com",
+      to: "alice@mailstr.app",
+      subject: "ticket",
+      text: "x".repeat(60_000),
+      attachments: [
+        {
+          filename: "attachments.txt",
+          content: Buffer.from(linkList),
+          contentType: "text/plain",
+        },
+      ],
+    });
+    const offloaded = bytesToMessageString(new Uint8Array(await composer.compile().build()));
+    mockedOffload.mockResolvedValue({
+      raw: offloaded,
+      links: [{ filename: "ticket.pdf", url: link }],
+    });
+    const resolver = makeUserResolver();
+
+    await expect(
+      handleMessage(Buffer.from("From: bob@example.com\r\n\r\nbody"), "alice@mailstr.app", resolver),
+    ).resolves.toBeUndefined();
+
+    expect(mockedPublishChunked).toHaveBeenCalledTimes(1);
+    const chunkedRaw = mockedPublishChunked.mock.calls[0]![0].raw;
+    const parsed = await simpleParser(Buffer.from(messageStringToBytes(chunkedRaw)));
+    const linksFile = parsed.attachments.find((a) => a.filename === "attachments.txt");
+    expect(linksFile?.content.toString()).toContain(link);
+    expect(parsed.attachments.some((a) => a.filename === "attachments_error.txt")).toBe(false);
+    expect(mockedPublish).not.toHaveBeenCalled();
   });
 
   it("chunks a plain-text body that is over the ceiling instead of bouncing it", async () => {
