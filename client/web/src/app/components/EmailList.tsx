@@ -118,6 +118,12 @@ function EmailRow({ email, read, selected }: { email: Email; read: boolean; sele
         <div className="mt-px truncate text-[11.5px] text-subtle">{email.body.trim()}</div>
       )}
 
+      {email.partial && (
+        <div className="mt-0.5 font-mono text-[10px] text-subtle">
+          Receiving {email.partial.have}/{email.partial.total} parts…
+        </div>
+      )}
+
       <div className="mt-1.5">
         <SenderProofLine proof={proof} />
       </div>

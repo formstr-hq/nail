@@ -11,6 +11,7 @@ import { protocolSigner } from '@/app/lib/nostr/protocol-signer'
 import { inboxFilters } from '@/app/lib/mail/inboxFilter'
 import { DEFAULT_RELAYS, withHardcodedRelay } from '@/app/lib/nostr/constants'
 import type { Event } from 'nostr-tools'
+import type { Email } from '@/app/types/mail'
 
 /**
  * What the mailbox can honestly say about itself right now.
@@ -39,6 +40,12 @@ export function useInbox() {
   // Bumped by retry() to re-run the effect after a failed connect.
   const [attempt, setAttempt] = useState(0)
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
+  /** Replay a partial message's known wraps from the relays. Clearing their
+   *  seen ids is what lets a fresh assembler see chunk 0 again. */
+  const retryPartial = useCallback((email: Email) => {
+    useMailStore.getState().forgetSeen([email.id, ...(email.wrapIds ?? [])])
+    setAttempt((n) => n + 1)
+  }, [])
 
   // Account identity for the current subscription. When it changes, the
   // connecting status below is derived from it rather than written by the
@@ -86,7 +93,14 @@ export function useInbox() {
         for (const { id, secret } of wrapSecrets ?? []) {
           useMailStore.getState().saveWrapKey(id, secret)
         }
-        addEmail(email)
+        // A partial/chunked message updates the same id as later parts and the
+        // final complete message arrive, so it must bypass addEmail's
+        // "already seen" guard.
+        if (email.partial || email.wrapIds?.length) {
+          useMailStore.getState().upsertEmail(email)
+        } else {
+          addEmail(email)
+        }
       },
       onFailure: (event, reason) => {
         if (!alive) return
@@ -184,5 +198,5 @@ export function useInbox() {
     }
   }, [account, active, addEmail, attempt])
 
-  return { status, retry }
+  return { status, retry, retryPartial }
 }

@@ -193,3 +193,118 @@ describe('delete forever, locally', () => {
     expect(useMailStore.getState().syncError).toBeNull()
   })
 })
+
+describe('partial chunked messages', () => {
+  it('upsertEmail updates a partial in place and replaces it with the complete message', () => {
+    const first = '1'.repeat(64)
+    const second = '2'.repeat(64)
+    const s = useMailStore.getState()
+
+    s.upsertEmail({
+      ...email(first),
+      wrapIds: [first],
+      partial: { have: 1, total: 2, missing: [1] },
+    })
+    expect(useMailStore.getState().emails[first]?.partial).toEqual({
+      have: 1,
+      total: 2,
+      missing: [1],
+    })
+
+    useMailStore.getState().upsertEmail({
+      ...email(first),
+      wrapIds: [first, second],
+      body: 'complete',
+    })
+
+    const after = useMailStore.getState()
+    expect(after.emails[first]?.body).toBe('complete')
+    expect(after.emails[first]?.partial).toBeUndefined()
+    expect(after.seenIds.has(first)).toBe(true)
+    expect(after.seenIds.has(second)).toBe(true)
+  })
+
+  it('does not regress a complete message back to a partial one', () => {
+    const first = '1'.repeat(64)
+    const s = useMailStore.getState()
+
+    s.upsertEmail({ ...email(first), wrapIds: [first] })
+    useMailStore.getState().upsertEmail({
+      ...email(first),
+      wrapIds: [first],
+      partial: { have: 1, total: 2, missing: [1] },
+    })
+
+    expect(useMailStore.getState().emails[first]?.partial).toBeUndefined()
+  })
+
+  it('forgetSeen lets a manual retry replay the partial wraps', () => {
+    const first = '1'.repeat(64)
+    const second = '2'.repeat(64)
+    useMailStore.getState().upsertEmail({
+      ...email(first),
+      wrapIds: [first, second],
+      partial: { have: 1, total: 2, missing: [1] },
+    })
+
+    expect(useMailStore.getState().seenIds.has(first)).toBe(true)
+    expect(useMailStore.getState().seenIds.has(second)).toBe(true)
+
+    useMailStore.getState().forgetSeen([first, second])
+
+    expect(useMailStore.getState().seenIds.has(first)).toBe(false)
+    expect(useMailStore.getState().seenIds.has(second)).toBe(false)
+  })
+})
+
+describe('headerless chunk placeholders', () => {
+  it('replaces the placeholder when chunk 0 arrives and keeps it selected', () => {
+    const pending = 'pending:' + 'f'.repeat(64)
+    const real = '1'.repeat(64)
+    const s = useMailStore.getState()
+
+    s.upsertEmail({
+      ...email(pending),
+      partial: { have: 1, total: 2, missing: [0], headerless: true },
+    })
+    useMailStore.setState({ selectedId: pending })
+
+    useMailStore.getState().upsertEmail({
+      ...email(real),
+      pendingId: pending,
+      partial: { have: 2, total: 2, missing: [] },
+    })
+
+    const after = useMailStore.getState()
+    expect(after.emails[pending]).toBeUndefined()
+    expect(after.emails[real]).toBeDefined()
+    expect(after.selectedId).toBe(real)
+  })
+})
+
+describe('headerless placeholder state', () => {
+  it('carries read state to the real message when chunk 0 arrives', () => {
+    const pending = 'pending:' + 'f'.repeat(64)
+    const real = '1'.repeat(64)
+    const held = '2'.repeat(64)
+    const s = useMailStore.getState()
+
+    s.upsertEmail({
+      ...email(pending),
+      wrapIds: [held],
+      partial: { have: 1, total: 2, missing: [0], headerless: true },
+    })
+    s.setFlag(pending, { read: true })
+
+    useMailStore.getState().upsertEmail({
+      ...email(real),
+      pendingId: pending,
+      wrapIds: [held],
+      partial: { have: 2, total: 2, missing: [] },
+    })
+
+    const after = useMailStore.getState()
+    expect(after.emails[real]?.read).toBe(true)
+    expect(after.mailState[pending]).toBeUndefined()
+  })
+})

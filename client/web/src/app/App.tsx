@@ -81,7 +81,7 @@ function MailApp() {
   const { addresses } = useOwnedAddresses()
   const { ctx, bridgeError, resolving: bridgeResolving, retry: retryBridge } =
     useResolveContext(addresses)
-  const { status, retry } = useInbox()
+  const { status, retry, retryPartial } = useInbox()
   // Keep read/folder state synced across devices via kind-34578 events.
   const { refresh: refreshMeta } = useMailMeta()
   // Every address this account owns — the default npub mailbox, a configured
@@ -323,6 +323,7 @@ function MailApp() {
             onCompose={openCompose}
             selfAddresses={selfAddresses}
             onBack={() => setSelected(null)}
+            onRetryPartial={retryPartial}
           />
         </div>
       </div>

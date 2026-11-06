@@ -215,6 +215,47 @@ export async function decodeOrAssemble(
   if (added.status === 'buffered') {
     return { buffered: { have: added.have, total: added.total } }
   }
+  if (added.status === 'partial') {
+    if (added.headerless) {
+      // Chunk 0 is still missing, but the body fragments are useful. Show a
+      // headerless placeholder; it will be replaced when chunk 0 arrives.
+      return {
+        email: partialFallbackEmail(
+          { ...rumor, content: added.raw },
+          seal,
+          {
+            id: added.id,
+            wrapIds: added.wrapIds,
+            partial: {
+              have: added.have,
+              total: added.total,
+              missing: added.missing,
+              headerless: true,
+            },
+          },
+        ),
+        wrapSecrets: added.wrapSecrets,
+      }
+    }
+    // Chunk 0 is present, so the contiguous prefix is a real (if truncated)
+    // RFC 2822 message. Render it now and let later parts replace it.
+    const decoded = await decodeRumor(
+      { ...rumor, content: added.raw },
+      seal,
+      ownPubkey,
+      {
+        id: added.id,
+        wrapIds: added.wrapIds,
+        partial: { have: added.have, total: added.total, missing: added.missing },
+      },
+    )
+    return 'failure' in decoded
+      ? { buffered: { have: added.have, total: added.total } }
+      : {
+          email: { ...decoded.email, pendingId: `pending:${added.msgid}` },
+          wrapSecrets: added.wrapSecrets,
+        }
+  }
   if (added.status === 'duplicate') return { ignored: true }
   if (added.status === 'invalid') {
     return { failure: { reason: `chunk: ${added.reason}`, routine: false } }
@@ -228,7 +269,58 @@ export async function decodeOrAssemble(
   )
   return 'failure' in decoded
     ? decoded
-    : { email: decoded.email, wrapSecrets: added.message.wrapSecrets }
+    : {
+        email: { ...decoded.email, pendingId: `pending:${added.message.msgid}` },
+        wrapSecrets: added.message.wrapSecrets,
+      }
+}
+
+/**
+ * A renderable fallback when the contiguous prefix is too truncated for the
+ * MIME parser. It still shows the received bytes and the progress, rather than
+ * making a large message invisible until the last chunk arrives.
+ */
+function partialFallbackEmail(
+  rumor: Rumor,
+  seal: Event,
+  opts: {
+    id: string
+    wrapIds?: string[]
+    partial?: {
+      have: number
+      total: number
+      missing: number[]
+      headerless?: boolean
+    }
+  },
+): Email {
+  const rawBody = new TextDecoder().decode(messageStringToBytes(rumor.content))
+  return {
+    id: opts.id,
+    ...(opts.wrapIds ? { wrapIds: opts.wrapIds } : {}),
+    fromHeader: { address: '' },
+    to: [],
+    subject: '(receiving message…)',
+    body: rawBody,
+    attachments: [],
+    timestamp: rumor.created_at,
+    senderPubkey: seal.pubkey,
+    read: false,
+    labelEventIds: [],
+    labels: [],
+    ...(opts.partial ? { partial: opts.partial } : {}),
+    debug: {
+      sealPubkey: seal.pubkey,
+      rumor: {
+        id: rumor.id,
+        kind: rumor.kind,
+        pubkey: rumor.pubkey,
+        created_at: rumor.created_at,
+        tags: rumor.tags,
+        content: rumor.content,
+      },
+    },
+  }
 }
 
 /**
@@ -243,7 +335,17 @@ export async function decodeRumor(
   rumor: Rumor,
   seal: Event,
   ownPubkey: string | null,
-  opts: { id: string; wrapIds?: string[] },
+  opts: {
+    id: string
+    wrapIds?: string[]
+    /** Present while a chunked message is still arriving. */
+    partial?: {
+      have: number
+      total: number
+      missing: number[]
+      headerless?: boolean
+    }
+  },
 ): Promise<RumorDecodeResult> {
   try {
     // §4: content is a byte string. postal-mime must be handed real bytes —
@@ -326,12 +428,14 @@ export async function decodeRumor(
         // from the body, and the real `attachments.txt` part. The PGP/MIME
         // control+data parts are the message body, not attachments, so they
         // are excluded here once lifted into `body` above.
-        attachments: dedupeLinkedAttachments([
-          ...inline,
-          ...hostedAttachments(rumor.tags),
-          ...linked.attachments,
-          ...shared,
-        ]),
+        attachments: opts.partial
+          ? []
+          : dedupeLinkedAttachments([
+              ...inline,
+              ...hostedAttachments(rumor.tags),
+              ...linked.attachments,
+              ...shared,
+            ]),
         timestamp: rumor.created_at,
         senderPubkey: seal.pubkey,
         // Our own outgoing copies (the self-wrap that files under Sent) are
@@ -341,6 +445,7 @@ export async function decodeRumor(
         read: ownPubkey !== null && seal.pubkey === ownPubkey,
         labelEventIds: [],
         labels: [],
+        ...(opts.partial ? { partial: opts.partial } : {}),
         // Derived from the receiving server's marker, never stored: a folder
         // `match: { spam: true }` files it (see lib/mail/folders.ts), and an
         // explicit folder overrides that match ("Not spam").
@@ -361,6 +466,11 @@ export async function decodeRumor(
       },
     }
   } catch (err) {
+    if (opts.partial) {
+      // A truncated prefix can fail MIME parsing. Show the bytes we have
+      // instead of making the whole message invisible.
+      return { email: partialFallbackEmail(rumor, seal, opts) }
+    }
     return {
       failure: { reason: `rfc2822 parse failed: ${(err as Error).message}`, routine: false },
     }

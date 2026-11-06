@@ -6,6 +6,7 @@ import { useProfile } from '@/app/hooks/useProfile'
 import { useSenderIdentity } from '@/app/hooks/useSenderIdentity'
 import type { Draft } from '@/app/lib/mail/draft'
 import { replyDraft, replyAllDraft, forwardDraft } from '@/app/lib/mail/draft'
+import type { Email } from '@/app/types/mail'
 import { SenderProofTrace } from '@/app/components/ui/SenderProof'
 import { Avatar } from '@/app/components/ui/Avatar'
 import { Button } from '@/app/components/ui/Button'
@@ -29,9 +30,11 @@ interface EmailViewProps {
   selfAddresses: string[]
   /** Narrow layouts show the reading pane alone; this returns to the list. */
   onBack: () => void
+  /** Replay a partially received chunked message from the relays. */
+  onRetryPartial: (email: Email) => void
 }
 
-export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) {
+export function EmailView({ onCompose, selfAddresses, onBack, onRetryPartial }: EmailViewProps) {
   const { emails, selectedId, mailState, setSelected } = useMailStore()
   const email = selectedId ? emails[selectedId] : null
   const { archive, unarchive, trash, restore, deleteForever, notSpam, toggleLabel } = useMailActions()
@@ -74,6 +77,10 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
   const flags = mailState[email.id]
   const folderId = resolveFolder(email, flags, folders)
   const labels = resolveLabels(email, flags, labelDefs)
+  // A headerless placeholder has no real wrap id yet. Filing/deleting it would
+  // write state against pending:<msgid>, which the eventual message cannot
+  // inherit — so keep those actions disabled until chunk 0 arrives.
+  const isHeaderless = Boolean(email.partial?.headerless)
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-surface-read">
@@ -126,6 +133,30 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
       </header>
 
       <div className="flex-1 overflow-y-auto px-5 py-5 md:px-6">
+        {email.partial && (
+          <div className="mb-4 flex max-w-[68ch] items-center justify-between gap-3 rounded-md border border-border bg-accent px-3 py-2">
+            <span
+              role="status"
+              aria-live="polite"
+              className="text-[12px] leading-snug text-foreground"
+            >
+              Receiving message… {email.partial.have}/{email.partial.total} parts
+              {email.partial.headerless
+                ? ' · waiting for the first part'
+                : email.partial.missing.length > 0
+                  ? ` · missing ${email.partial.missing.map((i) => i + 1).join(', ')}`
+                  : ''}
+            </span>
+            <Button
+              variant="secondary"
+              onClick={() => onRetryPartial(email)}
+              className="flex-none"
+            >
+              Retry
+            </Button>
+          </div>
+        )}
+
         {folderId === 'spam' && (
           <div className="mb-4 flex max-w-[68ch] items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2">
             <span className="text-[12px] leading-snug text-destructive">
@@ -133,6 +164,8 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
             </span>
             <Button
               variant="secondary"
+              disabled={isHeaderless}
+              title={isHeaderless ? 'Wait for the message to finish arriving' : undefined}
               onClick={() => notSpam(email.id)}
               className="flex-none"
             >
@@ -180,22 +213,35 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
         {/* The effective sender, not the raw header: a spoofed From must never
             become the reply's recipient or be quoted as the author. `self`
             pins the From to the mailbox this message was delivered to. */}
-        <Button variant="primary" onClick={() => onCompose(replyDraft(email, from, selfAddresses))}>
+        <Button
+          variant="primary"
+          disabled={Boolean(email.partial)}
+          title={email.partial ? 'Wait for the message to finish arriving' : undefined}
+          onClick={() => onCompose(replyDraft(email, from, selfAddresses))}
+        >
           <ReplyIcon className="h-3.5 w-3.5" />
           Reply
         </Button>
-        <Button onClick={() => onCompose(replyAllDraft(email, selfAddresses, from))}>
+        <Button
+          disabled={Boolean(email.partial)}
+          title={email.partial ? 'Wait for the message to finish arriving' : undefined}
+          onClick={() => onCompose(replyAllDraft(email, selfAddresses, from))}
+        >
           <ReplyAllIcon className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Reply all</span>
         </Button>
-        <Button onClick={() => onCompose(forwardDraft(email))}>
+        <Button
+          disabled={Boolean(email.partial)}
+          title={email.partial ? 'Wait for the message to finish arriving' : undefined}
+          onClick={() => onCompose(forwardDraft(email))}
+        >
           <ForwardIcon className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Forward</span>
         </Button>
 
         <span className="flex-1" />
 
-        {labelDefs.length > 0 && (
+        {labelDefs.length > 0 && !isHeaderless && (
           <details className="relative">
             <summary className="cursor-pointer list-none rounded-md border border-input px-3 py-1.5 text-[13px] text-foreground hover:bg-accent [&::-webkit-details-marker]:hidden">
               Labels
@@ -230,14 +276,23 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
 
         {flags?.folder === 'trash' ? (
           <>
-            <Button onClick={fileAway(restore)} title="Move back to Inbox">
+            <Button
+              onClick={fileAway(restore)}
+              disabled={isHeaderless}
+              title={isHeaderless ? 'Wait for the message to finish arriving' : 'Move back to Inbox'}
+            >
               <InboxIcon className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Restore</span>
             </Button>
             <ConfirmButton
               label="Delete forever"
               confirmLabel="Really delete?"
-              title="Permanently delete from relays and this device"
+              title={
+                isHeaderless
+                  ? 'Wait for the message to finish arriving'
+                  : 'Permanently delete from relays and this device'
+              }
+              disabled={isHeaderless}
               onConfirm={fileAway(deleteForever)}
             >
               <TrashIcon className="h-3.5 w-3.5" />
@@ -247,12 +302,23 @@ export function EmailView({ onCompose, selfAddresses, onBack }: EmailViewProps) 
           <>
             <Button
               onClick={fileAway(flags?.folder === 'archive' ? unarchive : archive)}
-              title={flags?.folder === 'archive' ? 'Move back to Inbox' : 'Archive'}
+              disabled={isHeaderless}
+              title={
+                isHeaderless
+                  ? 'Wait for the message to finish arriving'
+                  : flags?.folder === 'archive'
+                    ? 'Move back to Inbox'
+                    : 'Archive'
+              }
             >
               <ArchiveIcon className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">{flags?.folder === 'archive' ? 'Unarchive' : 'Archive'}</span>
             </Button>
-            <Button onClick={fileAway(trash)} title="Move to Trash">
+            <Button
+              onClick={fileAway(trash)}
+              disabled={isHeaderless}
+              title={isHeaderless ? 'Wait for the message to finish arriving' : 'Move to Trash'}
+            >
               <TrashIcon className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Delete</span>
             </Button>
