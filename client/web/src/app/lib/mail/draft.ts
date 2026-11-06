@@ -1,10 +1,27 @@
 import type { Email, MailAddress } from '@/app/types/mail'
+import { isSendableAddress } from './composeFields'
 
 /** A compose window's starting contents. Used verbatim — no further munging. */
 export interface Draft {
   to: string
   subject: string
   body: string
+  /**
+   * The account address that should be selected as From when this draft opens.
+   *
+   * A reply pins the address the original message was delivered to. That is
+   * the mailbox the correspondent actually wrote to, so it — not the sidebar's
+   * currently active inbox — must be the sender. Absent for a new message or a
+   * forward, where the composer derives the From normally.
+   */
+  from?: string
+  /**
+   * True when the original message had no sendable address of this account in
+   * To/Cc/From. The composer must ask for a From instead of silently
+   * substituting another alias — the correspondent would see a different
+   * identity than the one they wrote to.
+   */
+  fromUnavailable?: boolean
   inReplyTo?: string
   references?: string[]
 }
@@ -47,6 +64,29 @@ function threadRefs(email: Email): string[] | undefined {
   return chain.length ? chain : undefined
 }
 
+/**
+ * The account address this message was delivered to — the From a reply should
+ * use. `To`/`Cc` are checked first because they are the recipient headers a
+ * received message carries; the `From` header is the fallback for a message
+ * from the user's own Sent folder, whose To list names correspondents instead.
+ *
+ * Only addresses the account actually owns are considered, and the spelling
+ * from the message is preserved so the composer can match a self option.
+ */
+function deliveredTo(email: Email, self: string[]): string | undefined {
+  if (self.length === 0) return undefined
+  const mine = new Map(self.map((a) => [a.trim().toLowerCase(), a.trim()]))
+  for (const { address } of [...email.to, ...(email.cc ?? []), email.fromHeader]) {
+    const trimmed = address.trim()
+    const match = mine.get(trimmed.toLowerCase())
+    // The npub mailbox is receive-only for the bridge and cannot hold a PGP
+    // key, so it is not a usable reply From. Treat it like any other
+    // unavailable mailbox rather than silently falling back to an alias.
+    if (match && isSendableAddress(match)) return trimmed
+  }
+  return undefined
+}
+
 /** `> ` quoting, with an attribution line above it. */
 function quote(email: Email, sender: MailAddress): string {
   const when = new Date(email.timestamp * 1000).toLocaleString()
@@ -59,12 +99,21 @@ function quote(email: Email, sender: MailAddress): string {
   return `\n\nOn ${when}, ${who} wrote:\n${quoted}\n`
 }
 
-export function replyDraft(email: Email, sender?: MailAddress): Draft {
+export function replyDraft(
+  email: Email,
+  sender?: MailAddress,
+  self?: string[],
+): Draft {
   const who = senderOf(email, sender)
+  const from = self ? deliveredTo(email, self) : undefined
   return {
     to: who.address,
     subject: prefixOnce(email.subject, 'Re'),
     body: quote(email, who),
+    ...(from ? { from } : {}),
+    // `self` being supplied (even as an empty list) means the caller knows the
+    // account's addresses. If none matched, do not fall back to a default.
+    ...(self && !from ? { fromUnavailable: true } : {}),
     inReplyTo: email.messageId,
     references: threadRefs(email),
   }
@@ -91,7 +140,7 @@ export function replyAllDraft(email: Email, self: string[], sender?: MailAddress
     recipients.push(address)
   }
 
-  return { ...replyDraft(email, who), to: recipients.join(', ') }
+  return { ...replyDraft(email, who, self), to: recipients.join(', ') }
 }
 
 /**

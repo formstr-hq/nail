@@ -95,6 +95,12 @@ export function noEncryptReason(input: {
         }
       : null
   }
+  if (!fromAddress) {
+    // No usable sender (the npub is filtered out, and an alias may still be
+    // loading or not bought yet). Saying "no key for " with a blank address is
+    // noise; name the actual blocker.
+    return { text: 'Add a sending address before encrypting this message.' }
+  }
   if (!hasFromKey) {
     return {
       text: `You don't have a PGP key for ${fromAddress}.`,

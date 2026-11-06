@@ -3,11 +3,11 @@ import {
   splitRecipients,
   signatureBlock,
   parseRecipients,
-  defaultNpubAddress,
   deriveFromAddress,
   deriveFromOptions,
   hasKnownLegacyRecipient,
   isNpubSender,
+  isSendableAddress,
 } from './composeFields'
 
 const NPUB = 'npub1' + 'q'.repeat(58)
@@ -53,13 +53,12 @@ describe('parseRecipients', () => {
   })
 })
 
-describe('defaultNpubAddress', () => {
-  it('wraps the npub in the bridge domain', () => {
-    expect(defaultNpubAddress(NPUB)).toBe(`${NPUB}@mailstr.app`)
-  })
-
-  it('is empty when signed out', () => {
-    expect(defaultNpubAddress(undefined)).toBe('')
+describe('isSendableAddress', () => {
+  it('rejects the npub mailbox, bare npubs and empty values; accepts aliases', () => {
+    expect(isSendableAddress(`${NPUB}@mailstr.app`)).toBe(false)
+    expect(isSendableAddress(NPUB)).toBe(false)
+    expect(isSendableAddress('alice@mailstr.app')).toBe(true)
+    expect(isSendableAddress('')).toBe(false)
   })
 })
 
@@ -69,7 +68,6 @@ describe('deriveFromAddress', () => {
     selfAddresses: [`${NPUB}@mailstr.app`, 'alice@mailstr.app'],
     senderAddress: undefined as string | undefined,
     ownedAliases: ['alice@mailstr.app'],
-    defaultAddress: `${NPUB}@mailstr.app`,
   }
 
   it('prefers the active inbox when it matches an owned address', () => {
@@ -84,30 +82,63 @@ describe('deriveFromAddress', () => {
     )
   })
 
-  it('falls back to the saved sender address', () => {
-    expect(deriveFromAddress({ ...base, senderAddress: `${NPUB}@mailstr.app` })).toBe(
-      `${NPUB}@mailstr.app`,
+  // A reply pins the mailbox that received the original, even when the
+  // sidebar is pointing somewhere else. This is the user's identity to the
+  // correspondent, so it outranks every other candidate.
+  it('prefers the reply’s delivered-to address over the inbox filter', () => {
+    expect(
+      deriveFromAddress({
+        ...base,
+        preferredFrom: 'bob@mailstr.app',
+        inboxFilter: 'alice@mailstr.app',
+        selfAddresses: [`${NPUB}@mailstr.app`, 'alice@mailstr.app', 'bob@mailstr.app'],
+        ownedAliases: ['alice@mailstr.app', 'bob@mailstr.app'],
+      }),
+    ).toBe('bob@mailstr.app')
+  })
+
+  it('ignores a preferred From the account does not own', () => {
+    expect(deriveFromAddress({ ...base, preferredFrom: 'ghost@mailstr.app' })).toBe(
+      'alice@mailstr.app',
     )
   })
 
-  it('then to the first owned alias, then the npub default', () => {
-    expect(deriveFromAddress({ ...base, ownedAliases: [] })).toBe(`${NPUB}@mailstr.app`)
+  // The npub bridge address has no NIP-05 row and cannot hold a key, so it is
+  // never a legal sender — not even as a saved default or an inbox filter.
+  it('never selects the npub, even when it is the filter or saved sender', () => {
     expect(
-      deriveFromAddress({ ...base, ownedAliases: [], defaultAddress: '' }),
-    ).toBe(`${NPUB}@mailstr.app`)
+      deriveFromAddress({ ...base, inboxFilter: `${NPUB}@mailstr.app` }),
+    ).toBe('alice@mailstr.app')
+    expect(
+      deriveFromAddress({ ...base, senderAddress: `${NPUB}@mailstr.app` }),
+    ).toBe('alice@mailstr.app')
+    expect(
+      deriveFromAddress({ ...base, preferredFrom: `${NPUB}@mailstr.app` }),
+    ).toBe('alice@mailstr.app')
   })
 
-  it('ends with the first self address when nothing else is available', () => {
+  it('falls back to the saved sender address', () => {
+    expect(deriveFromAddress({ ...base, senderAddress: 'bob@mailstr.app' })).toBe(
+      'bob@mailstr.app',
+    )
+  })
+
+  it('ends with the first sendable self address when nothing else is available', () => {
     expect(
-      deriveFromAddress({ ...base, ownedAliases: [], defaultAddress: '', selfAddresses: ['solo@mailstr.app'] }),
+      deriveFromAddress({ ...base, ownedAliases: [], selfAddresses: ['solo@mailstr.app'] }),
     ).toBe('solo@mailstr.app')
+  })
+
+  it('returns empty when the only address is the npub', () => {
     expect(
       deriveFromAddress({
         ...base,
         ownedAliases: [],
-        defaultAddress: '',
-        selfAddresses: [],
+        selfAddresses: [`${NPUB}@mailstr.app`],
       }),
+    ).toBe('')
+    expect(
+      deriveFromAddress({ ...base, ownedAliases: [], selfAddresses: [] }),
     ).toBe('')
   })
 })
@@ -115,8 +146,14 @@ describe('deriveFromAddress', () => {
 describe('deriveFromOptions', () => {
   it('leads with the selected sender, dropping its duplicate', () => {
     expect(
+      deriveFromOptions(['bob@mailstr.app', 'alice@mailstr.app'], 'alice@mailstr.app'),
+    ).toEqual(['alice@mailstr.app', 'bob@mailstr.app'])
+  })
+
+  it('filters the npub out of the options', () => {
+    expect(
       deriveFromOptions([`${NPUB}@mailstr.app`, 'alice@mailstr.app'], 'alice@mailstr.app'),
-    ).toEqual(['alice@mailstr.app', `${NPUB}@mailstr.app`])
+    ).toEqual(['alice@mailstr.app'])
   })
 
   it('returns only the rest when the From is empty', () => {

@@ -19,19 +19,20 @@ export function ErrorBanner({ error, fix }: { error: string; fix?: React.ReactNo
   )
 }
 
-/** Pre-send guard: an npub From cannot reach recipients the bridge delivers. */
-export function NpubGuardBanner({ fix }: { fix: React.ReactNode }) {
+/** The reply's original mailbox is not one this account can send from.
+ *  Silently substituting another alias would show the correspondent a
+ *  different identity than the one they wrote to, so the composer starts
+ *  with no From and requires an explicit choice. */
+export function FromUnavailableBanner() {
   return (
     <div className="border-t border-border bg-accent px-3.5 py-2.5">
       <div className="flex items-start gap-2">
         <AlertIcon className="mt-0.5 h-3.5 w-3.5 flex-none text-muted-foreground" />
         <p className="text-[11.5px] leading-relaxed text-foreground">
-          External email addresses are delivered through the bridge, which only accepts
-          registered alias senders — your npub can’t reach them. (Your npub still works fine
-          for any recipient reached directly over Nostr: npubs and NIP-05 names.)
+          This message wasn’t delivered to one of your addresses, so the mailbox
+          it was sent to can’t be used. Choose a From address before sending.
         </p>
       </div>
-      <div className="mt-2 pl-[1.375rem]">{fix}</div>
     </div>
   )
 }
@@ -99,8 +100,8 @@ export function EncryptedBanner({
   )
 }
 
-/** The alias fix shared by the pre-send npub guard and the send-time bounce
- *  banner: switch to an alias you already own, or open the in-app buy flow. */
+/** The alias fix on the send-time bounce banner: switch to an alias you
+ *  already own, or open the in-app buy flow. */
 export function AliasFix({
   alias,
   onSwitch,
