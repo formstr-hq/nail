@@ -281,3 +281,30 @@ describe('headerless chunk placeholders', () => {
     expect(after.selectedId).toBe(real)
   })
 })
+
+describe('headerless placeholder state', () => {
+  it('carries read state to the real message when chunk 0 arrives', () => {
+    const pending = 'pending:' + 'f'.repeat(64)
+    const real = '1'.repeat(64)
+    const held = '2'.repeat(64)
+    const s = useMailStore.getState()
+
+    s.upsertEmail({
+      ...email(pending),
+      wrapIds: [held],
+      partial: { have: 1, total: 2, missing: [0], headerless: true },
+    })
+    s.setFlag(pending, { read: true })
+
+    useMailStore.getState().upsertEmail({
+      ...email(real),
+      pendingId: pending,
+      wrapIds: [held],
+      partial: { have: 2, total: 2, missing: [] },
+    })
+
+    const after = useMailStore.getState()
+    expect(after.emails[real]?.read).toBe(true)
+    expect(after.mailState[pending]).toBeUndefined()
+  })
+})

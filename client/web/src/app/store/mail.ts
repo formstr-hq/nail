@@ -315,21 +315,26 @@ export const useMailStore = create<MailState>()(
         // A late/duplicate partial must not replace an already complete
         // message. The reverse (partial -> complete) is the normal path.
         if (existing && !existing.partial && email.partial) return
-        const read = email.read || !!get().mailState[email.id]?.read
+        const pendingRead = email.pendingId ? !!get().mailState[email.pendingId]?.read : false
+        const read = email.read || pendingRead || !!get().mailState[email.id]?.read
         set((s) => {
           const emails = { ...s.emails }
           let selectedId = s.selectedId
+          let mailState = s.mailState
           const pendingId = email.pendingId
           // Chunk 0 arrived: drop the headerless placeholder it supersedes,
-          // and keep the reader on the message if that placeholder was open.
+          // keep the reader on the message if that placeholder was open, and
+          // carry its read state across.
           if (pendingId && emails[pendingId]) {
             delete emails[pendingId]
             if (selectedId === pendingId) selectedId = email.id
+            mailState = { ...s.mailState }
+            delete mailState[pendingId]
           }
           emails[email.id] = { ...email, read }
           const seen = new Set([...s.seenIds, email.id, ...(email.wrapIds ?? [])])
           if (pendingId) seen.delete(pendingId)
-          return { emails, selectedId, seenIds: seen }
+          return { emails, selectedId, seenIds: seen, mailState }
         })
       },
 
