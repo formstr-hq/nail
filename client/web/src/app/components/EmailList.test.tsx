@@ -121,4 +121,15 @@ describe('EmailList happy path', () => {
     expect(screen.getByText('Trash')).toBeInTheDocument()
     expect(screen.getByText(/Hello there/)).toBeInTheDocument()
   })
+
+  it('shows receiving progress for a partial chunked message', () => {
+    useMailStore.getState().upsertEmail(
+      email({ partial: { have: 2, total: 5, missing: [0, 3, 4] } }),
+    )
+    useAccountStore.setState({ account: { pubkey: 'd'.repeat(64) } as never, active: FAKE_ACTIVE })
+
+    render(<EmailList status={LIVE} onRetry={() => {}} />)
+
+    expect(screen.getByText(/Receiving 2\/5 parts/)).toBeInTheDocument()
+  })
 })

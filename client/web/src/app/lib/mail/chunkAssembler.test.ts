@@ -47,11 +47,54 @@ describe('ChunkAssembler', () => {
     const parts = await partsFor(BIG)
 
     const first = await assembler.add(parts[0])
-    expect(first).toEqual({ status: 'buffered', have: 1, total: parts.length })
+    expect(first.status).toBe('partial')
+    if (first.status !== 'partial') return
+    expect(first.raw).toBe(parts[0].content)
+    expect(first.id).toBe(parts[0].wrapId)
+    expect(first.have).toBe(1)
+    expect(first.total).toBe(parts.length)
+    expect(first.missing).toEqual(
+      Array.from({ length: parts.length - 1 }, (_, i) => i + 1),
+    )
 
     const second = await assembler.add(parts[1])
-    expect(second).toEqual({ status: 'buffered', have: 2, total: parts.length })
+    expect(second.status).toBe('partial')
+    if (second.status !== 'partial') return
+    expect(second.raw).toBe(parts[0].content + parts[1].content)
+    expect(second.have).toBe(2)
+    expect(second.missing).toEqual(
+      Array.from({ length: parts.length - 2 }, (_, i) => i + 2),
+    )
     expect(assembler.pendingGroups).toBe(1)
+  })
+
+  it('only renders the contiguous prefix when a middle part is missing', async () => {
+    const assembler = new ChunkAssembler()
+    const parts = await partsFor(BIG)
+
+    await assembler.add(parts[0])
+    await assembler.add(parts[2])
+    const result = await assembler.add(parts[3])
+    expect(result.status).toBe('partial')
+    if (result.status !== 'partial') return
+    expect(result.raw).toBe(parts[0].content)
+    expect(result.wrapIds).toEqual([parts[0].wrapId, parts[2].wrapId, parts[3].wrapId])
+    expect(result.missing).toEqual(
+      Array.from({ length: parts.length }, (_, i) => i).filter(
+        (i) => i !== 0 && i !== 2 && i !== 3,
+      ),
+    )
+  })
+
+  it('does not emit a partial message before chunk 0 arrives', async () => {
+    const assembler = new ChunkAssembler()
+    const parts = await partsFor(BIG)
+
+    await expect(assembler.add(parts[1])).resolves.toEqual({
+      status: 'buffered',
+      have: 1,
+      total: parts.length,
+    })
   })
 
   it('ignores a replayed part after the message was emitted', async () => {

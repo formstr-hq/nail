@@ -240,6 +240,15 @@ interface MailState {
   // this filters the view by which alias it was addressed from/to.
   inboxFilter: string | null
   addEmail: (email: Email) => void
+  /**
+   * Add or replace a chunked message, including its partial states. Unlike
+   * `addEmail`, this allows the same id to be updated as more parts arrive and
+   * when a partial becomes complete; it still never resurrects deleted mail or
+   * regresses a complete message back to a partial one.
+   */
+  upsertEmail: (email: Email) => void
+  /** Forget wrap ids as decoded so a manual retry can replay them. */
+  forgetSeen: (ids: string[]) => void
   /** Remember a kind-34578 event id as decoded, so replays skip the signer. */
   markMetaSeen: (id: string) => void
   /** Merge a delta into a mail's flags and return the merged set for publishing. */
@@ -298,6 +307,29 @@ export const useMailStore = create<MailState>()(
           // from an inbox rebuilt after reload.
           seenIds: new Set([...s.seenIds, email.id, ...(email.wrapIds ?? [])]),
         }))
+      },
+
+      upsertEmail: (email) => {
+        if (get().deletedIds.has(email.id) || get().mailState[email.id]?.deleted) return
+        const existing = get().emails[email.id]
+        // A late/duplicate partial must not replace an already complete
+        // message. The reverse (partial -> complete) is the normal path.
+        if (existing && !existing.partial && email.partial) return
+        const read = email.read || !!get().mailState[email.id]?.read
+        set((s) => ({
+          emails: { ...s.emails, [email.id]: { ...email, read } },
+          // Mark every known wrap seen so a reload does not re-decode the
+          // parts. A manual retry calls forgetSeen(ids) first to opt back in.
+          seenIds: new Set([...s.seenIds, email.id, ...(email.wrapIds ?? [])]),
+        }))
+      },
+
+      forgetSeen: (ids) => {
+        set((s) => {
+          const seen = new Set(s.seenIds)
+          for (const id of ids) seen.delete(id)
+          return { seenIds: seen }
+        })
       },
 
       markMetaSeen: (id) => {

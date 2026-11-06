@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { generateSecretKey, getPublicKey, getEventHash } from 'nostr-tools/pure'
 import { buildMailRumor, sealAndWrap, keySigner } from '@protocol'
-import { decodeGiftWrap } from './receive'
+import { decodeGiftWrap, decodeRumor } from './receive'
 import { clearProbeCache } from '@/app/lib/nostr/nip05'
 
 // The sender-proof branches are what the mailbox shows the reader, so the
@@ -394,5 +394,38 @@ describe('spam marker derivation', () => {
   it('leaves ordinary mail unmarked', async () => {
     const out = await decodeGiftWrap(await wrapWithHeaders([]), keySigner(ME_SK), ME)
     expect('email' in out && out.email.spam).toBe(false)
+  })
+})
+
+describe('partial chunked rendering', () => {
+  it('renders the contiguous prefix and hides incomplete attachments', async () => {
+    const raw = [
+      'From: Jack <jack@example.org>',
+      'To: me@mailstr.app',
+      'Subject: Partial message',
+      'Message-ID: <partial@example.org>',
+      '',
+      'Hello from the first chunk.',
+    ].join('\r\n')
+
+    const rumor = buildMailRumor({
+      senderPubkey: SENDER,
+      recipientPubkey: ME,
+      rfc2822: raw,
+    })
+
+    const out = await decodeRumor(rumor, { pubkey: SENDER } as never, ME, {
+      id: 'wrap-0',
+      wrapIds: ['wrap-0', 'wrap-1'],
+      partial: { have: 1, total: 2, missing: [1] },
+    })
+
+    expect('email' in out).toBe(true)
+    if (!('email' in out)) return
+    expect(out.email.partial).toEqual({ have: 1, total: 2, missing: [1] })
+    expect(out.email.subject).toBe('Partial message')
+    expect(out.email.body).toContain('Hello from the first chunk.')
+    // Incomplete MIME parts must not appear as downloadable attachments.
+    expect(out.email.attachments).toEqual([])
   })
 })

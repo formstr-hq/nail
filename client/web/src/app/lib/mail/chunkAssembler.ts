@@ -51,6 +51,24 @@ export interface AssembledMessage {
 
 export type ChunkAddResult =
   | { status: 'complete'; message: AssembledMessage }
+  | {
+      /**
+       * A partial message is renderable: chunk 0 and every chunk up to the
+       * first gap are present. `raw` is that contiguous prefix, so the reader
+       * can show the headers/body already received and update as the rest
+       * lands. `missing` is the indices still absent.
+       */
+      status: 'partial'
+      msgid: string
+      raw: string
+      /** Chunk 0's wrap id; becomes the Email id once it has arrived. */
+      id: string
+      wrapIds: string[]
+      wrapSecrets: WrapSecret[]
+      have: number
+      total: number
+      missing: number[]
+    }
   | { status: 'buffered'; have: number; total: number }
   /** A part we have already handed to the inbox (relay replay). Ignore it. */
   | { status: 'duplicate' }
@@ -141,7 +159,7 @@ export class ChunkAssembler {
     })
 
     if (group.parts.size < meta.total) {
-      return { status: 'buffered', have: group.parts.size, total: meta.total }
+      return this.partialResult(group, meta)
     }
 
     const ordered = Array.from({ length: meta.total }, (_, i) => group!.parts.get(i))
@@ -188,6 +206,48 @@ export class ChunkAssembler {
         ],
         wrapSecrets,
       },
+    }
+  }
+
+  /** Partial view of a group: the contiguous prefix from chunk 0, plus every
+   *  part already held for the retry/delete bookkeeping. Returns `buffered`
+   *  when chunk 0 has not arrived, because there is no message to parse yet. */
+  private partialResult(group: Group, meta: ChunkMeta): ChunkAddResult {
+    const chunk0 = group.parts.get(0)
+    if (!chunk0) {
+      return { status: 'buffered', have: group.parts.size, total: meta.total }
+    }
+
+    let raw = ''
+    for (let i = 0; i < meta.total; i++) {
+      const part = group.parts.get(i)
+      if (!part) break
+      raw += part.content
+    }
+
+    const wrapIds: string[] = []
+    const wrapSecrets: WrapSecret[] = []
+    const missing: number[] = []
+    for (let i = 0; i < meta.total; i++) {
+      const part = group.parts.get(i)
+      if (!part) {
+        missing.push(i)
+        continue
+      }
+      wrapIds.push(part.wrapId)
+      if (part.wrapSecret) wrapSecrets.push({ id: part.wrapId, secret: part.wrapSecret })
+    }
+
+    return {
+      status: 'partial',
+      msgid: meta.msgid,
+      raw,
+      id: chunk0.wrapId,
+      wrapIds,
+      wrapSecrets,
+      have: group.parts.size,
+      total: meta.total,
+      missing,
     }
   }
 

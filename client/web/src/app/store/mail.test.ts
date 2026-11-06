@@ -193,3 +193,66 @@ describe('delete forever, locally', () => {
     expect(useMailStore.getState().syncError).toBeNull()
   })
 })
+
+describe('partial chunked messages', () => {
+  it('upsertEmail updates a partial in place and replaces it with the complete message', () => {
+    const first = '1'.repeat(64)
+    const second = '2'.repeat(64)
+    const s = useMailStore.getState()
+
+    s.upsertEmail({
+      ...email(first),
+      wrapIds: [first],
+      partial: { have: 1, total: 2, missing: [1] },
+    })
+    expect(useMailStore.getState().emails[first]?.partial).toEqual({
+      have: 1,
+      total: 2,
+      missing: [1],
+    })
+
+    useMailStore.getState().upsertEmail({
+      ...email(first),
+      wrapIds: [first, second],
+      body: 'complete',
+    })
+
+    const after = useMailStore.getState()
+    expect(after.emails[first]?.body).toBe('complete')
+    expect(after.emails[first]?.partial).toBeUndefined()
+    expect(after.seenIds.has(first)).toBe(true)
+    expect(after.seenIds.has(second)).toBe(true)
+  })
+
+  it('does not regress a complete message back to a partial one', () => {
+    const first = '1'.repeat(64)
+    const s = useMailStore.getState()
+
+    s.upsertEmail({ ...email(first), wrapIds: [first] })
+    useMailStore.getState().upsertEmail({
+      ...email(first),
+      wrapIds: [first],
+      partial: { have: 1, total: 2, missing: [1] },
+    })
+
+    expect(useMailStore.getState().emails[first]?.partial).toBeUndefined()
+  })
+
+  it('forgetSeen lets a manual retry replay the partial wraps', () => {
+    const first = '1'.repeat(64)
+    const second = '2'.repeat(64)
+    useMailStore.getState().upsertEmail({
+      ...email(first),
+      wrapIds: [first, second],
+      partial: { have: 1, total: 2, missing: [1] },
+    })
+
+    expect(useMailStore.getState().seenIds.has(first)).toBe(true)
+    expect(useMailStore.getState().seenIds.has(second)).toBe(true)
+
+    useMailStore.getState().forgetSeen([first, second])
+
+    expect(useMailStore.getState().seenIds.has(first)).toBe(false)
+    expect(useMailStore.getState().seenIds.has(second)).toBe(false)
+  })
+})

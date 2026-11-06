@@ -115,6 +115,12 @@ export interface Email {
   labelEventIds: string[]  // Kind 1985 event IDs managing this email's labels
   labels: string[]         // e.g. ['trash', 'flag:starred', 'state:read']
   /**
+   * Present while a chunked message is still arriving. The reader shows the
+   * contiguous prefix and this progress, then replaces it when the last part
+   * lands. `missing` lets the UI name/retry the absent chunks.
+   */
+  partial?: { have: number; total: number; missing: number[] }
+  /**
    * The receiving server marked this message as spam (`X-Spam-Flag`).
    *
    * Derived at decode time from the message itself, never stored: it is a
