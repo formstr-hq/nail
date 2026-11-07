@@ -154,6 +154,14 @@ export const PaperclipIcon = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 )
 
+export const ExternalLinkIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M15 3h6v6" />
+    <path d="M10 14 21 3" />
+    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+  </Icon>
+)
+
 export const AlertIcon = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M12 9v4M12 17h.01" />

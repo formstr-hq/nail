@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Attachment } from '@/app/types/mail'
 import { resolveAttachment, saveToDisk, formatSize } from '@/app/lib/mail/attachments'
-import { PaperclipIcon, AlertIcon } from '@/app/components/ui/icons'
+import { PaperclipIcon, AlertIcon, ExternalLinkIcon } from '@/app/components/ui/icons'
 import { Button } from '@/app/components/ui/Button'
 
 /**
@@ -41,19 +41,22 @@ export function AttachmentRow({ attachment }: { attachment: Attachment }) {
         <span className="truncate text-[12px] text-foreground" title={attachment.filename}>
           {attachment.filename}
         </span>
-        <span className="flex-none font-mono text-[10px] text-subtle">
-          {readableSize ?? (inline ? '' : attachment.shareUrl ? 'Formstr Drive' : 'size unknown')}
-        </span>
+        {!attachment.shareUrl && (
+          <span className="flex-none font-mono text-[10px] text-subtle">
+            {readableSize ?? (inline ? '' : 'size unknown')}
+          </span>
+        )}
         <span className="flex-1" />
         {attachment.shareUrl ? (
           <a
             href={attachment.shareUrl}
             target="_blank"
             rel="noopener noreferrer"
-            title="Open this attachment in Formstr Drive"
-            className="inline-flex h-7 flex-none items-center justify-center whitespace-nowrap rounded-md border border-input bg-card px-2.5 text-xs font-medium text-foreground transition-colors duration-[120ms] hover:bg-accent"
+            title="Open in Formstr Drive"
+            aria-label="Open in Formstr Drive"
+            className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-md text-muted-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground"
           >
-            Open in Formstr Drive
+            <ExternalLinkIcon className="h-3.5 w-3.5" />
           </a>
         ) : (
           <Button size="sm" onClick={download} disabled={busy} className="flex-none">
@@ -69,11 +72,9 @@ export function AttachmentRow({ attachment }: { attachment: Attachment }) {
         </div>
       )}
 
-      {!inline && !error && (
+      {!inline && !error && !attachment.shareUrl && (
         <p className="pl-[1.375rem] text-[10.5px] leading-relaxed text-subtle">
-          {attachment.shareUrl
-            ? 'Stored in Formstr Drive. Opens in a new tab to preview or download.'
-            : "Stored outside the message. Downloading contacts the sender's host."}
+          Stored outside the message. Downloading contacts the sender&apos;s host.
         </p>
       )}
     </div>
