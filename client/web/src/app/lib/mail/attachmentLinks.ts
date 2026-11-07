@@ -9,9 +9,9 @@ import {
  * The plain-text link list that travels in `attachments.txt`.
  *
  * A full share URL is `https://drive.formstr.app/#shared=<naddr>&k=<hex>`; the
- * drive app can open it, and `resolveSharedAttachment` can resolve it here.
- * Mailstr clients parse it back into ordinary attachment chips, so the reader
- * never sees the raw list.
+ * drive app opens it directly. Mailstr clients parse it back into ordinary
+ * attachment chips that hand the reader to Formstr Drive, so the reader never
+ * sees the raw list.
  */
 export interface AttachmentShareLink {
   filename: string

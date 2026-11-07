@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { Attachment } from '@/app/types/mail'
 import { resolveAttachment, saveToDisk, formatSize } from '@/app/lib/mail/attachments'
-import { PaperclipIcon, AlertIcon } from '@/app/components/ui/icons'
+import { PaperclipIcon, AlertIcon, ExternalLinkIcon } from '@/app/components/ui/icons'
 import { Button } from '@/app/components/ui/Button'
 
 /**
@@ -41,13 +41,28 @@ export function AttachmentRow({ attachment }: { attachment: Attachment }) {
         <span className="truncate text-[12px] text-foreground" title={attachment.filename}>
           {attachment.filename}
         </span>
-        <span className="flex-none font-mono text-[10px] text-subtle">
-          {readableSize ?? (inline ? '' : 'size unknown')}
-        </span>
+        {!attachment.shareUrl && (
+          <span className="flex-none font-mono text-[10px] text-subtle">
+            {readableSize ?? (inline ? '' : 'size unknown')}
+          </span>
+        )}
         <span className="flex-1" />
-        <Button size="sm" onClick={download} disabled={busy} className="flex-none">
-          {busy ? 'Downloading…' : 'Download'}
-        </Button>
+        {attachment.shareUrl ? (
+          <a
+            href={attachment.shareUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open in Formstr Drive"
+            aria-label="Open in Formstr Drive"
+            className="inline-flex h-7 w-7 flex-none items-center justify-center rounded-md text-muted-foreground transition-colors duration-[120ms] hover:bg-accent hover:text-foreground"
+          >
+            <ExternalLinkIcon className="h-3.5 w-3.5" />
+          </a>
+        ) : (
+          <Button size="sm" onClick={download} disabled={busy} className="flex-none">
+            {busy ? 'Downloading…' : 'Download'}
+          </Button>
+        )}
       </div>
 
       {error && (
@@ -57,13 +72,9 @@ export function AttachmentRow({ attachment }: { attachment: Attachment }) {
         </div>
       )}
 
-      {!inline && !error && (
-        // Downloading contacts a host the sender chose, which reveals the
-        // reader's IP. Say so before they click rather than after.
+      {!inline && !error && !attachment.shareUrl && (
         <p className="pl-[1.375rem] text-[10.5px] leading-relaxed text-subtle">
-          {attachment.shareUrl
-            ? 'Shared from outside this message. Downloading resolves it from Nostr and the sender’s host.'
-            : "Stored outside the message. Downloading contacts the sender's host."}
+          Stored outside the message. Downloading contacts the sender&apos;s host.
         </p>
       )}
     </div>
