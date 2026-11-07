@@ -97,6 +97,10 @@ export async function uploadDriveShare(
       signer: ephemeralSigner(generateSecretKey()),
       transport: createFetchBlossomTransport(),
       servers: options.servers,
+      // Keep a copy on every candidate (recipient's servers + the operator).
+      // The share metadata then lists all of them, so a reader can fall back
+      // when its nearest/listed server is slow or unavailable.
+      strategy: "replicate",
       signal: controller.signal,
     });
 
@@ -124,7 +128,7 @@ export async function uploadDriveShare(
         parent: "",
         folder: "",
         uploadedAt: Date.now(),
-        servers: [server],
+        servers: upload.landed,
         server,
         encryptionKey: encrypted.encryptionKey,
         encryptionAlgorithm: "aes-gcm",
