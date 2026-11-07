@@ -42,12 +42,24 @@ export function AttachmentRow({ attachment }: { attachment: Attachment }) {
           {attachment.filename}
         </span>
         <span className="flex-none font-mono text-[10px] text-subtle">
-          {readableSize ?? (inline ? '' : 'size unknown')}
+          {readableSize ?? (inline ? '' : attachment.shareUrl ? 'Formstr Drive' : 'size unknown')}
         </span>
         <span className="flex-1" />
-        <Button size="sm" onClick={download} disabled={busy} className="flex-none">
-          {busy ? 'Downloading…' : 'Download'}
-        </Button>
+        {attachment.shareUrl ? (
+          <a
+            href={attachment.shareUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open this attachment in Formstr Drive"
+            className="inline-flex h-7 flex-none items-center justify-center whitespace-nowrap rounded-md border border-input bg-card px-2.5 text-xs font-medium text-foreground transition-colors duration-[120ms] hover:bg-accent"
+          >
+            Open in Formstr Drive
+          </a>
+        ) : (
+          <Button size="sm" onClick={download} disabled={busy} className="flex-none">
+            {busy ? 'Downloading…' : 'Download'}
+          </Button>
+        )}
       </div>
 
       {error && (
@@ -58,11 +70,9 @@ export function AttachmentRow({ attachment }: { attachment: Attachment }) {
       )}
 
       {!inline && !error && (
-        // Downloading contacts a host the sender chose, which reveals the
-        // reader's IP. Say so before they click rather than after.
         <p className="pl-[1.375rem] text-[10.5px] leading-relaxed text-subtle">
           {attachment.shareUrl
-            ? 'Shared from outside this message. Downloading resolves it from Nostr and the sender’s host.'
+            ? 'Stored in Formstr Drive. Opens in a new tab to preview or download.'
             : "Stored outside the message. Downloading contacts the sender's host."}
         </p>
       )}

@@ -1,5 +1,4 @@
 import type { File as DriveFile } from '@formstr/drive-sdk'
-import { resolveSharedAttachment } from './shareLinkResolve'
 import type { Attachment } from '@/app/types/mail'
 
 /**
@@ -102,8 +101,6 @@ export async function decryptAttachment(
  */
 export async function resolveAttachment(attachment: Attachment): Promise<Uint8Array> {
   if (attachment.data) return attachment.data
-
-  if (attachment.shareUrl) return resolveSharedAttachment(attachment.shareUrl)
 
   if (!attachment.blossomUrl) {
     throw new Error('This attachment has no contents and no link to fetch')
