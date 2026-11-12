@@ -2156,3 +2156,74 @@ of the bridge's one-shot AES-GCM/imeta shape:
 Verified with a live `nostr.download` round-trip: encrypt → upload → publish
 share event → resolve link → download/decrypt. Bridge: 189 tests, tsc clean.
 Client: 507 tests, tsc clean.
+
+## 2026-11-12 — Release 0.5.0: chunked mail, folders, and Drive attachments
+
+Version 0.5.0 (`versionCode 9`) rolls up every change on `main` since the
+0.4.1 release commit (`82dd622`, 2026-11-05). It is also the first build
+published to Zapstore since 0.3.1: the 0.4.x tags existed on GitHub but were
+never published to the store, so store users jump from 0.3.1 straight to this
+release.
+
+### Mail that arrives in pieces
+
+- Bodies too large for one NIP-59 gift wrap are published as ordered chunks
+  and reassembled by the client. The reader renders the parts it already has
+  instead of waiting for the last one, with a headerless placeholder before
+  chunk 0.
+- LMTP keeps the socket open long enough for a multi-part publish
+  (`LMTP_SOCKET_TIMEOUT_MS`, 300 s default), publishes four parts in flight,
+  and caches a successfully published msgid for an hour so a Postfix retry
+  re-ACKs instead of duplicating the message on relays.
+- The client treats an identical slice carried by a different wrap id as a
+  re-published copy, keeps the first copy for assembly, and retains every
+  wrap/key so delete-forever purges all of them.
+
+### Folders, labels and spam
+
+- The folder/label spec in `docs/nip-nostr-mail-metadata.md` is implemented:
+  an explicit folder always wins, otherwise the first matching rule files the
+  message. Spam is a folder rule, and "Not spam" files a message back into
+  Inbox rather than merely clearing a label.
+- Settings gains a folder/label editor: rename, colour, order, match rules,
+  add/remove (built-in folders protected; a non-empty folder cannot be
+  removed). Explicit labels are toggled from the reader; rule-derived labels
+  are read-only there.
+- The bridge stamps a trusted `X-Bridge-Spam: yes|no` marker after stripping
+  every sender-supplied `X-Spam*`, `X-Rspamd*` and `X-Bridge-Spam` header, so
+  the client only trusts the last hop's verdict.
+
+### Inbound attachments
+
+- External attachments are no longer dropped. The bridge encrypts and uploads
+  each one (the recipient's BUD-03 Blossom servers first, then
+  `BLOSSOM_SERVER_URL`, `https://nostr.download` by default), publishes a
+  Drive `shared-file` event with a throwaway key, and rewrites the message
+  with `attachments.txt` links.
+- Uploads share one 240 s deadline. Upload and share signing keys are
+  throwaway, so Blossom and relays never learn the bridge's identity; the
+  link itself is the bearer token.
+- The client resolves those links through the Drive SDK, decrypts NIP-FS
+  `imeta` attachments from mail already on relays, and opens shared
+  attachments in Formstr Drive from the reader (icon-only link).
+
+### Reply identity
+
+- Replies pick From from the delivered-to address by default and require an
+  explicit From when that mailbox is unavailable.
+- Compose no longer selects the wrong sender, including on replied messages.
+
+### Release
+
+- `client/package.json` is 0.5.0; Android `versionCode` 9,
+  `versionName "0.5.0"`. The release tag is `v0.5.0`.
+- Built as the `direct` (Zapstore/sideload) flavor, so the APK contains no
+  Play Billing and no Google services, and is signed with the production
+  Formstr certificate (`10549b63…`). The release build targets
+  `assembleDirectRelease bundleDirectRelease`; the bare lifecycle tasks would
+  also build the Play flavor against an open web bundle and trip its
+  store-bundle guard.
+- Published as a NIP-82 release on
+  `nostr://npub1qu7…/relay.ngit.dev/nail`, mirrored to
+  `formstr-hq/nail` on GitHub (APK + AAB), and published to Zapstore as
+  "Mail by Form*".
