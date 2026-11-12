@@ -2228,6 +2228,13 @@ release.
   that Lightning vocabulary leaked into the Play chunk even though the store
   build never reads it. The default is now `null` (rail-neutral) and the open
   picker writes the chosen value; `check:store` passes.
+- Restored the original launcher mark for store listings. Zapstore's APK
+  icon extractor rendered the `mipmap-anydpi-v26` adaptive vector as a thin
+  outlined envelope instead of the filled red envelope + white asterisk. The
+  adaptive-icon layer (and its foreground/background drawables) is removed;
+  the legacy `mipmap-*/ic_launcher{,_round}.png` rasters, which carry the
+  original mark, are now the single icon source. The Zapstore screenshots are
+  unchanged (the same six CDN image URLs as before).
 - Published as a NIP-82 release on
   `nostr://npub1qu7…/relay.ngit.dev/nail`, mirrored to
   `formstr-hq/nail` on GitHub (APK + AAB), and published to Zapstore as
