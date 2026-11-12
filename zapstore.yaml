@@ -8,6 +8,11 @@
 
 repository: https://github.com/formstr-hq/nail
 
+# Keep the original mark pinned to the existing Zapstore CDN asset. The store
+# extracts a thin outlined imitation from older APKs; pinning the original URL
+# also avoids re-uploading an icon on every publish.
+icon: https://cdn.zapstore.dev/5997548ca2436109b1e6cb7a65113d127c90272644539d616ddb1e3b9c61d251
+
 # Pull description/screenshots metadata from the GitHub repo (native source).
 # The app is not on F-Droid or the Play Store.
 metadata_sources:

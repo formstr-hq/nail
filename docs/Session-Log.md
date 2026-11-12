@@ -2239,3 +2239,26 @@ release.
   `nostr://npub1qu7…/relay.ngit.dev/nail`, mirrored to
   `formstr-hq/nail` on GitHub (APK + AAB), and published to Zapstore as
   "Mail by Form*".
+
+## 2026-11-12 — Release 0.5.1: store icon and app-claim fix
+
+0.5.0's source was correct, but the Zapstore listing still showed a thin
+outlined envelope and the app was marked unclaimed. The signing key never
+changed: both the staging keystore copy and the old local
+`android-release.p12` are byte-identical and produce certificate
+`10549b63…`, the same cert the existing listing used.
+
+- Removed the `mipmap-anydpi-v26` adaptive-icon layer and its
+  foreground/background drawables. The store's extractor rendered that vector
+  as a thin outline; the legacy `mipmap-*/ic_launcher{,_round}.png` rasters
+  carry the original filled red envelope + white asterisk mark. `aapt` now
+  reports the raster as the application icon.
+- Published a NIP-C1 identity proof (kind 30509) for cert `10549b63…`
+  signed by `npub1qu7…` (event `08f5f54b…`). Its absence was why Zapstore said
+  "whoever published this has not claimed the app as theirs"; the unclaimed
+  banner is gone.
+- `zapstore.yaml` keeps the original 0.3.1 description, screenshots, tags and
+  metadata sources. The original icon URL is pinned explicitly so the store
+  does not re-extract an imitation.
+- Version 0.5.1, Android `versionCode` 10. The patch release also invalidates
+  the store's per-version icon cache.
