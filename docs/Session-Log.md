@@ -2223,6 +2223,11 @@ release.
   `assembleDirectRelease bundleDirectRelease`; the bare lifecycle tasks would
   also build the Play flavor against an open web bundle and trip its
   store-bundle guard.
+- Fixed the long-standing store-bundle CI failure: the shared pay-in
+  preference module defaulted the saved currency to the literal `sats`, so
+  that Lightning vocabulary leaked into the Play chunk even though the store
+  build never reads it. The default is now `null` (rail-neutral) and the open
+  picker writes the chosen value; `check:store` passes.
 - Published as a NIP-82 release on
   `nostr://npub1qu7…/relay.ngit.dev/nail`, mirrored to
   `formstr-hq/nail` on GitHub (APK + AAB), and published to Zapstore as

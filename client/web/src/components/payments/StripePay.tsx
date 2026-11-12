@@ -58,7 +58,8 @@ export default function StripePay({
   const [currencies, setCurrencies] = useState<string[]>(['usd'])
   // The first panel may have already chosen the currency. Otherwise fall back
   // to the remembered card currency, or USD when the deployment dropped it.
-  const currency = lockedCurrency ?? (currencies.includes(rememberedCurrency) ? rememberedCurrency : 'usd')
+  const currency =
+    lockedCurrency ?? (rememberedCurrency && currencies.includes(rememberedCurrency) ? rememberedCurrency : 'usd')
   const seats = 'seats' in order ? order.seats : undefined
   // The quote is kept with the inputs it was asked for, so a stale one is ignored rather than cleared.
   const quoteKey = [currency, priceUsd, order.product, seats].join(':')

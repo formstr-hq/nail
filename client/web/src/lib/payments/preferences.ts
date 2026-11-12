@@ -42,16 +42,22 @@ export const useMethodPreference = create<MethodPreference>()(
   ),
 )
 
-/** The payment currency the buyer chose last; sats (Bitcoin) until they pick another. */
+/**
+ * The payment currency the buyer chose last, or null until they pick one.
+ *
+ * Keep this default rail-neutral: this module is shared with store builds,
+ * which must not contain payment-rail vocabulary. The open build's picker
+ * treats null as its own default and writes the chosen value here.
+ */
 interface CurrencyPreference {
-  currency: string
+  currency: string | null
   setCurrency: (currency: string) => void
 }
 
 export const useCurrencyPreference = create<CurrencyPreference>()(
   persist(
     (set) => ({
-      currency: 'sats',
+      currency: null,
       setCurrency: (currency) => set({ currency }),
     }),
     { name: 'mailstr.pay.currency', storage: storage() },

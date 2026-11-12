@@ -217,7 +217,7 @@ export default function SignupWizard({
             tiers={tiers}
             selectedTierId={selectedTierId}
             onSelectTier={setSelectedTierId}
-            payIn={payIn}
+            payIn={payIn ?? ''}
             onPayInChange={setPayIn}
             onPayInChoiceChange={setPayChoice}
             paymentReady={STORE_BUILD || payChoice !== null}
