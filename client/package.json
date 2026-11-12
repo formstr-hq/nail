@@ -1,7 +1,7 @@
 {
   "name": "mailstr-client",
   "private": true,
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Capacitor native shell (Android/iOS) wrapping the Mailstr web build (landing @ / + client @ /mails/).",
   "type": "module",
   "scripts": {
