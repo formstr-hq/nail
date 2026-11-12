@@ -81,3 +81,6 @@ cd e2e-nostr
 pnpm install
 RELAY_URL=ws://127.0.0.1:4600 pnpm test
 ```
+
+Android release process (direct/Zapstore APK, GitHub release, NIP-82, Zapstore
+publish, certificate claiming): see [`docs/RELEASE.md`](docs/RELEASE.md).
