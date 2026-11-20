@@ -19,6 +19,7 @@ import {
   publishDmRelays,
   fetchDmRelays,
   clearDmRelayCache,
+  sameRelayList,
 } from './relays'
 
 const PUBKEY = 'a'.repeat(64)
@@ -60,6 +61,26 @@ describe('fetchDmRelayList', () => {
     const res = await fetchDmRelayList(PUBKEY)
     expect(res.hasList).toBe(false)
     expect(res.relays).toEqual(DEFAULT_RELAYS)
+  })
+})
+
+describe('sameRelayList', () => {
+  it('ignores order, duplicates, whitespace and blanks', () => {
+    expect(
+      sameRelayList(
+        ['wss://one.example', ' wss://two.example '],
+        ['wss://two.example', 'wss://one.example', 'wss://one.example', ''],
+      ),
+    ).toBe(true)
+  })
+
+  it('detects an added or removed relay', () => {
+    expect(sameRelayList(['wss://one.example'], ['wss://one.example', 'wss://two.example'])).toBe(
+      false,
+    )
+    expect(sameRelayList(['wss://one.example', 'wss://two.example'], ['wss://one.example'])).toBe(
+      false,
+    )
   })
 })
 

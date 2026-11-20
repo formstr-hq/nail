@@ -88,6 +88,22 @@ export async function fetchDmRelayList(
 }
 
 /**
+ * Whether two relay lists are the same set.
+ *
+ * Order is not meaningful for a relay list, and the editor trims trailing
+ * slashes, so compare the normalised sets rather than the raw arrays. Used to
+ * avoid publishing an identical kind-10050 just because the user clicked
+ * Confirm.
+ */
+export function sameRelayList(a: readonly string[], b: readonly string[]): boolean {
+  const normalise = (list: readonly string[]) =>
+    [...new Set(list.map((r) => r.trim()).filter(Boolean))].sort()
+  const left = normalise(a)
+  const right = normalise(b)
+  return left.length === right.length && left.every((relay, i) => relay === right[i])
+}
+
+/**
  * Publish the account's kind-10050 (NIP-17 DM/inbox) relay list.
  *
  * The event is broadcast to the new set itself plus the defaults, so other

@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useAccountStore } from '@/app/store/account'
 import { useSettingsStore } from '@/app/store/settings'
-import { fetchDmRelayList, publishDmRelays } from '@/app/lib/nostr/relays'
+import {
+  fetchDmRelayList,
+  publishDmRelays,
+  sameRelayList,
+} from '@/app/lib/nostr/relays'
 import { DEFAULT_RELAYS } from '@/app/lib/nostr/constants'
 import { isFreshSignup, clearFreshSignup } from '@/app/lib/freshSignup'
+import { markOnboardingSkipped } from '@/app/lib/onboardingSkip'
 import type { InboxStatus } from '@/app/hooks/useInbox'
 import { RelayManager } from '@/app/components/RelayManager'
 import { Button } from '@/app/components/ui/Button'
@@ -40,11 +45,21 @@ type Phase = 'loading' | 'has-list' | 'no-list' | 'unreachable'
  * trusted once the inbox has actually reached relays (`status.phase === 'live'`).
  * If neither holds after a few tries, we show a retry instead of publishing.
  */
-export function OnboardingModal({ status }: { status: InboxStatus }) {
+export function OnboardingModal({
+  status,
+  onSkipped,
+}: {
+  status: InboxStatus
+  /** Let the app close this modal without writing anything to the relays. */
+  onSkipped: () => void
+}) {
   const { account, active } = useAccountStore()
   const { save } = useSettingsStore()
 
   const [relays, setRelays] = useState<string[]>(DEFAULT_RELAYS)
+  // The list we read from the relays, or [] when there was none. Confirm only
+  // publishes a new kind-10050 when this differs from what the user is seeing.
+  const initialRelaysRef = useRef<string[]>([])
   // A key created on the landing (or our own login UI) provably has no list, so
   // we can trust "empty" even before relays connect. Stable per account.
   const accountPubkey = account?.pubkey
@@ -86,10 +101,12 @@ export function OnboardingModal({ status }: { status: InboxStatus }) {
         }
         if (!alive) return
         if (res.hasList) {
+          initialRelaysRef.current = res.relays
           setRelays(res.relays)
           setPhase('has-list')
           return
         }
+        initialRelaysRef.current = []
         setRelays(DEFAULT_RELAYS)
         if (confident()) {
           setPhase('no-list')
@@ -115,15 +132,34 @@ export function OnboardingModal({ status }: { status: InboxStatus }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account?.pubkey, runId, knownNew])
 
-  async function finish(publish: boolean) {
-    if (!account || !active) {
+  async function finish(action: 'confirm' | 'skip') {
+    if (!account) {
+      setError('Your session is locked — sign in again.')
+      return
+    }
+    // Skip is deliberately a local no-op on the network: no kind-10050, and
+    // no synced settings write either. The app remembers the dismissal for
+    // this device only; another device still gets the setup prompt.
+    if (action === 'skip') {
+      markOnboardingSkipped(account.pubkey)
+      clearFreshSignup()
+      onSkipped()
+      return
+    }
+    if (!active) {
       setError('Your session is locked — sign in again.')
       return
     }
     setBusy(true)
     setError('')
     try {
-      if (publish) await publishDmRelays(relays, account.pubkey, active)
+      // Re-reads are normal (the user may have edited the list), but an
+      // unchanged list is already stored. Publishing it again only churns the
+      // replaceable event and makes every other client re-download it.
+      if (!sameRelayList(relays, initialRelaysRef.current)) {
+        await publishDmRelays(relays, account.pubkey, active)
+        initialRelaysRef.current = relays
+      }
       // Stamping onboardedAt flips the gate in App and unmounts this screen.
       // A patch, not a full snapshot: a concurrent settings edit must survive.
       await save({ onboardedAt: Date.now() }, account.pubkey, active)
@@ -210,7 +246,7 @@ export function OnboardingModal({ status }: { status: InboxStatus }) {
             {phase === 'has-list' ? (
               <button
                 type="button"
-                onClick={() => finish(false)}
+                onClick={() => finish('skip')}
                 disabled={busy}
                 className="text-[12px] text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
               >
@@ -219,7 +255,7 @@ export function OnboardingModal({ status }: { status: InboxStatus }) {
             ) : (
               <span />
             )}
-            <Button variant="primary" onClick={() => finish(true)} disabled={!canConfirm}>
+            <Button variant="primary" onClick={() => finish('confirm')} disabled={!canConfirm}>
               {busy ? 'Saving…' : 'Confirm relays'}
             </Button>
           </div>
