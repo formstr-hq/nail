@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   groupAddressesByDomain,
   isPinnedInbox,
@@ -52,6 +52,8 @@ export function InboxSwitcher({
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
   const [pinBusy, setPinBusy] = useState<string | null>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   const pinnedKeys = useMemo(
     () => new Set(pinned.map((address) => address.toLowerCase())),
@@ -81,23 +83,72 @@ export function InboxSwitcher({
       .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
   }, [aliases, needle])
 
-  function close() {
+  const close = useCallback(() => {
     setOpen(false)
     setQuery('')
     setError('')
-  }
+    // The picker is a dialog; put focus back on the control that opened it.
+    triggerRef.current?.focus()
+  }, [])
 
   useEffect(() => {
     if (!open) return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      setOpen(false)
-      setQuery('')
-      setError('')
+      const panel = panelRef.current
+      if (!panel) return
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        close()
+        return
+      }
+
+      // Keep Tab inside the dialog while it is open.
+      if (event.key === 'Tab') {
+        const focusable = Array.from(
+          panel.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+          ),
+        )
+        if (!focusable.length) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first.focus()
+        }
+        return
+      }
+
+      // Move through the selectable rows without making the user Tab through
+      // every pin star in between. From the search box, ArrowDown enters the
+      // list and ArrowUp enters it from the end.
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        const rows = Array.from(
+          panel.querySelectorAll<HTMLElement>('[data-inbox-select]'),
+        )
+        if (!rows.length) return
+        const current = document.activeElement as HTMLElement | null
+        const index = current ? rows.indexOf(current) : -1
+        event.preventDefault()
+        if (index === -1) {
+          const target = event.key === 'ArrowDown' ? rows[0] : rows[rows.length - 1]
+          target?.focus()
+          return
+        }
+        const nextIndex =
+          event.key === 'ArrowDown'
+            ? Math.min(index + 1, rows.length - 1)
+            : Math.max(index - 1, 0)
+        rows[nextIndex]?.focus()
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open])
+  }, [open, close])
 
   async function togglePin(address: string) {
     if (pinBusy) return
@@ -144,10 +195,12 @@ export function InboxSwitcher({
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={open}
+        aria-controls={open ? 'inbox-picker' : undefined}
         className={[
           'flex items-center gap-2 rounded-md border-l-2 border-l-transparent px-3 py-2.5 text-left',
           'text-[13px] text-muted-foreground transition-colors duration-[120ms]',
@@ -170,6 +223,8 @@ export function InboxSwitcher({
           className="bg-foreground/40 backdrop-blur-sm"
         >
           <div
+            ref={panelRef}
+            id="inbox-picker"
             role="dialog"
             aria-modal="true"
             aria-labelledby="inbox-picker-title"
@@ -231,6 +286,7 @@ export function InboxSwitcher({
                   <div className="pt-1">
                     <button
                       type="button"
+                      data-inbox-select
                       onClick={() => choose(null)}
                       aria-current={currentKey === null ? 'true' : undefined}
                       className={[
@@ -325,6 +381,7 @@ function AddressRow({
     >
       <button
         type="button"
+        data-inbox-select
         onClick={onSelect}
         aria-current={active ? 'true' : undefined}
         title={address}

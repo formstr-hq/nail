@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { renderLoginHtml, attachLoginListeners } from '@formstr/signer/ui'
 import '@formstr/signer/styles.css'
 import { nostrSigner, getSignerPool } from '@/app/lib/nostr/signer'
@@ -36,8 +36,22 @@ export function SignerLogin({
   const refresh = useAccountStore((s) => s.refresh)
   const [error, setError] = useState('')
   const loginRef = useRef<HTMLDivElement>(null)
+  // The modal below is imperative: its DOM is built once by the signer package
+  // and then handed to listeners. Keep the latest callbacks in refs so a parent
+  // re-render does not become a teardown/rebuild of the whole sign-in UI. That
+  // rebuild reset the selected signer method, cleared inputs, and was the
+  // flicker seen when adding an account over a live mailbox.
+  const onLoggedInRef = useRef(onLoggedIn)
+  const onCancelRef = useRef(onCancel)
+  useLayoutEffect(() => {
+    onLoggedInRef.current = onLoggedIn
+    onCancelRef.current = onCancel
+  }, [onLoggedIn, onCancel])
 
-  useEffect(() => {
+  const hasCancel = Boolean(onCancel)
+  // Layout effect (not passive) so the modal exists before first paint rather
+  // than appearing for a frame as an empty container.
+  useLayoutEffect(() => {
     const el = loginRef.current
     if (!el) return
     // Browser NIP-55 is hidden in the native shell (where the Capacitor
@@ -55,14 +69,16 @@ export function SignerLogin({
           "<p class='nostr-signer__brand-sub'>Choose how you'd like to access your mail</p>",
       },
     })
-    const detachCancel = onCancel ? addCancelAffordance(el, onCancel) : undefined
+    const detachCancel = hasCancel
+      ? addCancelAffordance(el, () => onCancelRef.current?.())
+      : undefined
     const binding = attachLoginListeners(el, nostrSigner, {
       pool: getSignerPool(),
       onLogin: () => {
         refresh()
-        onLoggedIn?.()
+        onLoggedInRef.current?.()
       },
-      onCancel,
+      onCancel: hasCancel ? () => onCancelRef.current?.() : undefined,
       onError: (err) => setError(friendlyUnlockError(err)),
     })
     // After the package has wired its listeners, so removing an element can't
@@ -72,7 +88,7 @@ export function SignerLogin({
       ? injectAndroidSigners(el, nostrSigner, {
           onSuccess: () => {
             refresh()
-            onLoggedIn?.()
+            onLoggedInRef.current?.()
           },
           onError: setError,
         })
@@ -102,7 +118,7 @@ export function SignerLogin({
       el.removeEventListener('click', markCreated, true)
       el.innerHTML = ''
     }
-  }, [refresh, onLoggedIn, onCancel])
+  }, [refresh, hasCancel])
 
   return (
     <>
