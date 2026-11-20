@@ -74,7 +74,7 @@ export function DnsPanel({
             (where you bought the domain) so mail can be sent and received.
           </p>
           {MAIL_RECORD_KEYS.map((key) => (
-            <DnsRecordRow key={key} kind={key} record={dns[key]} status={statusFor(key)} />
+            <DnsRecordRow key={key} kind={key} record={dns[key]} domain={domain} status={statusFor(key)} />
           ))}
         </div>
       ) : (
@@ -85,11 +85,11 @@ export function DnsPanel({
             below into a new record, save it, then press Verify domain. It can
             take a few minutes to go live.
           </p>
-          <DnsRecordRow kind="verify" record={dns.verify} />
+          <DnsRecordRow kind="verify" record={dns.verify} domain={domain} />
 
           {revealEarly ? (
             MAIL_RECORD_KEYS.map((key) => (
-              <DnsRecordRow key={key} kind={key} record={dns[key]} status={statusFor(key)} />
+              <DnsRecordRow key={key} kind={key} record={dns[key]} domain={domain} status={statusFor(key)} />
             ))
           ) : (
             <div className="rounded-md border border-dashed border-input px-3 py-2.5">
