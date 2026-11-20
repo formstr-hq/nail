@@ -230,9 +230,19 @@ export function EmailList({ status, onRetry }: { status: InboxStatus; onRetry: (
   return (
     <div className="flex h-full flex-col overflow-hidden bg-surface-list">
       <header className="border-b border-border px-3.5 py-3">
-        <div className="flex items-center justify-between pb-2">
-          <span className="eyebrow">{folderLabel}</span>
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between gap-2 pb-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="eyebrow flex-none">{folderLabel}</span>
+            {inboxFilter && (
+              <span
+                className="min-w-0 truncate font-mono text-[10px] text-subtle"
+                title={inboxFilter}
+              >
+                {inboxFilter}
+              </span>
+            )}
+          </div>
+          <div className="flex flex-none items-center gap-2">
             {unread > 0 && (
               <span className="font-mono text-[10px] font-semibold tabular-nums text-primary">
                 {unread} unread

@@ -1,10 +1,18 @@
+import { useCallback, useMemo } from 'react'
 import { useMailStore } from '@/app/store/mail'
 import { useAccountStore } from '@/app/store/account'
 import { useEffectiveSenders } from '@/app/hooks/useEffectiveSenders'
+import { useAliasInboxStats } from '@/app/hooks/useAliasInboxStats'
 import { AccountSwitcher } from '@/app/components/AccountSwitcher'
+import { InboxSwitcher } from '@/app/components/InboxSwitcher'
 import { matchesAlias } from '@/app/lib/mail/aliasFilter'
 import { useSettingsStore } from '@/app/store/settings'
 import { foldersOf, resolveFolder, sortFolders } from '@/app/lib/mail/folders'
+import {
+  normalizePinnedInboxes,
+  PINNED_INBOX_LIMIT,
+  SHOW_ALL_INBOXES_LIMIT,
+} from '@/app/lib/mail/inboxAddresses'
 import type { InboxStatus } from '@/app/hooks/useInbox'
 import { BrandGlyph, PenIcon, SettingsIcon, InboxIcon, AtSignIcon, PlusIcon } from '@/app/components/ui/icons'
 import calendarAppIcon from '@/app/assets/calendar-app-icon.png'
@@ -64,11 +72,71 @@ function RelayState({ status }: { status: InboxStatus }) {
 export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onBuyAddress, aliases, status }: SidebarProps) {
   const { folder, setFolder, emails, mailState, inboxFilter, setInboxFilter } = useMailStore()
   const settings = useSettingsStore((s) => s.settings)
+  const save = useSettingsStore((s) => s.save)
   const folders = sortFolders(foldersOf(settings))
-  const { account } = useAccountStore()
+  const { account, active } = useAccountStore()
   // Effective senders, so an unbacked (possibly spoofed) header never files a
   // message under one of the user's aliases.
   const effectiveFrom = useEffectiveSenders()
+  const aliasStats = useAliasInboxStats(aliases, effectiveFrom)
+
+  // Above the flat-list threshold the sidebar shows a stable, bounded subset:
+  // pinned addresses plus whichever address is currently selected. Everything
+  // else lives in the searchable InboxSwitcher.
+  const pinned = useMemo(
+    () => normalizePinnedInboxes(settings.pinnedInboxes, aliases),
+    [settings.pinnedInboxes, aliases],
+  )
+  const pinnedKeys = useMemo(
+    () => new Set(pinned.map((address) => address.toLowerCase())),
+    [pinned],
+  )
+  const currentAddress =
+    inboxFilter != null
+      ? (aliases.find((address) => address.toLowerCase() === inboxFilter) ?? null)
+      : null
+  const currentUnpinned =
+    currentAddress && !pinnedKeys.has(currentAddress.toLowerCase())
+      ? currentAddress
+      : null
+  const compactInboxes = aliases.length > SHOW_ALL_INBOXES_LIMIT
+
+  const togglePin = useCallback(
+    async (address: string) => {
+      if (!account || !active) {
+        throw new Error('Sign in again to change pinned inboxes.')
+      }
+      // Read the live blob, not the rendered snapshot: two quick pin clicks
+      // must compose instead of the second overwriting the first.
+      const livePins = normalizePinnedInboxes(
+        useSettingsStore.getState().settings.pinnedInboxes,
+        aliases,
+      )
+      const key = address.toLowerCase()
+      const isPinned = livePins.some((pin) => pin.toLowerCase() === key)
+      const next = isPinned
+        ? livePins.filter((pin) => pin.toLowerCase() !== key)
+        : [...livePins, address]
+      if (next.length > PINNED_INBOX_LIMIT) {
+        throw new Error(
+          `Pin up to ${PINNED_INBOX_LIMIT} addresses. Unpin one first.`,
+        )
+      }
+
+      const previous = useSettingsStore.getState().settings.pinnedInboxes
+      const stored = next.map((pin) => pin.toLowerCase())
+      // The star should feel instant; the settings event catches up behind it.
+      useSettingsStore.getState().update({ pinnedInboxes: stored })
+      try {
+        await save({ pinnedInboxes: stored }, account.pubkey, active)
+      } catch (e) {
+        // Roll back the optimistic star if the relay/signer rejected the write.
+        useSettingsStore.getState().update({ pinnedInboxes: previous })
+        throw e
+      }
+    },
+    [account, active, aliases, save],
+  )
 
   // The badge sits on the Inbox row, so it must count Inbox mail specifically —
   // the same predicate EmailList uses for the inbox folder. A global count also
@@ -112,9 +180,11 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onB
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-2">
-        {/* One row per address the account owns, so a user juggling several
-            aliases can read each as its own inbox. Hidden when there is only
-            the default address — a filter with a single option is just noise. */}
+        {/* The account's addresses as inboxes. Small accounts keep the familiar
+            flat list; once it would take over the sidebar, only pinned and
+            current addresses stay as rows and the full list moves into the
+            searchable InboxSwitcher. Hidden for a single address — a filter
+            with one option is just noise. */}
         {aliases.length > 1 && (
           <nav aria-label="Inboxes" className="flex flex-col gap-px px-2">
             <div className="eyebrow px-2 pb-1.5">Inboxes</div>
@@ -124,16 +194,51 @@ export function Sidebar({ onCompose, onSettings, onOpenRelays, onAddAccount, onB
               active={inboxFilter === null}
               onClick={() => setInboxFilter(null)}
             />
-            {aliases.map((address) => (
-              <InboxOption
-                key={address}
-                icon={<AtSignIcon className="h-4 w-4 flex-none" />}
-                label={address}
-                mono
-                active={inboxFilter === address.toLowerCase()}
-                onClick={() => setInboxFilter(address)}
-              />
-            ))}
+            {compactInboxes ? (
+              <>
+                {pinned.map((address) => (
+                  <InboxOption
+                    key={address}
+                    icon={<AtSignIcon className="h-4 w-4 flex-none" />}
+                    label={address}
+                    mono
+                    count={aliasStats.get(address.toLowerCase())?.unread}
+                    active={inboxFilter === address.toLowerCase()}
+                    onClick={() => setInboxFilter(address)}
+                  />
+                ))}
+                {currentUnpinned && (
+                  <InboxOption
+                    icon={<AtSignIcon className="h-4 w-4 flex-none" />}
+                    label={currentUnpinned}
+                    mono
+                    count={aliasStats.get(currentUnpinned.toLowerCase())?.unread}
+                    active
+                    onClick={() => setInboxFilter(currentUnpinned)}
+                  />
+                )}
+                <InboxSwitcher
+                  aliases={aliases}
+                  current={inboxFilter}
+                  pinned={pinned}
+                  stats={aliasStats}
+                  onSelect={setInboxFilter}
+                  onTogglePin={togglePin}
+                />
+              </>
+            ) : (
+              aliases.map((address) => (
+                <InboxOption
+                  key={address}
+                  icon={<AtSignIcon className="h-4 w-4 flex-none" />}
+                  label={address}
+                  mono
+                  count={aliasStats.get(address.toLowerCase())?.unread}
+                  active={inboxFilter === address.toLowerCase()}
+                  onClick={() => setInboxFilter(address)}
+                />
+              ))
+            )}
           </nav>
         )}
 
@@ -243,12 +348,15 @@ function InboxOption({
   label,
   active,
   mono = false,
+  count,
   onClick,
 }: {
   icon: React.ReactNode
   label: string
   active: boolean
   mono?: boolean
+  /** Unread Inbox messages for this alias, when known. */
+  count?: number
   onClick: () => void
 }) {
   return (
@@ -269,6 +377,16 @@ function InboxOption({
       <span className={['min-w-0 flex-1 truncate', mono ? 'font-mono text-[13px]' : 'text-[15px]'].join(' ')}>
         {label}
       </span>
+      {count != null && count > 0 && (
+        <span
+          className={[
+            'font-mono text-[10px] font-semibold tabular-nums',
+            active ? 'text-primary' : 'text-subtle',
+          ].join(' ')}
+        >
+          {count}
+        </span>
+      )}
     </button>
   )
 }
