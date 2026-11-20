@@ -13,6 +13,7 @@ import { useMailMeta } from '@/app/hooks/useMailMeta'
 import { useSelfAddresses } from '@/app/hooks/useSelfAddresses'
 import { ensureMailIndexKey } from '@/app/hooks/useMailActions'
 import { isFreshSignup } from '@/app/lib/freshSignup'
+import { isOnboardingSkipped } from '@/app/lib/onboardingSkip'
 import { useResolveContext } from '@/app/hooks/useResolveContext'
 import { useOwnedAddresses } from '@/app/hooks/useOwnedAddresses'
 import type { Draft } from '@/app/lib/mail/draft'
@@ -65,8 +66,14 @@ function MailApp() {
   // (a deep link must never open with a drawer showing). The Android back
   // handler pops it by reading this via the callback below.
   const [navOpen, setNavOpen] = useState(false)
+  // "Skip for now" is a local dismissal (see onboardingSkip.ts), so keep the
+  // pubkey it applies to in state to re-render the gate without a relay write.
+  const [onboardingSkippedPubkey, setOnboardingSkippedPubkey] = useState<string | null>(null)
 
   const { account, active } = useAccountStore()
+  const onboardingSkipped =
+    account != null &&
+    (onboardingSkippedPubkey === account.pubkey || isOnboardingSkipped(account.pubkey))
 
   // Store builds: finish any purchase that was charged but never confirmed
   // (the app was killed mid-verify). Dynamic import inside a build-time guard,
@@ -365,8 +372,9 @@ function MailApp() {
       )}
 
       {/* First-run relay setup — shown once per account (the `onboardedAt` flag
-          lives in the synced kind-30078 settings event, so "once" holds across
-          devices).
+          lives in the synced kind-30078 settings event, so a confirmed setup
+          holds across devices). "Skip for now" is different: it is a local-only
+          dismissal that writes nothing to the relays (see onboardingSkip.ts).
 
           Only shown when we can actually trust that the user hasn't onboarded:
           either they're a provably-new key (created here, so there's genuinely
@@ -377,10 +385,14 @@ function MailApp() {
           users who had confirmed relays many times before. */}
       {settingsLoaded &&
         !settings.onboardedAt &&
+        !onboardingSkipped &&
         !addingAccount &&
         account &&
         (isFreshSignup(account.pubkey) || settingsEventExists) && (
-          <OnboardingModal status={status} />
+          <OnboardingModal
+            status={status}
+            onSkipped={() => setOnboardingSkippedPubkey(account.pubkey)}
+          />
         )}
 
       {/* Buying an address embeds the landing's purchase wizard over the app.
