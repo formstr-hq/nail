@@ -14,7 +14,7 @@ const SignupWizard = lazy(() => import("./SignupWizard"));
  * typed; the wizard runs the NIP-05 availability check and shows the
  * status there.
  */
-export default function SignupSection() {
+export default function SignupSection({ className = "" }: { className?: string }) {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [wizard, setWizard] = useState<{
@@ -55,12 +55,12 @@ export default function SignupSection() {
 
   return (
     <>
-      <form onSubmit={check} className="mt-8 max-w-xl">
+      <form onSubmit={check} className={className}>
         <div className="flex items-stretch overflow-hidden rounded-xl border border-ink/15 bg-white shadow-sm focus-within:border-primary">
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="npub… or pick a name"
+            placeholder="npub or name"
             aria-label="Your npub, pubkey, or desired name"
             className="min-w-0 flex-1 bg-transparent px-4 py-3.5 text-sm text-ink outline-none placeholder:text-gray-400"
           />
