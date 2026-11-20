@@ -1,19 +1,18 @@
 import { useLayoutEffect, useEffect, useState } from "react";
-import {
-  AtSign,
-  KeyRound,
-  Loader2,
-  Lock,
-  Radio,
-} from "lucide-react";
+import { KeyRound, Loader2, Lock, Radio } from "lucide-react";
 import { config } from "@/lib/config";
 import {
   hasBuyIntent,
   hasResumableSession,
   redirectReturningOwner,
 } from "@/lib/session";
-import SignupSection from "@/components/SignupSection";
-import { Navbar, Footer, Glyph } from "@/components/landing";
+import {
+  Navbar,
+  Footer,
+  Glyph,
+  PersonalCard,
+  WorkspaceCard,
+} from "@/components/landing";
 
 // Effects never run during server prerender, so `useLayoutEffect` there only
 // logs a warning. Fall back to `useEffect` on the server; on the client use
@@ -23,7 +22,7 @@ const useIsomorphicLayoutEffect =
   typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
 /* ------------------------------------------------------------------ */
-/* One screen — headline, honest subline, signup, three true facts     */
+/* One shared pitch, then the two paths side by side                   */
 /* ------------------------------------------------------------------ */
 
 const facts: readonly { icon: typeof Lock; text: string }[] = [
@@ -34,34 +33,39 @@ const facts: readonly { icon: typeof Lock; text: string }[] = [
 
 function Hero() {
   return (
-    <main className="relative flex flex-1 items-center justify-center overflow-hidden bg-grid px-5 py-10 sm:px-6">
+    <main className="relative flex-1 overflow-hidden bg-grid px-5 py-10 sm:px-6 sm:py-14">
       <div className="absolute inset-0 bg-grid-lg pointer-events-none" />
-      <div className="relative w-full max-w-2xl text-center">
-        <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3.5 py-1.5 text-[11px] font-bold uppercase tracking-widest text-primary xs:text-xs">
-          <AtSign size={13} /> you@{config.mailDomain}
+      <div className="relative mx-auto w-full max-w-5xl">
+        <div className="mx-auto max-w-2xl text-center">
+          <h1 className="text-4xl font-extrabold leading-[1.05] tracking-tight text-ink xs:text-5xl sm:text-6xl">
+            Email locked to <span className="text-emphasis">your key.</span>
+          </h1>
+
+          <p className="mx-auto mt-5 max-w-xl text-base leading-relaxed text-gray-600 sm:text-lg">
+            Claim an address at {config.mailDomain}, or bring your own domain
+            for the whole team. Either way, mail is stored encrypted to your
+            key, on relays you choose.
+          </p>
         </div>
 
-        <h1 className="text-4xl font-extrabold leading-[1.05] tracking-tight text-ink xs:text-5xl sm:text-6xl">
-          Email locked to <span className="text-emphasis">your key.</span>
-        </h1>
-
-        <p className="mx-auto mt-5 max-w-xl text-base leading-relaxed text-gray-600 sm:text-lg">
-          Mail to you@{config.mailDomain} is stored encrypted to your key, on
-          relays you choose. You sign in with your own key.
-        </p>
-
-        <div className="mx-auto max-w-xl text-left">
-          <SignupSection />
+        <div className="mt-9 grid items-stretch gap-4 md:grid-cols-2 md:gap-5">
+          <PersonalCard />
+          <WorkspaceCard />
         </div>
 
-        <ul className="mt-8 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-gray-500">
-          {facts.map((f) => (
-            <li key={f.text} className="flex items-center gap-1.5">
-              <f.icon size={15} className="text-primary" />
-              {f.text}
-            </li>
-          ))}
-        </ul>
+        <div className="mt-8 border-t border-black/10 pt-6">
+          <p className="text-center font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+            Every address gets
+          </p>
+          <ul className="mt-3 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm text-gray-500">
+            {facts.map((f) => (
+              <li key={f.text} className="flex items-center gap-1.5">
+                <f.icon size={15} className="text-primary" />
+                {f.text}
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
     </main>
   );

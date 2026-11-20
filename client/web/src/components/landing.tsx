@@ -1,5 +1,11 @@
-import { Github, Inbox } from "lucide-react";
+import { ArrowRight, AtSign, Building2, Check, Github, Inbox } from "lucide-react";
+import { Link } from "react-router";
 import { config } from "@/lib/config";
+import SignupSection from "./SignupSection";
+
+/** The mail app's base, tolerating the Capacitor build's explicit index file. */
+const MAILS_BASE =
+  config.mailsUrl.replace(/\/index\.html$/, "").replace(/\/+$/, "") || "/mails";
 
 /* ------------------------------------------------------------------ */
 /* Brand glyph — an envelope carrying the Formstr asterisk             */
@@ -54,16 +60,25 @@ export function Navbar() {
             </span>
           </span>
         </a>
-        <div className="flex shrink-0 items-center gap-3 sm:gap-4">
+        <div className="flex shrink-0 items-center gap-2.5 sm:gap-4">
           <a
             href="https://github.com/formstr-hq"
             target="_blank"
             rel="noopener noreferrer"
-            className="text-gray-500 transition-colors hover:text-ink"
+            className="hidden text-gray-500 transition-colors hover:text-ink xs:block"
             aria-label="GitHub"
           >
             <Github size={20} />
           </a>
+          <Link
+            to={`${MAILS_BASE}/workspace`}
+            aria-label="Workspace"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-ink/15 bg-white px-2.5 py-2 text-sm font-semibold text-ink transition-colors hover:border-ink/30 hover:bg-paper xs:px-3.5"
+          >
+            <Building2 size={15} />
+            <span className="xs:hidden">Teams</span>
+            <span className="hidden xs:inline">Workspace</span>
+          </Link>
           <a
             href={config.mailsUrl}
             className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-ink/85 sm:px-4"
@@ -75,6 +90,116 @@ export function Navbar() {
         </div>
       </div>
     </nav>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* The two paths — personal and workspace, side by side                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The personal path. This is where the signup form lives, so the card has to
+ * be a real working surface, not a marketing tile: it owns the name/identity
+ * input and hands off to the wizard exactly as the old hero did.
+ */
+export function PersonalCard() {
+  return (
+    <section
+      id="personal"
+      aria-labelledby="personal-heading"
+      className="flex h-full min-w-0 flex-col rounded-2xl border border-ink/10 bg-surface p-5 shadow-sm sm:p-6"
+    >
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <p className="inline-flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
+          <AtSign size={13} />
+          Personal
+        </p>
+        <span className="min-w-0 truncate rounded-full bg-paper px-2.5 py-1 font-mono text-[10px] font-medium text-gray-500">
+          you@{config.mailDomain}
+        </span>
+      </div>
+
+      <h2
+        id="personal-heading"
+        className="mt-4 text-xl font-extrabold tracking-tight text-ink sm:text-2xl"
+      >
+        An address of your own.
+      </h2>
+      <p className="mt-2 text-sm leading-relaxed text-gray-600">
+        Encrypted to your key, stored on relays you choose.
+      </p>
+
+      <SignupSection className="mt-5" />
+
+      <p className="mt-auto pt-5 text-xs text-gray-500">
+        Already have an address?{" "}
+        <a
+          href={config.mailsUrl}
+          className="font-semibold text-ink underline decoration-ink/20 underline-offset-2 transition-colors hover:decoration-ink"
+        >
+          Open your inbox →
+        </a>
+      </p>
+    </section>
+  );
+}
+
+/**
+ * The team path. Deliberately the ink card beside the paper one: neither
+ * product is buried beneath the other, and the copy names the shared
+ * encryption/relay model before it asks for the domain.
+ */
+export function WorkspaceCard() {
+  return (
+    <section
+      id="workspace"
+      aria-labelledby="workspace-heading"
+      className="flex h-full min-w-0 flex-col rounded-2xl border border-white/10 bg-ink p-5 text-white shadow-sm sm:p-6"
+    >
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <p className="inline-flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-white/45">
+          <Building2 size={13} />
+          Workspace
+        </p>
+        <span className="min-w-0 truncate rounded-full border border-white/15 px-2.5 py-1 font-mono text-[10px] font-medium text-white/60">
+          you@yourdomain.com
+        </span>
+      </div>
+
+      <h2
+        id="workspace-heading"
+        className="mt-4 text-xl font-extrabold tracking-tight sm:text-2xl"
+      >
+        A domain for your team.
+      </h2>
+      <p className="mt-2 text-sm leading-relaxed text-white/65">
+        Bring a domain you own and give everyone on your team an address there.
+        Same encryption, same relays.
+      </p>
+
+      <ul className="mt-5 space-y-2.5 border-t border-white/10 pt-4 text-sm text-white/70">
+        {[
+          "Custom domain, verified by DNS",
+          "One private inbox per teammate",
+          "Seats billed per address",
+        ].map((item) => (
+          <li key={item} className="flex items-start gap-2">
+            <Check size={14} className="mt-0.5 flex-none text-white/40" />
+            {item}
+          </li>
+        ))}
+      </ul>
+
+      <div className="mt-auto pt-5">
+        <Link
+          to={`${MAILS_BASE}/workspace`}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-paper"
+        >
+          Set up a workspace
+          <ArrowRight size={16} />
+        </Link>
+      </div>
+    </section>
   );
 }
 
