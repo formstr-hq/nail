@@ -154,6 +154,16 @@ function MailApp() {
       }),
     [navigate],
   )
+  // Stable callbacks keep the signer modal's imperative setup from being torn
+  // down when this live mailbox re-renders underneath the add-account overlay.
+  const finishAddingAccount = useCallback(() => {
+    useMailStore.getState().clear()
+    navigate(MAIL_APP_PREFIX, { replace: true })
+  }, [navigate])
+  const cancelAddingAccount = useCallback(
+    () => navigate(MAIL_APP_PREFIX, { replace: true }),
+    [navigate],
+  )
   // The buy flow is an overlay (store/buyOverlay), not a route: it opens over
   // the Settings pane or an open composer, and a URL would unmount — and lose
   // — that context. The Android back handler pops it first (see handleBack).
@@ -415,11 +425,8 @@ function MailApp() {
       {addingAccount && (
         <div className="mail-signer">
           <SignerLogin
-            onLoggedIn={() => {
-              useMailStore.getState().clear()
-              navigate(MAIL_APP_PREFIX, { replace: true })
-            }}
-            onCancel={() => navigate(MAIL_APP_PREFIX, { replace: true })}
+            onLoggedIn={finishAddingAccount}
+            onCancel={cancelAddingAccount}
           />
         </div>
       )}

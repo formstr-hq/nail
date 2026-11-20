@@ -2,7 +2,7 @@
  * @vitest-environment happy-dom
  */
 import { describe, expect, it, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import './test-utils'
 import { InboxSwitcher } from './InboxSwitcher'
@@ -118,5 +118,47 @@ describe('InboxSwitcher', () => {
     expect(
       screen.getByRole('button', { name: /pin ben@acme.com/i }),
     ).toBeDisabled()
+  })
+
+  it('returns focus to the trigger when closed with Escape', async () => {
+    setup()
+    const trigger = screen.getByRole('button', { name: /all addresses/i })
+    const user = userEvent.setup()
+    await user.click(trigger)
+    await screen.findByRole('heading', { name: /choose an address/i })
+
+    await user.keyboard('{Escape}')
+
+    expect(
+      screen.queryByRole('heading', { name: /choose an address/i }),
+    ).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+
+  it('moves through selectable rows with arrow keys', async () => {
+    setup({ pinned: [], current: null, stats: new Map<string, AliasInboxStats>() })
+    const user = await openPicker()
+    const search = screen.getByRole('searchbox', { name: /search addresses/i })
+    search.focus()
+
+    await user.keyboard('{ArrowDown}')
+    const allMail = screen.getByRole('button', { name: /^all mail$/i })
+    expect(allMail).toHaveFocus()
+
+    await user.keyboard('{ArrowDown}')
+    expect(screen.getByTitle('amy@acme.com')).toHaveFocus()
+  })
+
+  it('traps Tab at the dialog boundary', async () => {
+    setup()
+    await openPicker()
+
+    const close = screen.getByRole('button', { name: /^close$/i })
+    const pins = screen.getAllByRole('button', { name: /^pin /i })
+    const last = pins[pins.length - 1]
+    last.focus()
+
+    fireEvent.keyDown(window, { key: 'Tab' })
+    expect(close).toHaveFocus()
   })
 })
