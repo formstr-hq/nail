@@ -48,6 +48,12 @@ export interface MailSettings {
                            // presence is the "seen once, any device" flag —
                            // this event is NIP-44 synced across devices
   /**
+   * Addresses pinned to the top of the sidebar Inboxes list, lowercased.
+   * Absent means the user has not pinned anything; the sidebar then shows only
+   * the current address and the full searchable address picker.
+   */
+  pinnedInboxes?: string[]
+  /**
    * Folder definitions (NIP-XX § Folders). Absent means the client's defaults
    * (Inbox, Sent, Archive, Spam with `match: { spam: true }`, Trash). The
    * per-message folder lives in kind-34578, keyed by gift-wrap id.
