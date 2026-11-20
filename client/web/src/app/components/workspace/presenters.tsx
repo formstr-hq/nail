@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react'
 import type { DomainDnsRecord, DomainStatus } from '@/app/lib/api/workspace'
-import type { DnsCheckStatus } from '@/app/lib/mail/dnsCheck'
+import { hostName, type DnsCheckStatus } from '@/app/lib/mail/dnsCheck'
 import { CheckIcon, ChevronRightIcon, CopyIcon, InfoIcon } from '@/app/components/ui/icons'
 import { DNS_HELP, STEP_TAB, WORKSPACE_TABS, type SetupStep, type WorkspaceTab } from './workspaceUi'
 
@@ -162,15 +162,16 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
 }
 
 /** One labelled field of a record, with its own copy button. */
-function RecordField({ label, value }: { label: string; value: string }) {
+function RecordField({ label, value, note }: { label: string; value: string; note?: string }) {
   return (
     <div className="flex items-start gap-2 border-t border-input/60 py-1.5 first:border-t-0 first:pt-0 last:pb-0">
-      <span className="w-12 flex-none pt-0.5 text-[10px] uppercase tracking-wide text-subtle">
+      <span className="w-14 flex-none pt-0.5 text-[10px] uppercase tracking-wide text-subtle">
         {label}
       </span>
-      <code className="min-w-0 flex-1 break-all font-mono text-[11px] text-foreground">
-        {value}
-      </code>
+      <div className="min-w-0 flex-1">
+        <code className="block break-all font-mono text-[11px] text-foreground">{value}</code>
+        {note && <p className="mt-0.5 text-[10.5px] leading-snug text-subtle">{note}</p>}
+      </div>
       <CopyButton value={value} label={label.toLowerCase()} />
     </div>
   )
@@ -212,17 +213,28 @@ export function DnsCheckBadge({ status }: { status: DnsCheckStatus }) {
 export function DnsRecordRow({
   kind,
   record,
+  domain,
   showHelp = true,
   status,
 }: {
   kind: keyof typeof DNS_HELP
   record: DomainDnsRecord
+  /** The workspace domain, so the name can be shown the way providers want it. */
+  domain: string
   showHelp?: boolean
   status?: DnsCheckStatus
 }) {
   const help = DNS_HELP[kind]
-  const value =
-    record.priority != null ? `${record.priority} ${record.value}` : record.value
+  // Most providers append the domain themselves and use `@` for the domain
+  // itself, so that short form leads; the full name is the fallback for the
+  // few that want it.
+  const host = hostName(record.name, domain)
+  const nameNote =
+    host === '@'
+      ? `@ means ${domain} itself. If your provider asks for the full name, use ${domain}; on AWS Route 53, leave it blank.`
+      : host !== record.name
+        ? `Full name: ${record.name} — only if your provider asks for the whole name.`
+        : undefined
   return (
     <div className="rounded-md border border-input bg-muted px-3 py-2.5">
       <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -235,8 +247,10 @@ export function DnsRecordRow({
         )}
       </div>
       <RecordField label="Type" value={record.type} />
-      <RecordField label="Name" value={record.name} />
-      <RecordField label="Value" value={value} />
+      <RecordField label="Name" value={host} note={nameNote} />
+      <RecordField label="Value" value={record.value} />
+      {/* Providers ask for the MX priority in its own box. */}
+      {record.priority != null && <RecordField label="Priority" value={String(record.priority)} />}
     </div>
   )
 }

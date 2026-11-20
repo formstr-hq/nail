@@ -18,7 +18,12 @@ import { SeatsPanel } from './billing'
 import { SetupProgress } from './presenters'
 import type { Toast } from './Snackbar'
 import { buildSteps, nextTab, WORKSPACE_TABS, type WorkspaceTab } from './workspaceUi'
-import { checkDnsRecords, type DnsCheckReport } from '@/app/lib/mail/dnsCheck'
+import {
+  checkDnsRecords,
+  doubledNameHint,
+  hasDoubledRecord,
+  type DnsCheckReport,
+} from '@/app/lib/mail/dnsCheck'
 
 /**
  * One domain's workspace, split into tabs so the screen is not DNS + members +
@@ -130,15 +135,18 @@ export function DomainDetail({
             ? 'Verified — but the DKIM key could not be generated. Mail may fail authentication until it is.'
             : `${domain.domain} verified — mail will start routing shortly.`,
         )
-      } else if (outcome.status === 'no-token') {
+      } else if (outcome.status === 'no-token' && outcome.found.length) {
         setMessage(
-          outcome.found.length
-            ? `Found a different TXT value: ${outcome.found.join(', ')} (expected ${outcome.expected})`
-            : 'No matching TXT record found yet. DNS can take a few minutes.',
+          `Found a different TXT value: ${outcome.found.join(', ')} (expected ${outcome.expected})`,
         )
-      } else if (outcome.status === 'not-found') {
+      } else if (outcome.status === 'no-token' || outcome.status === 'not-found') {
+        // Nothing at the name. Before saying "wait", check the usual reason it
+        // never shows up: the provider appended the domain a second time.
+        const name = dns?.verify.name ?? `_mailstr-verify.${domain.domain}`
         setMessage(
-          `No TXT record found at _mailstr-verify.${domain.domain} yet. DNS can take a few minutes to propagate — if you just added it, wait and retry.`,
+          (await hasDoubledRecord(name, domain.domain, 'TXT'))
+            ? doubledNameHint(name, domain.domain)
+            : `No TXT record found at ${name} yet. DNS can take a few minutes to propagate — if you just added it, wait and retry.`,
         )
       } else {
         setMessage(outcome.message)

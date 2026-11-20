@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { checkDnsRecords, parseMx, type DohFetcher } from './dnsCheck'
+import {
+  checkDnsRecords,
+  doubledName,
+  hasDoubledRecord,
+  hostName,
+  parseMx,
+  type DohFetcher,
+} from './dnsCheck'
 import type { DomainDnsRecords } from '@/app/lib/api/workspace'
 
 const RECORDS: DomainDnsRecords = {
@@ -37,6 +44,36 @@ describe('parseMx', () => {
   })
   it('returns null for junk', () => {
     expect(parseMx('not-an-mx')).toBeNull()
+  })
+})
+
+describe('hostName', () => {
+  it('uses @ for the domain itself', () => {
+    expect(hostName('acme.com', 'acme.com')).toBe('@')
+    expect(hostName('ACME.com.', 'acme.com')).toBe('@')
+  })
+  it('drops the domain from a name under it', () => {
+    expect(hostName('_dmarc.acme.com', 'acme.com')).toBe('_dmarc')
+    expect(hostName('dkim._domainkey.acme.com', 'acme.com')).toBe('dkim._domainkey')
+    expect(hostName('_mailstr-verify.acme.com.', 'acme.com')).toBe('_mailstr-verify')
+  })
+  it('leaves a name outside the domain alone', () => {
+    // A suffix match must be on a label boundary: notacme.com is not under acme.com.
+    expect(hostName('notacme.com', 'acme.com')).toBe('notacme.com')
+    expect(hostName('_dmarc.other.org', 'acme.com')).toBe('_dmarc.other.org')
+  })
+})
+
+describe('doubled names', () => {
+  it('is where a full name typed into a provider ends up', () => {
+    expect(doubledName('_dmarc.acme.com', 'acme.com')).toBe('_dmarc.acme.com.acme.com')
+  })
+
+  it('treats a resolver failure as "not doubled", never as an error', async () => {
+    const failing: DohFetcher = async () => {
+      throw new Error('offline')
+    }
+    expect(await hasDoubledRecord('_dmarc.acme.com', 'acme.com', 'TXT', failing)).toBe(false)
   })
 })
 
@@ -109,5 +146,33 @@ describe('checkDnsRecords', () => {
     const report = await checkDnsRecords(RECORDS, failing)
     expect(report.records.every((r) => r.status === 'error')).toBe(true)
     expect(report.ok).toBe(false)
+  })
+})
+
+describe('checkDnsRecords — domain typed twice', () => {
+  it('says how to fix a TXT record published under the doubled name', async () => {
+    const map: Record<string, string[]> = { ...ALL_CORRECT }
+    delete map['_dmarc.acme.com|TXT']
+    map['_dmarc.acme.com.acme.com|TXT'] = ['"v=DMARC1; p=reject; rua=mailto:postmaster@acme.com"']
+    const dmarc = (await checkDnsRecords(RECORDS, fetcher(map))).records.find((r) => r.key === 'dmarc')
+    expect(dmarc?.status).toBe('mismatch')
+    expect(dmarc?.detail).toMatch(/_dmarc\.acme\.com\.acme\.com/)
+    expect(dmarc?.detail).toMatch(/to just _dmarc\.$/)
+  })
+
+  it('points an MX typed as the domain at @', async () => {
+    const map: Record<string, string[]> = { ...ALL_CORRECT }
+    delete map['acme.com|MX']
+    map['acme.com.acme.com|MX'] = ['10 mail.formstr.app.']
+    const mx = (await checkDnsRecords(RECORDS, fetcher(map))).records.find((r) => r.key === 'mx')
+    expect(mx?.status).toBe('mismatch')
+    expect(mx?.detail).toMatch(/to just @\.$/)
+  })
+
+  it('still reports plain missing when nothing is at the doubled name either', async () => {
+    const map: Record<string, string[]> = { ...ALL_CORRECT }
+    delete map['_dmarc.acme.com|TXT']
+    const dmarc = (await checkDnsRecords(RECORDS, fetcher(map))).records.find((r) => r.key === 'dmarc')
+    expect(dmarc?.status).toBe('missing')
   })
 })

@@ -78,8 +78,32 @@ describe('DnsPanel', () => {
   // A non-technical owner should never have to transcribe a long value.
   it('offers a copy button for every record field', () => {
     renderDns('active')
-    // 4 mail records x (Type, Name, Value) — each field is copyable.
-    expect(screen.getAllByRole('button', { name: /^copy /i }).length).toBe(12)
+    // 4 mail records x (Type, Name, Value), plus the MX priority — each copyable.
+    expect(screen.getAllByRole('button', { name: /^copy /i }).length).toBe(13)
+  })
+
+  // Most providers append the domain to whatever is typed in Name, so the
+  // full name would be published twice; the short form leads.
+  it('shows names the way DNS providers want them, with the full name as a fallback', () => {
+    renderDns('active')
+    expect(screen.getAllByText('@', { selector: 'code' })).toHaveLength(2) // MX + SPF
+    expect(screen.getByText('_dmarc', { selector: 'code' })).toBeInTheDocument()
+    expect(screen.getByText('dkim._domainkey', { selector: 'code' })).toBeInTheDocument()
+    expect(screen.queryByText('_dmarc.acme.com', { selector: 'code' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Full name: _dmarc\.acme\.com/)).toBeInTheDocument()
+    expect(screen.getAllByText(/@ means acme\.com itself/)).toHaveLength(2)
+  })
+
+  it('gives the MX priority its own field instead of prefixing the value', () => {
+    renderDns('active')
+    expect(screen.getByText('mails.stg.mailstr.app', { selector: 'code' })).toBeInTheDocument()
+    expect(screen.getByText('10', { selector: 'code' })).toBeInTheDocument()
+    expect(screen.queryByText('10 mails.stg.mailstr.app')).not.toBeInTheDocument()
+  })
+
+  it('shows the verification name without the domain', () => {
+    renderDns('pending')
+    expect(screen.getByText('_mailstr-verify', { selector: 'code' })).toBeInTheDocument()
   })
 
   it('lets an owner reveal the mail records before verification', async () => {

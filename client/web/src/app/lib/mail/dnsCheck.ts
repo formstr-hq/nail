@@ -35,7 +35,7 @@ export interface DnsCheckReport {
   ok: boolean
 }
 
-type DohType = 'TXT' | 'MX'
+export type DohType = 'TXT' | 'MX'
 
 /** One answer from a DoH JSON response (RFC 8484 JSON shape). */
 export interface DohAnswer {
@@ -76,6 +76,48 @@ function norm(s: string): string {
   return s.trim().toLowerCase()
 }
 
+/**
+ * A record name the way most DNS providers want it typed: relative to the
+ * domain, with `@` for the domain itself (`_dmarc.acme.com` → `_dmarc`,
+ * `acme.com` → `@`). GoDaddy, Namecheap, Porkbun and most others append the
+ * domain on their own, so typing the full name publishes it twice. A name
+ * outside `domain` is returned unchanged.
+ */
+export function hostName(name: string, domain: string): string {
+  const full = stripDot(name.trim())
+  const d = norm(stripDot(domain))
+  if (norm(full) === d) return '@'
+  if (norm(full).endsWith(`.${d}`)) return full.slice(0, -(d.length + 1))
+  return full
+}
+
+/** Where a record ends up when the full name is typed into such a provider. */
+export function doubledName(name: string, domain: string): string {
+  return `${stripDot(name.trim())}.${stripDot(domain.trim())}`
+}
+
+/** What to tell an owner whose record was published under the doubled name. */
+export function doubledNameHint(name: string, domain: string): string {
+  return `It was saved as ${doubledName(name, domain)} — your DNS provider added ${domain} to the name a second time. Change the record's Name to just ${hostName(name, domain)}.`
+}
+
+/**
+ * Whether a record exists under the doubled name, the most common beginner
+ * mistake. Only ever adds a hint, so a resolver failure reads as "no".
+ */
+export async function hasDoubledRecord(
+  name: string,
+  domain: string,
+  type: DohType,
+  fetchDoh: DohFetcher = cloudflareDoh,
+): Promise<boolean> {
+  try {
+    return (await fetchDoh(doubledName(name, domain), type)).length > 0
+  } catch {
+    return false
+  }
+}
+
 /** Parse an MX `data` field (`"10 mail.example.com."`) into priority + host. */
 export function parseMx(data: string): { priority: number; host: string } | null {
   const m = data.trim().match(/^(\d+)\s+(\S+)$/)
@@ -98,6 +140,7 @@ function dmarcOk(value: string): boolean {
 async function checkTxt(
   key: DnsRecordKey,
   record: DomainDnsRecord,
+  domain: string,
   fetchDoh: DohFetcher,
   accept: (value: string) => boolean,
 ): Promise<DnsRecordCheck> {
@@ -109,6 +152,9 @@ async function checkTxt(
   }
   const found = answers.map((a) => txtValue(a.data))
   if (found.length === 0) {
+    if (await hasDoubledRecord(record.name, domain, 'TXT', fetchDoh)) {
+      return { key, status: 'mismatch', expected: record.value, found, detail: doubledNameHint(record.name, domain) }
+    }
     return { key, status: 'missing', expected: record.value, found, detail: 'No TXT record found.' }
   }
   if (found.some(accept)) {
@@ -125,6 +171,7 @@ async function checkTxt(
 
 async function checkMx(
   record: DomainDnsRecord,
+  domain: string,
   fetchDoh: DohFetcher,
 ): Promise<DnsRecordCheck> {
   let answers: DohAnswer[]
@@ -140,6 +187,9 @@ async function checkMx(
   )
   const found = parsed.map((p) => `${p.priority} ${p.host}`)
   if (parsed.length === 0) {
+    if (await hasDoubledRecord(record.name, domain, 'MX', fetchDoh)) {
+      return { key: 'mx', status: 'mismatch', expected: record.value, found, detail: doubledNameHint(record.name, domain) }
+    }
     return { key: 'mx', status: 'missing', expected: record.value, found, detail: 'No MX record found.' }
   }
   if (match) return { key: 'mx', status: 'ok', expected: record.value, found }
@@ -154,6 +204,7 @@ async function checkMx(
 
 async function checkDkim(
   record: DomainDnsRecord,
+  domain: string,
   fetchDoh: DohFetcher,
 ): Promise<DnsRecordCheck> {
   // Before activation the backend has no live key, so the expected value is a
@@ -167,7 +218,7 @@ async function checkDkim(
       detail: 'The DKIM key is generated when the domain is verified.',
     }
   }
-  return checkTxt('dkim', record, fetchDoh, (v) => norm(v) === norm(record.value))
+  return checkTxt('dkim', record, domain, fetchDoh, (v) => norm(v) === norm(record.value))
 }
 
 /**
@@ -184,11 +235,13 @@ export async function checkDnsRecords(
   records: DomainDnsRecords,
   fetchDoh: DohFetcher = cloudflareDoh,
 ): Promise<DnsCheckReport> {
+  // The MX record sits on the domain itself, so its name *is* the domain.
+  const domain = records.mx.name
   const checks = await Promise.all([
-    checkMx(records.mx, fetchDoh),
-    checkTxt('spf', records.spf, fetchDoh, spfOk),
-    checkDkim(records.dkim, fetchDoh),
-    checkTxt('dmarc', records.dmarc, fetchDoh, dmarcOk),
+    checkMx(records.mx, domain, fetchDoh),
+    checkTxt('spf', records.spf, domain, fetchDoh, spfOk),
+    checkDkim(records.dkim, domain, fetchDoh),
+    checkTxt('dmarc', records.dmarc, domain, fetchDoh, dmarcOk),
   ])
   return { records: checks, ok: checks.every((c) => c.status === 'ok' || c.status === 'skip') }
 }
