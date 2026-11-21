@@ -4,6 +4,7 @@ import {
   messageStringToBytes,
   parseImetaTags,
   readChunkMeta,
+  parseRemoteMessageTag,
   type ProtocolSigner,
   type Rumor,
   type UnwrapResult,
@@ -402,6 +403,7 @@ export async function decodeRumor(
     })
 
     const ccAddresses = (parsed.cc ?? []).map(toDisplay)
+    const remote = parseRemoteMessageTag(rumor.tags)
 
     const { inline, shared } = splitMimeAttachments(
       pgpMime
@@ -446,6 +448,7 @@ export async function decodeRumor(
         labelEventIds: [],
         labels: [],
         ...(opts.partial ? { partial: opts.partial } : {}),
+        ...(remote ? { remote } : {}),
         // Derived from the receiving server's marker, never stored: a folder
         // `match: { spam: true }` files it (see lib/mail/folders.ts), and an
         // explicit folder overrides that match ("Not spam").

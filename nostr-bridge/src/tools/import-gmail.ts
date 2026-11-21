@@ -47,6 +47,7 @@ import { bytesToMessageString } from "../protocol/bytes.js";
 import { buildMailRumor, sealAndWrap } from "../protocol/mail.js";
 import { chunkTags, splitMessage } from "../protocol/chunked-mail.js";
 import { offloadAttachments } from "../blossom-offload.js";
+import { buildRemoteMessage } from "../remote-mail.js";
 import { publishToRelay } from "../nostr-publisher.js";
 import { RelayWebSocket } from "../relay-socket.js";
 import { UserResolver } from "../user-resolver.js";
@@ -106,6 +107,7 @@ interface Target {
   done: Set<string>;
   imported: number;
   chunked: number;
+  remote: number;
   failed: number;
   wouldImport: number;
 }
@@ -475,6 +477,7 @@ async function main(): Promise<void> {
       done: loadState(statePath),
       imported: 0,
       chunked: 0,
+      remote: 0,
       failed: 0,
       wouldImport: 0,
     });
@@ -542,6 +545,52 @@ async function main(): Promise<void> {
     for (const target of active) {
       try {
         let outgoing = raw;
+
+        // Above 1 MiB, keep the whole message as one encrypted Blossom blob and
+        // publish a small pointer. Hundreds of chunks are too fragile for one
+        // email; fall back to the chunk path only if this upload/pointer fails.
+        if (message.raw.length > config.remoteMessageThresholdBytes) {
+          const remote = await buildRemoteMessage({
+            raw: message.raw,
+            recipientPubkey: target.pubkey,
+            relays: target.relays,
+            signer,
+            createdAt: message.date,
+            servers: blossomServers.length ? blossomServers : undefined,
+          });
+          if (remote) {
+            const results = await Promise.all(
+              target.relays.map((relay) =>
+                publishToRelay(relay, remote.wrap, signer),
+              ),
+            );
+            if (results.some(Boolean)) {
+              target.remote += 1;
+              target.done.add(id);
+              appendState(target.statePath, {
+                id,
+                messageId: message.messageId,
+                date: message.date,
+                subject: message.subject,
+                status: "ok",
+                at: new Date().toISOString(),
+                detail: `remote ${remote.meta.size} bytes`,
+              });
+              console.log(
+                `  ${target.label}: remote (${remote.meta.size} bytes on Blossom)`,
+              );
+              continue;
+            }
+            console.warn(
+              `  ${target.label}: remote pointer reached no relay; falling back`,
+            );
+          } else {
+            console.warn(
+              `  ${target.label}: remote Blossom upload failed; falling back`,
+            );
+          }
+        }
+
         // Match the bridge's inbound path for attachment-heavy mail: encrypt
         // attachments to the recipient, upload to Blossom, and replace them
         // with drive links. If offload is unavailable, chunking still runs.
@@ -653,7 +702,7 @@ async function main(): Promise<void> {
     console.log(
       `  ${target.label}: ` +
         (values.publish
-          ? `${target.imported} imported, ${target.chunked} chunked, ${target.failed} failed`
+          ? `${target.imported} imported, ${target.remote} remote, ${target.chunked} chunked, ${target.failed} failed`
           : `${target.wouldImport} would import`),
     );
   }

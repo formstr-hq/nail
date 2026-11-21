@@ -7,3 +7,4 @@ export * from "./mail.js";
 export * from "./attachments.js";
 export * from "./attachment-links.js";
 export * from "./chunked-mail.js";
+export * from "./remote-message.js";

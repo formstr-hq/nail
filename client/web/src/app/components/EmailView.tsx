@@ -13,6 +13,7 @@ import { Button } from '@/app/components/ui/Button'
 import { ConfirmButton } from '@/app/components/ui/ConfirmButton'
 import { AttachmentRow } from '@/app/components/AttachmentRow'
 import { MessageBody } from './email/MessageBody'
+import { RemoteMessageCard } from './email/RemoteMessageCard'
 import { DebugPanel } from './email/DebugPanel'
 import {
   ReplyIcon,
@@ -48,6 +49,7 @@ export function EmailView({ onCompose, selfAddresses, onBack, onRetryPartial }: 
   // The profile here labels the sealing KEY (avatar/picture), so it must key
   // off senderPubkey and not the possibly-spoofed header address.
   const senderProfile = useProfile(email?.senderPubkey ?? null)
+  const remotePending = Boolean(email?.remote && !email.remote.loaded)
 
   // Filing a mail from the reading pane removes it from the folder in view, so
   // return to the list rather than leaving a now-misfiled message open.
@@ -174,6 +176,14 @@ export function EmailView({ onCompose, selfAddresses, onBack, onRetryPartial }: 
           </div>
         )}
 
+        {remotePending && email.remote ? (
+          <RemoteMessageCard email={email} />
+        ) : (
+          <div className="max-w-[68ch]">
+            <MessageBody email={email} senderAddress={from.address} />
+          </div>
+        )}
+
         {labels.length > 0 && (
           <div className="mb-3 flex max-w-[68ch] flex-wrap gap-1.5">
             {labels.map((id) => {
@@ -189,10 +199,6 @@ export function EmailView({ onCompose, selfAddresses, onBack, onRetryPartial }: 
             })}
           </div>
         )}
-
-        <div className="max-w-[68ch]">
-          <MessageBody email={email} senderAddress={from.address} />
-        </div>
 
         {email.attachments.length > 0 && (
           <div className="flex flex-col gap-1.5 pt-6">
@@ -215,24 +221,42 @@ export function EmailView({ onCompose, selfAddresses, onBack, onRetryPartial }: 
             pins the From to the mailbox this message was delivered to. */}
         <Button
           variant="primary"
-          disabled={Boolean(email.partial)}
-          title={email.partial ? 'Wait for the message to finish arriving' : undefined}
+          disabled={Boolean(email.partial) || remotePending}
+          title={
+            remotePending
+              ? 'Download the full message before replying'
+              : email.partial
+                ? 'Wait for the message to finish arriving'
+                : undefined
+          }
           onClick={() => onCompose(replyDraft(email, from, selfAddresses))}
         >
           <ReplyIcon className="h-3.5 w-3.5" />
           Reply
         </Button>
         <Button
-          disabled={Boolean(email.partial)}
-          title={email.partial ? 'Wait for the message to finish arriving' : undefined}
+          disabled={Boolean(email.partial) || remotePending}
+          title={
+            remotePending
+              ? 'Download the full message before replying'
+              : email.partial
+                ? 'Wait for the message to finish arriving'
+                : undefined
+          }
           onClick={() => onCompose(replyAllDraft(email, selfAddresses, from))}
         >
           <ReplyAllIcon className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Reply all</span>
         </Button>
         <Button
-          disabled={Boolean(email.partial)}
-          title={email.partial ? 'Wait for the message to finish arriving' : undefined}
+          disabled={Boolean(email.partial) || remotePending}
+          title={
+            remotePending
+              ? 'Download the full message before forwarding'
+              : email.partial
+                ? 'Wait for the message to finish arriving'
+                : undefined
+          }
           onClick={() => onCompose(forwardDraft(email))}
         >
           <ForwardIcon className="h-3.5 w-3.5" />

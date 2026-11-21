@@ -1,3 +1,5 @@
+import type { RemoteMessageMeta } from '@protocol'
+
 export interface MailAddress {
   name?: string
   address: string
@@ -141,6 +143,12 @@ export interface Email {
    * normal filing action rather than a second flag.
    */
   spam?: boolean
+  /**
+   * A pointer to a full message stored outside the gift wrap (Blossom).
+   * While `loaded` is false, the email only has the small pointer metadata;
+   * opening it fetches/decrypts the original and replaces this entry.
+   */
+  remote?: RemoteMessageMeta & { loaded?: boolean }
   debug?: RumorDebug       // raw decoded rumor, for the reader's debug view
 }
 

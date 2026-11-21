@@ -41,6 +41,14 @@ export interface DriveShareAttachment {
   size: number;
   shareUrl: string;
   server: string;
+  /** Every server that accepted the replicated ciphertext. */
+  servers: string[];
+  encryptionKey: string;
+  blobHash: string;
+  unencryptedFileHash: string;
+  chunkSize: number;
+  /** The upload key, retained so the recipient can authorize a Blossom delete. */
+  deleteKey: string;
 }
 
 function ephemeralSigner(secretKey: Uint8Array): FileSigner {
@@ -93,8 +101,9 @@ export async function uploadDriveShare(
   const timer = setTimeout(() => controller.abort(), remaining);
   try {
     const encrypted = await encryptFile(plaintext);
+    const uploadKey = generateSecretKey();
     const upload = await uploadEncryptedFile(encrypted, {
-      signer: ephemeralSigner(generateSecretKey()),
+      signer: ephemeralSigner(uploadKey),
       transport: createFetchBlossomTransport(),
       servers: options.servers,
       // Keep a copy on every candidate (recipient's servers + the operator).
@@ -158,6 +167,12 @@ export async function uploadDriveShare(
       filename: input.filename || "attachment",
       mimeType: input.mimeType || "application/octet-stream",
       size: encrypted.size,
+      servers: upload.landed,
+      encryptionKey: encrypted.encryptionKey,
+      blobHash: encrypted.blobHash,
+      unencryptedFileHash: encrypted.unencryptedFileHash,
+      chunkSize: encrypted.chunkSize,
+      deleteKey: bytesToHex(uploadKey),
       shareUrl: encodeShareLink({
         pubkey: getPublicKey(signingKey),
         d,
