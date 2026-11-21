@@ -1,4 +1,5 @@
 import type { Event } from 'nostr-tools'
+import type { ActiveSigner } from '@formstr/signer'
 import type { File as DriveFile, FileSigner } from '@formstr/drive-sdk'
 import { createBlossomAuthorization, createFetchBlossomTransport } from '@formstr/drive-sdk'
 import { finalizeEvent, getPublicKey } from 'nostr-tools/pure'
@@ -17,15 +18,45 @@ function blobUrl(server: string, hash: string): URL {
   return new URL(`${base}/${hash}`)
 }
 
+/** Adapt the active signer to the drive-sdk's minimal signer interface. */
+function activeFileSigner(active: ActiveSigner): FileSigner {
+  return {
+    getPublicKey: () => active.getPublicKey(),
+    signEvent: (template) => active.signEvent(template),
+  }
+}
+
+async function getAuthorization(
+  signer: FileSigner,
+  hash: string,
+): Promise<string> {
+  return createBlossomAuthorization(
+    signer,
+    'get',
+    [hash],
+    'Download Mailstr remote message',
+    600,
+    () => Math.floor(Date.now() / 1000),
+  )
+}
+
 /**
  * Fetch the encrypted full RFC 822 message from one of the Blossom servers in
  * the pointer, decrypt it with the drive-sdk, and return the plaintext bytes.
  * `decryptFileBytes` verifies both the ciphertext hash and plaintext hash, so a
  * truncated or swapped blob is rejected instead of rendered as corrupt mail.
  */
-export async function fetchRemoteMessage(remote: RemoteMessageMeta): Promise<Uint8Array> {
+export async function fetchRemoteMessage(
+  remote: RemoteMessageMeta,
+  active?: ActiveSigner | null,
+): Promise<Uint8Array> {
   const { decryptFileBytes } = await import('@formstr/drive-sdk')
   let lastError: unknown
+  // #117 pinning servers may require a get token signed by the recipient.
+  // Public servers ignore it; the extra header is harmless.
+  const authorization = active
+    ? await getAuthorization(activeFileSigner(active), remote.blobHash)
+    : undefined
 
   for (const server of remote.servers) {
     let url: URL
@@ -43,6 +74,7 @@ export async function fetchRemoteMessage(remote: RemoteMessageMeta): Promise<Uin
       response = await fetch(url.toString(), {
         referrerPolicy: 'no-referrer',
         signal: controller.signal,
+        ...(authorization ? { headers: { Authorization: authorization } } : {}),
       })
     } catch (error) {
       lastError = error
@@ -127,15 +159,10 @@ export async function decodeRemoteEmail(
  * are not obliged to honor deletion; failures are reported to the caller but do
  * not block the local mail deletion.
  */
-export async function deleteRemoteMessage(
+async function deleteWithSigner(
   remote: RemoteMessageMeta,
+  signer: FileSigner,
 ): Promise<{ deleted: number; failed: number }> {
-  if (!remote.deleteKey) return { deleted: 0, failed: 0 }
-  const secret = hexToBytes(remote.deleteKey)
-  const signer: FileSigner = {
-    getPublicKey: async () => getPublicKey(secret),
-    signEvent: async (template) => finalizeEvent(template, secret),
-  }
   const transport = createFetchBlossomTransport()
   const deleteBlob = transport.delete?.bind(transport)
   if (!deleteBlob) return { deleted: 0, failed: remote.servers.length }
@@ -152,15 +179,33 @@ export async function deleteRemoteMessage(
   let failed = 0
   for (const server of remote.servers) {
     try {
-      await deleteBlob({
-        server,
-        hash: remote.blobHash,
-        authorization,
-      })
+      await deleteBlob({ server, hash: remote.blobHash, authorization })
       deleted += 1
     } catch {
       failed += 1
     }
   }
   return { deleted, failed }
+}
+
+export async function deleteRemoteMessage(
+  remote: RemoteMessageMeta,
+  active?: ActiveSigner | null,
+): Promise<{ deleted: number; failed: number }> {
+  // Compliant servers pin the blob for the recipient, so their own delete
+  // authorization removes it. Non-compliant servers ignored the pin, so retain
+  // the upload-key fallback. Try both when available; delete is idempotent.
+  const recipient = active
+    ? await deleteWithSigner(remote, activeFileSigner(active))
+    : null
+  if (remote.deleteKey) {
+    const secret = hexToBytes(remote.deleteKey)
+    const uploader: FileSigner = {
+      getPublicKey: async () => getPublicKey(secret),
+      signEvent: async (template) => finalizeEvent(template, secret),
+    }
+    const fallback = await deleteWithSigner(remote, uploader)
+    return fallback
+  }
+  return recipient ?? { deleted: 0, failed: 0 }
 }

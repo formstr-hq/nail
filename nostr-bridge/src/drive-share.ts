@@ -28,6 +28,7 @@ import type { Event } from "nostr-tools";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import { bytesToHex } from "nostr-tools/utils";
 import { config } from "./config.js";
+import { pinUploadSigner } from "./pin-signer.js";
 import { publishToRelay } from "./nostr-publisher.js";
 import { keySigner } from "./protocol/key-signer.js";
 
@@ -92,6 +93,8 @@ export async function uploadDriveShare(
     servers: readonly string[];
     relays: readonly string[];
     deadline: number;
+    /** BUD-117 pin: ask compliant servers to pin this blob for the recipient. */
+    pinTo?: string;
   },
 ): Promise<DriveShareAttachment | null> {
   const remaining = options.deadline - Date.now();
@@ -103,7 +106,7 @@ export async function uploadDriveShare(
     const encrypted = await encryptFile(plaintext);
     const uploadKey = generateSecretKey();
     const upload = await uploadEncryptedFile(encrypted, {
-      signer: ephemeralSigner(uploadKey),
+      signer: pinUploadSigner(ephemeralSigner(uploadKey), options.pinTo),
       transport: createFetchBlossomTransport(),
       servers: options.servers,
       // Keep a copy on every candidate (recipient's servers + the operator).

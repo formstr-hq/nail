@@ -15,6 +15,7 @@ import { Button } from '@/app/components/ui/Button'
  */
 export function RemoteMessageCard({ email }: { email: Email }) {
   const account = useAccountStore((s) => s.account)
+  const active = useAccountStore((s) => s.active)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const remote = email.remote
@@ -25,7 +26,7 @@ export function RemoteMessageCard({ email }: { email: Email }) {
     setBusy(true)
     setError('')
     try {
-      const bytes = await fetchRemoteMessage(remote!)
+      const bytes = await fetchRemoteMessage(remote!, active)
       const full = await decodeRemoteEmail(email, bytes, account?.pubkey ?? null)
       useMailStore.getState().upsertEmail(full)
     } catch (e) {
