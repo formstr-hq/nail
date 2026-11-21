@@ -18,9 +18,15 @@ import { PgpSignatureBadge } from './PgpSignatureBadge'
  * a no-op, so `openExternal` routes the click to the system browser instead.
  */
 function PlainBody({ text }: { text: string }) {
+  // Linkifying a multi-megabyte body is not worth blocking the reader; the
+  // text still renders, just without URL auto-links.
+  const segments = useMemo(
+    () => (text.length > 200_000 ? [{ text }] : splitPlainLinks(text)),
+    [text],
+  )
   return (
     <pre className="whitespace-pre-wrap break-words font-sans text-[13.5px] leading-relaxed text-foreground">
-      {splitPlainLinks(text).map((segment, i) =>
+      {segments.map((segment, i) =>
         segment.href ? (
           <a
             key={i}

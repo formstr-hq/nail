@@ -179,7 +179,7 @@ export function useMailActions() {
         }
         if (emailBefore?.remote) {
           try {
-            await deleteRemoteMessage(emailBefore.remote)
+            await deleteRemoteMessage(emailBefore.remote, active)
           } catch (e) {
             // The server may refuse or the blob may already be gone. The
             // pointer is still tombstoned locally; an orphaned ciphertext is

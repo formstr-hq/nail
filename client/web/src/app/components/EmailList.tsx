@@ -114,8 +114,14 @@ function EmailRow({ email, read, selected }: { email: Email; read: boolean; sele
         <span className="truncate">{email.subject}</span>
       </div>
 
-      {email.body.trim() && (
-        <div className="mt-px truncate text-[11.5px] text-subtle">{email.body.trim()}</div>
+      {(email.remote && !email.remote.loaded
+        ? 'Large message stored remotely'
+        : email.body.trim().slice(0, 240)) && (
+        <div className="mt-px truncate text-[11.5px] text-subtle">
+          {email.remote && !email.remote.loaded
+            ? 'Large message stored remotely'
+            : email.body.trim().slice(0, 240)}
+        </div>
       )}
 
       {email.partial && (

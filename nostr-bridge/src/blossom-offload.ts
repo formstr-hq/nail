@@ -234,7 +234,12 @@ export async function offloadAttachments(
         filename: attachment.filename || "attachment",
         mimeType: attachment.contentType || "application/octet-stream",
       },
-      { servers: candidates, relays: shareRelays, deadline },
+      {
+        servers: candidates,
+        relays: shareRelays,
+        deadline,
+        pinTo: params.recipientPubkey,
+      },
     );
     if (!shared) return null;
     console.log(

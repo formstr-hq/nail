@@ -148,6 +148,7 @@ describe("offloadAttachments", () => {
         servers: ["https://user.example", "https://env.example"],
         relays: [],
         deadline: expect.any(Number),
+        pinTo: "a".repeat(64),
       },
     );
     expect(result).not.toBeNull();

@@ -105,6 +105,7 @@ export async function buildRemoteMessage(params: {
       servers: candidateServers,
       relays: params.relays,
       deadline: Date.now() + REMOTE_UPLOAD_BUDGET_MS,
+      pinTo: params.recipientPubkey,
     },
   );
   if (!shared) return null;
