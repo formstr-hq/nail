@@ -72,11 +72,15 @@ describe("import-gmail script", () => {
       "wss://relay.example",
       "--blossom-servers",
       "https://blossom.example",
+      "--checkpoint-dir",
+      `${dir}/checkpoints`,
     ]);
 
     expect(output).toContain("DRY RUN");
     expect(output).toContain("2 target(s)");
     expect(output).toContain("blossom: https://blossom.example");
+    expect(output).toContain(`checkpoints/github.${first.slice(0, 12)}.jsonl`);
+    expect(output).toContain(`checkpoints/github.${second.slice(0, 12)}.jsonl`);
     expect(output).toContain("7 scanned");
     expect(output).toContain("7 would import");
     expect(output.match(/would import to 2 target\(s\)/g)).toHaveLength(7);

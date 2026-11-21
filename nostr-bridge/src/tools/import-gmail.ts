@@ -15,9 +15,27 @@
  *     --relays auto
  *
  * Dry run is the default. Add --publish to actually write to relays.
+ *
+ * Dedupe checkpoints are file-based JSONL, one per target:
+ *   - default: <mbox>.imported.jsonl for one target;
+ *     <mbox>.imported.<npub>.jsonl for several;
+ *   - --state sets an explicit path/base;
+ *   - --checkpoint-dir puts the per-target files in a dedicated directory.
+ * Each successful message is appended and fsynced immediately. A restart
+ * reloads these files and skips entries whose status is "ok"; a malformed
+ * trailing line is ignored rather than losing the earlier checkpoint.
  */
 import { createHash } from "node:crypto";
-import { appendFileSync, createReadStream, existsSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  createReadStream,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  writeSync,
+} from "node:fs";
 import { basename, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { nip19, type Event } from "nostr-tools";
@@ -43,14 +61,16 @@ Usage:
     --to npub1... [--to npub1...] \\
     [--relays auto|wss://...,wss://...] \\
     [--blossom-servers https://blossom.one,https://blossom.two] \\
-    [--state ./customer.import.jsonl] \\
+    [--state ./customer.import.jsonl] \
+    [--checkpoint-dir ./import-state] \\
     [--limit 20] [--since 2020-01-01] [--until 2024-12-31] \\
     [--max-bytes 67108864] \\
     [--message-delay-ms 200] [--wrap-delay-ms 100] [--blossom-delay-ms 500] \\
     [--publish]
 
 --to may be repeated or comma-separated. With several targets, each gets its
-own dedupe state file.
+own file-based JSONL checkpoint. Use --state for an explicit path/base or
+--checkpoint-dir to keep all per-target checkpoints in one directory.
 
 Throttling:
   --message-delay-ms  pause after each target's message (default 200)
@@ -269,7 +289,16 @@ function loadState(path: string): Set<string> {
 }
 
 function appendState(path: string, entry: StateEntry): void {
-  appendFileSync(path, `${JSON.stringify(entry)}\n`);
+  const line = `${JSON.stringify(entry)}\n`;
+  const fd = openSync(path, "a");
+  try {
+    writeSync(fd, line);
+    // A long import should survive a process/power loss without replaying
+    // messages that were already delivered.
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
@@ -316,13 +345,19 @@ async function buildImportedWraps(
 function statePathFor(
   mboxPath: string,
   value: string | undefined,
+  checkpointDir: string | undefined,
   pubkey: string,
   multiple: boolean,
 ): string {
+  const suffix = `.${shortNpub(pubkey)}.jsonl`;
+  if (checkpointDir) {
+    const stem = basename(mboxPath).replace(/\.[^.]+$/, "") || "mail";
+    return resolve(checkpointDir, `${stem}${suffix}`);
+  }
   const fallback = `${mboxPath}.imported.jsonl`;
   if (!multiple) return resolve(value ?? fallback);
   const base = resolve(value ?? `${mboxPath}.imported`);
-  return `${base.replace(/\.jsonl$/i, "")}.${shortNpub(pubkey)}.jsonl`;
+  return `${base.replace(/\.jsonl$/i, "")}${suffix}`;
 }
 
 async function main(): Promise<void> {
@@ -333,6 +368,7 @@ async function main(): Promise<void> {
       relays: { type: "string" },
       "blossom-servers": { type: "string", multiple: true },
       state: { type: "string" },
+      "checkpoint-dir": { type: "string" },
       limit: { type: "string" },
       since: { type: "string" },
       until: { type: "string" },
@@ -351,6 +387,12 @@ async function main(): Promise<void> {
     return;
   }
   if (!values.mbox) die("--mbox is required");
+  if (values.state && values["checkpoint-dir"]) {
+    die("use --state or --checkpoint-dir, not both");
+  }
+  if (values["checkpoint-dir"]) {
+    mkdirSync(resolve(values["checkpoint-dir"]), { recursive: true });
+  }
 
   const requestedTargets = [...new Set(
     (values.to ?? [])
@@ -421,6 +463,7 @@ async function main(): Promise<void> {
     const statePath = statePathFor(
       mboxPath,
       values.state,
+      values["checkpoint-dir"],
       pubkey,
       requestedTargets.length > 1,
     );
