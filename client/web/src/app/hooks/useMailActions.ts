@@ -4,6 +4,7 @@ import { useSettingsStore } from '@/app/store/settings'
 import { useMailStore } from '@/app/store/mail'
 import { publishMailMeta, randomMailIndexKey } from '@/app/lib/nostr/mailMeta'
 import { publishGiftwrapDeletion } from '@/app/lib/nostr/delete'
+import { deleteRemoteMessage } from '@/app/lib/mail/remoteMessage'
 import { loadSettingsDetailed } from '@/app/lib/nostr/settings'
 import type { MailFlags } from '@/app/types/mail'
 import { isCurrentSession, sessionEpoch } from '@/app/store/sessionEpoch'
@@ -138,7 +139,8 @@ export function useMailActions() {
       // chunk 0 would leave the rest readable on relays, so the next replay
       // would resurrect the mail from part 1 upward.
       const before = useMailStore.getState()
-      const wrapIds = before.emails[id]?.wrapIds ?? []
+      const emailBefore = before.emails[id]
+      const wrapIds = emailBefore?.wrapIds ?? []
       const secrets = [id, ...wrapIds].map((wrapId) => ({
         giftwrapId: wrapId,
         wrapSecret: before.wrapKeys[wrapId],
@@ -174,6 +176,16 @@ export function useMailActions() {
           // Local removal stands; a failed relay round just means relays keep
           // ciphertext they cannot read, and the tombstone keeps it hidden.
           console.error('[delete] failed to publish NIP-09 deletion', e)
+        }
+        if (emailBefore?.remote) {
+          try {
+            await deleteRemoteMessage(emailBefore.remote)
+          } catch (e) {
+            // The server may refuse or the blob may already be gone. The
+            // pointer is still tombstoned locally; an orphaned ciphertext is
+            // preferable to blocking the user's delete.
+            console.error('[delete] failed to delete remote Blossom message', e)
+          }
         }
       })()
     }, []),

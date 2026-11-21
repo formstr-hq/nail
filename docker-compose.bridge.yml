@@ -58,6 +58,10 @@ services:
       # this small relative to the container's memory limit: 8 MB is safe in
       # the 128 MB override; raise both together.
       - MAIL_MAX_BYTES=${MAIL_MAX_BYTES:-8388608}
+      # Large-mail remote delivery. Keep disabled until the recipient client
+      # supports remote pointers; enable on a coordinated staging/prod rollout.
+      - REMOTE_MESSAGE_ENABLED=${REMOTE_MESSAGE_ENABLED:-false}
+      - REMOTE_MESSAGE_THRESHOLD_BYTES=${REMOTE_MESSAGE_THRESHOLD_BYTES:-1048576}
       # Largest wrap event the relays will carry. 100 KiB = relay.formstr.app's
       # measured content cap. Above this the bridge skips the full publish and
       # strips attachments instead (wrapping inflates content ~2.4x, so this

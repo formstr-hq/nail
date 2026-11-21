@@ -27,6 +27,12 @@ const shared: DriveShareAttachment = {
   size: 90_000,
   shareUrl: "https://drive.formstr.app/#shared=naddr1example&k=" + "a".repeat(64),
   server: "https://env.example",
+  servers: ["https://env.example"],
+  encryptionKey: "b".repeat(64),
+  blobHash: "c".repeat(64),
+  unencryptedFileHash: "d".repeat(64),
+  chunkSize: 64 * 1024,
+  deleteKey: "e".repeat(64),
 };
 
 async function attachmentMessage(count = 1, bytes = 90_000): Promise<Buffer> {

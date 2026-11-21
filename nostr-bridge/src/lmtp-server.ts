@@ -1,13 +1,14 @@
 import { SMTPServer } from "smtp-server";
 import { lookupNip05 } from "./nip05.js";
 import { UserResolver } from "./user-resolver.js";
-import { publishChunkedMail, publishMail } from "./nostr-publisher.js";
+import { publishChunkedMail, publishMail, publishToRelay } from "./nostr-publisher.js";
 import { stripAttachments } from "./stripAttachments.js";
 import { stampSpamMarker } from "./spam-marker.js";
 import { offloadAttachments } from "./blossom-offload.js";
 import { keySigner } from "./protocol/key-signer.js";
 import { bytesToMessageString, messageStringToBytes } from "./protocol/bytes.js";
 import { config } from "./config.js";
+import { buildRemoteMessage } from "./remote-mail.js";
 
 const bridgeSigner = keySigner(config.bridgePrivkey);
 
@@ -146,6 +147,43 @@ export async function handleMessage(
   // authoritative marker (see spam-marker.ts).
   const stamped = stampSpamMarker(raw);
   const messageRaw = bytesToMessageString(stamped);
+
+  // Very large messages are stored as one encrypted Blossom blob and delivered
+  // as a small pointer. This avoids hundreds of chunk events for one email.
+  // Fall back to the familiar attachment/chunk path if the upload or pointer
+  // publish fails.
+  if (
+    config.remoteMessageEnabled &&
+    stamped.length > config.remoteMessageThresholdBytes
+  ) {
+    const remote = await buildRemoteMessage({
+      raw: stamped,
+      recipientPubkey: lookup.pubkey,
+      relays,
+      signer: bridgeSigner,
+    });
+    if (remote) {
+      const accepted = await Promise.all(
+        relays.map((relay) => publishToRelay(relay, remote.wrap, bridgeSigner)),
+      );
+      if (accepted.some(Boolean)) {
+        console.log(
+          `nostr-bridge: delivered remote message for ${recipient} ` +
+            `(${remote.meta.size} bytes) to ${relays.length} relay(s)`,
+        );
+        return;
+      }
+      console.warn(
+        `nostr-bridge: remote pointer for ${recipient} reached no relay; ` +
+          "falling back to the inline/chunk path",
+      );
+    } else {
+      console.warn(
+        `nostr-bridge: remote Blossom upload failed for ${recipient}; ` +
+          "falling back to the inline/chunk path",
+      );
+    }
+  }
 
   // Attachments that cannot fit one wrap are encrypted with the Formstr Drive
   // SDK and uploaded to Blossom (recipient's BUD-03 servers first, then

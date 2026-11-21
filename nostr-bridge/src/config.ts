@@ -89,6 +89,16 @@ export const config = {
   // stock 128 MB override that means keeping this at 8 MB or less.
   maxMessageBytes: Number(process.env.MAIL_MAX_BYTES ?? 8 * 1024 * 1024),
 
+  // Whole-message Blossom offload for large mail. When enabled, an inbound
+  // message over the threshold is encrypted to the recipient, uploaded to
+  // Blossom, and delivered as a small pointer instead of hundreds of chunks.
+  // Keep this off until the recipient client understands remote pointers.
+  remoteMessageEnabled:
+    (process.env.REMOTE_MESSAGE_ENABLED ?? "false").toLowerCase() === "true",
+  remoteMessageThresholdBytes: Number(
+    process.env.REMOTE_MESSAGE_THRESHOLD_BYTES ?? 1024 * 1024,
+  ),
+
   // Hard cap on how many chunks one message may be split into. Chunking makes
   // a large body deliverable, but it also multiplies relay writes (each part
   // goes to every relay), so a multi-megabyte message is refused permanently
