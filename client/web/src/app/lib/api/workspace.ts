@@ -40,8 +40,14 @@ export interface WorkspaceDomain {
   status: DomainStatus
   dns_token?: string | null
   verified_at?: string | null
+  /**
+   * Legacy per-domain mirror. Kept for older clients; new UI should read
+   * `seat_pool` because seats are shared across all domains the npub owns.
+   */
   seats_total?: number
   seats_used?: number
+  /** The owner npub's shared seat pool, with this domain's own usage. */
+  seat_pool?: SeatView
   created_at?: string
   dns?: DomainDnsRecords
 }
@@ -74,9 +80,19 @@ export interface WorkspaceMember {
 }
 
 export interface SeatView {
+  /** Seats bought by the owner's npub. */
   total: number
+  /** Seats used across every domain that npub owns. */
   used: number
+  /** Seats any of that npub's domains may still use. */
   available: number
+  /** Active addresses in this particular domain (not the whole pool). */
+  domain_used?: number
+}
+
+/** Workspace-level seat summary, with usage broken down by domain. */
+export interface WorkspaceSeats extends SeatView {
+  domains: Array<{ domain: string; used: number }>
 }
 
 /** Verification outcome, mirroring the backend's discriminated result. */
@@ -150,6 +166,16 @@ export function fetchMyDomains(active: ActiveSigner): Promise<WorkspaceDomain[]>
   return authed<{ domains: WorkspaceDomain[] }>(active, '/api/domains/mine').then(
     (r) => r.domains ?? [],
   )
+}
+
+/**
+ * The signed-in npub's shared seat pool.
+ *
+ * Seats belong to the npub, so every domain they own sees the same total and
+ * available count. `domains` breaks the used count down per domain.
+ */
+export function fetchWorkspaceSeats(active: ActiveSigner): Promise<WorkspaceSeats> {
+  return authed<WorkspaceSeats>(active, '/api/workspace/seats')
 }
 
 /**

@@ -113,15 +113,16 @@ export function MembersPanel({
           ? 'Verify the domain before assigning addresses.'
           : seats
             ? outOfSeats
-              ? `No seats left — all ${seats.total} are in use. Buy seats to add more addresses.`
-              : `${seats.available} of ${seats.total} seats available. Each address uses one seat.`
+              ? `No seats left — all ${seats.total} are in use across your domains. Buy seats to add more addresses.`
+              : `${seats.available} of ${seats.total} shared seats available. ` +
+                `This domain uses ${seats.domain_used ?? 0}. Each address uses one seat.`
             : undefined
       }
     >
       {outOfSeats && (
         <p className="mb-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11.5px] leading-relaxed text-amber-700">
-          Every seat is taken, so new addresses cannot be assigned until you buy
-          more. Use <span className="font-medium">Buy seats</span> below.
+          Every seat is taken across all your domains, so new addresses cannot be
+          assigned until you buy more. Use <span className="font-medium">Buy seats</span> below.
         </p>
       )}
 
