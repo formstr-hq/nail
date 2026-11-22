@@ -25,6 +25,19 @@ import {
   type DnsCheckReport,
 } from '@/app/lib/mail/dnsCheck'
 
+/** Seats are npub-owned; fall back to the legacy domain mirror for old servers. */
+function seatViewFor(domain: WorkspaceDomain): SeatView {
+  const pool = domain.seat_pool
+  const total = pool?.total ?? domain.seats_total ?? 0
+  const used = pool?.used ?? domain.seats_used ?? 0
+  return {
+    total,
+    used,
+    available: pool?.available ?? Math.max(0, total - used),
+    domain_used: pool?.domain_used ?? domain.seats_used ?? 0,
+  }
+}
+
 /**
  * One domain's workspace, split into tabs so the screen is not DNS + members +
  * billing all at once.
@@ -59,12 +72,21 @@ export function DomainDetail({
   const [dns, setDns] = useState<DomainDnsRecords | null>(null)
   const [status, setStatus] = useState<DomainStatus>(domain.status)
   const [verifiedAt, setVerifiedAt] = useState<string | null>(domain.verified_at ?? null)
-  const [seats, setSeats] = useState<SeatView>({
-    total: domain.seats_total ?? 0,
-    used: domain.seats_used ?? 0,
-    available: Math.max(0, (domain.seats_total ?? 0) - (domain.seats_used ?? 0)),
-  })
+  const [seats, setSeats] = useState<SeatView>(() => seatViewFor(domain))
   const handleSeats = useCallback((next: SeatView) => setSeats(next), [])
+  // A purchase or another domain's activity can change the shared pool. The
+  // parent reloads the domain list, so mirror those numbers into local state.
+  // Deferred a microtask, like the other prop-sync effects here, to avoid a
+  // synchronous setState in the effect body.
+  useEffect(() => {
+    let alive = true
+    queueMicrotask(() => {
+      if (alive) setSeats(seatViewFor(domain))
+    })
+    return () => {
+      alive = false
+    }
+  }, [domain])
   const [busy, setBusy] = useState(false)
   const [loadingDns, setLoadingDns] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
@@ -187,7 +209,8 @@ export function DomainDetail({
     }
   }, [dns])
 
-  const steps = buildSteps({ active: status === 'active', seatsUsed: seats.used })
+  const domainUsed = seats.domain_used ?? domain.seats_used ?? 0
+  const steps = buildSteps({ active: status === 'active', seatsUsed: domainUsed })
   const activeNow = status === 'active'
   const hasSeats = seats.available > 0
   // The next step is gated on the mail records checking out: handing out
@@ -201,6 +224,9 @@ export function DomainDetail({
         <div className="min-w-0">
           <div className="eyebrow">Domain</div>
           <h2 className="truncate font-mono text-[14px] font-semibold">{domain.domain}</h2>
+          <p className="mt-0.5 text-[11px] text-subtle">
+            {seats.available} of {seats.total} seats available across all your domains
+          </p>
         </div>
       </div>
 
@@ -234,9 +260,9 @@ export function DomainDetail({
               ].join(' ')}
             >
               {t.label}
-              {t.id === 'participants' && seats.used > 0 && (
+              {t.id === 'participants' && domainUsed > 0 && (
                 <span className="ml-1.5 rounded-full bg-muted px-1.5 py-0.5 font-mono text-[10px] text-subtle">
-                  {seats.used}
+                  {domainUsed}
                 </span>
               )}
             </button>
@@ -324,18 +350,20 @@ export function DomainDetail({
           <>
             {!hasSeats && (
               <p className="text-[11.5px] leading-relaxed text-subtle">
-                You have no seats left. Each address needs one seat — buy seats
-                below, then return to Participants to assign addresses.
+                You have no seats left across your domains. Each address needs
+                one seat — buy seats below, then return to Participants to
+                assign addresses.
               </p>
             )}
             <SeatsPanel
               active={active}
               domain={domain}
+              seatPool={seats}
               onPurchased={async () => {
-                // Refresh the domain list (seats_total changed) *and* the
+                // Refresh the domain list (shared pool changed) *and* the
                 // member/seat view, so the new seats are visible immediately.
                 setMembersRefresh((n) => n + 1)
-                notify(`Seats added to ${domain.domain}`)
+                notify(`Seats added to your shared pool for ${domain.domain}`)
                 await onChanged()
               }}
             />

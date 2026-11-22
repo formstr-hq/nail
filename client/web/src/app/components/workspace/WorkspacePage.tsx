@@ -107,7 +107,9 @@ export function WorkspacePage({ onBack }: { onBack: () => void }) {
       try {
         await removeDomain(active, d.domain)
         notify(
-          d.status === 'active' ? `${d.domain} removed` : `Pending domain ${d.domain} removed`,
+          d.status === 'active'
+            ? `${d.domain} removed — your purchased seats remain in your shared pool`
+            : `Pending domain ${d.domain} removed`,
         )
         if (selected === d.domain) setSelected(null)
         await load()
@@ -129,7 +131,19 @@ export function WorkspacePage({ onBack }: { onBack: () => void }) {
           <h1 className="text-base font-semibold tracking-tight">Workspace</h1>
         </div>
         {current && (
-          <VerifyStatus status={current.status} verifiedAt={current.verified_at ?? null} />
+          <div className="flex flex-none items-center gap-3">
+            {current.seat_pool && (
+              <span
+                className="hidden text-[11px] text-subtle sm:inline"
+                title="Seats are shared across every domain you own"
+              >
+                <span className="font-mono text-foreground">{current.seat_pool.available}</span>
+                {' / '}
+                <span className="font-mono">{current.seat_pool.total}</span> seats available
+              </span>
+            )}
+            <VerifyStatus status={current.status} verifiedAt={current.verified_at ?? null} />
+          </div>
         )}
       </header>
 

@@ -7,7 +7,7 @@ import { PriceTag } from '@/components/payments/PriceTag'
 import { fetchSeatLimits, type SeatLimits } from '@/lib/payments/seatLimits'
 import type { PayOrder } from '@/lib/payments/types'
 import { withSignerTimeout } from '@/app/lib/nostr/signer'
-import type { WorkspaceDomain } from '@/app/lib/api/workspace'
+import type { SeatView, WorkspaceDomain } from '@/app/lib/api/workspace'
 
 // Store builds sell fixed packs, not a free quantity. Chosen at build time so
 // the open build never contains the pack picker (and vice versa).
@@ -31,10 +31,13 @@ function parseInt0(value: string): number | null {
 export function SeatsPanel({
   active,
   domain,
+  seatPool,
   onPurchased,
 }: {
   active: ActiveSigner
   domain: WorkspaceDomain
+  /** The owner's shared pool; `domain_used` is this domain's own address count. */
+  seatPool: SeatView
   onPurchased: () => Promise<void>
 }) {
   const [limits, setLimits] = useState<SeatLimits | null>(null)
@@ -83,21 +86,31 @@ export function SeatsPanel({
     <>
       <Field
         label="Seats"
-        hint={`You have used ${domain.seats_used ?? 0} of ${domain.seats_total ?? 0}. One seat per address.`}
+        hint="One seat per address. Your seats are shared across every domain you own, so freeing an address here makes its seat available on any of your other domains."
       >
-        <p className="font-mono text-[13px]">
-          {domain.seats_used ?? 0} used · {domain.seats_total ?? 0} total
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 font-mono text-[13px]">
+          <span>{seatPool.used} used</span>
+          <span className="text-subtle">·</span>
+          <span>{seatPool.total} total</span>
+          <span className="text-subtle">·</span>
+          <span className={seatPool.available > 0 ? 'text-foreground' : 'text-destructive'}>
+            {seatPool.available} available
+          </span>
+        </div>
+        <p className="mt-1 text-[11px] text-subtle">
+          This domain uses {seatPool.domain_used ?? domain.seats_used ?? 0} of your
+          shared seats. Deleting a domain does not delete its purchased seats.
         </p>
       </Field>
 
       {StoreSeatPacks ? (
-        <Field label="Buy seats" hint="One-time purchase. Buy as many packs as you need. Seats are valid for 1 year.">
+        <Field label="Buy seats" hint="One-time purchase. Seats are added to your shared pool for all your domains and are valid for 1 year.">
           <Suspense fallback={null}>
             <StoreSeatPacks onPick={(packSeats) => setPaying({ product: 'workspace', domain: domain.domain, packSeats })} />
           </Suspense>
         </Field>
       ) : (
-        <Field label="Buy seats" hint="Pay with Bitcoin or your local currency. Seats are valid for 1 year.">
+        <Field label="Buy seats" hint="Pay with Bitcoin or your local currency. Seats go into your shared pool and are valid for 1 year.">
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1">
               <span className="text-[11px] text-subtle">Seats to buy</span>

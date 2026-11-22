@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   fetchMyDomains,
+  fetchWorkspaceSeats,
   registerDomain,
   fetchDomainDns,
   verifyDomain,
@@ -66,6 +67,35 @@ describe('fetchMyDomains', () => {
     await expect(fetchMyDomains(active)).rejects.toMatchObject({
       name: 'Nip98AuthError',
     })
+  })
+})
+
+describe('fetchWorkspaceSeats', () => {
+  it('reads the npub shared pool with per-domain usage', async () => {
+    const spy = mockFetch(() =>
+      json({
+        total: 10,
+        used: 5,
+        available: 5,
+        domains: [
+          { domain: 'acme.com', used: 3 },
+          { domain: 'beta.com', used: 2 },
+        ],
+      }),
+    )
+    await expect(fetchWorkspaceSeats(active)).resolves.toEqual({
+      total: 10,
+      used: 5,
+      available: 5,
+      domains: [
+        { domain: 'acme.com', used: 3 },
+        { domain: 'beta.com', used: 2 },
+      ],
+    })
+    const [url, init] = spy.mock.calls[0]
+    expect(String(url)).toContain('/api/workspace/seats')
+    expect(init?.method).toBe('GET')
+    expect((init?.headers as Record<string, string>).Authorization).toMatch(/^Nostr /)
   })
 })
 

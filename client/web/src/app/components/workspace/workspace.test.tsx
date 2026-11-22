@@ -9,9 +9,18 @@ import '@/app/components/test-utils'
 import { DnsPanel } from './DnsPanel'
 import { SetupProgress, VerifyStatus } from './presenters'
 import { AddMemberForm } from './members'
+import { SeatsPanel } from './billing'
 import { MemberRow } from './memberRow'
 import { buildSteps } from './workspaceUi'
-import type { DomainDnsRecords, WorkspaceMember } from '@/app/lib/api/workspace'
+import type { DomainDnsRecords, WorkspaceDomain, WorkspaceMember } from '@/app/lib/api/workspace'
+
+vi.mock('@/lib/payments/seatLimits', () => ({
+  fetchSeatLimits: vi.fn().mockResolvedValue({
+    minSeats: 1,
+    maxSeats: 1000,
+    seatPriceUsd: 99,
+  }),
+}))
 
 const HEX = 'a'.repeat(64)
 const NPUB = nip19.npubEncode(HEX)
@@ -151,6 +160,31 @@ describe('AddMemberForm', () => {
       />,
     )
     expect(screen.getByText(/same key in raw form/i)).toBeInTheDocument()
+  })
+})
+
+describe('SeatsPanel', () => {
+  it('shows the shared npub pool, not a per-domain balance', () => {
+    const domain: WorkspaceDomain = {
+      id: 1,
+      domain: 'acme.com',
+      owner_pubkey: HEX,
+      status: 'active',
+      seats_total: 10,
+      seats_used: 3,
+      seat_pool: { total: 10, used: 5, available: 5, domain_used: 3 },
+    }
+    render(
+      <SeatsPanel
+        active={{ signEvent: vi.fn() } as never}
+        domain={domain}
+        seatPool={domain.seat_pool!}
+        onPurchased={async () => {}}
+      />,
+    )
+    expect(screen.getByText(/5 available/)).toBeInTheDocument()
+    expect(screen.getByText(/shared across every domain you own/i)).toBeInTheDocument()
+    expect(screen.getByText(/This domain uses 3 of your\s+shared seats/i)).toBeInTheDocument()
   })
 })
 
