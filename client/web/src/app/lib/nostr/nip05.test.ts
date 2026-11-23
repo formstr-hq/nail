@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { probeNip05, peekNip05, clearProbeCache } from './nip05'
+import { probeNip05, peekNip05, clearProbeCache, lookupNip05ForAuth } from './nip05'
 
 afterEach(() => {
   clearProbeCache()
@@ -74,5 +74,90 @@ describe('probeNip05', () => {
     )
     expect(fetchSpy).toHaveBeenCalledTimes(12)
     expect(peak).toBeLessThanOrEqual(4)
+  })
+})
+
+describe('lookupNip05ForAuth', () => {
+  const PK = 'a'.repeat(64)
+
+  // The bug: a 200 well-known that has not caught up (just-bought alias, CDN
+  // stale) used to be final for the client, while the bridge would ask the
+  // resolver and accept the send.
+  it('asks the resolver when the well-known answers but omits the name', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/nip-05/resolve')) {
+          return new Response(JSON.stringify({ pubkey: PK }))
+        }
+        return new Response(JSON.stringify({ names: {} }))
+      }),
+    )
+    await expect(lookupNip05ForAuth('alice@mailstr.app')).resolves.toEqual({
+      status: 'found',
+      pubkey: PK,
+    })
+  })
+
+  it('reports a transient failure as error, not as not-found', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        throw new TypeError('network down')
+      }),
+    )
+    const verdict = await lookupNip05ForAuth('alice@mailstr.app')
+    expect(verdict.status).toBe('error')
+  })
+
+  it('does not cache an error, so a retry re-checks', async () => {
+    let down = true
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        if (down) throw new TypeError('network down')
+        return new Response(JSON.stringify({ names: { alice: PK } }))
+      }),
+    )
+    expect((await lookupNip05ForAuth('alice@mailstr.app')).status).toBe('error')
+    down = false
+    await expect(lookupNip05ForAuth('alice@mailstr.app')).resolves.toEqual({
+      status: 'found',
+      pubkey: PK,
+    })
+  })
+
+  it('keeps a definitive miss as not-found', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/nip-05/resolve')) {
+          return new Response('', { status: 404 })
+        }
+        return new Response(JSON.stringify({ names: {} }))
+      }),
+    )
+    await expect(lookupNip05ForAuth('nobody@mailstr.app')).resolves.toEqual({
+      status: 'not-found',
+    })
+  })
+
+  // The domain answers but the record may live in the backend, so a resolver
+  // outage means "we could not check" — not "this address is unowned".
+  it('reports error when the resolver cannot be consulted', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/nip-05/resolve')) {
+          return new Response('', { status: 503 })
+        }
+        return new Response(JSON.stringify({ names: {} }))
+      }),
+    )
+    const verdict = await lookupNip05ForAuth('nobody@mailstr.app')
+    expect(verdict.status).toBe('error')
   })
 })

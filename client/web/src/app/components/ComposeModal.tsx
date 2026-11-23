@@ -266,6 +266,9 @@ export function ComposeModal({
         references: draft?.references,
         ctx,
         signer: protocolSigner(active),
+        // The backend's owned-alias list, so a stale/transient NIP-05 probe
+        // cannot reject an address this account demonstrably owns.
+        ownedAliases,
         // NIP-98 auth for the bridge send-wrap API (see lib/mail/deliver.ts).
         active,
         // The composer lock state, not the body: send.ts applies PGP exactly

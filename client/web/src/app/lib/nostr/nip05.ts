@@ -13,6 +13,17 @@ export type Nip05State =
   | { status: 'resolving' }
   | { status: 'resolved'; pubkey: string | null }
 
+/**
+ * An authorization lookup, where "could not check" must never be mistaken for
+ * "checked and found nothing". `probeNip05`'s null collapses the two because
+ * recipient routing only needs "is this Nostr-native here"; sending needs to
+ * tell a liar apart from an outage.
+ */
+export type Nip05Lookup =
+  | { status: 'found'; pubkey: string }
+  | { status: 'not-found' }
+  | { status: 'error'; message: string }
+
 const PROBE_TIMEOUT_MS = 1500
 // The bridge's own `_smtp` record is on the critical send path and, unlike a
 // recipient probe, times out fail-closed (no bridge = cannot send at all). The
@@ -91,9 +102,26 @@ function seedNegativeCache(): void {
 }
 seedNegativeCache()
 
+/**
+ * How long an authorization verdict may be reused.
+ *
+ * Deliberately far shorter than the routing cache: a long positive lets a
+ * former owner keep sending as a transferred name, and a long negative locks a
+ * freshly registered alias out of its own mailbox. Errors are never cached at
+ * all, so one timeout cannot strand the sender for the rest of the session.
+ */
+const AUTH_TTL_MS = 60_000
+const authCache = new Map<
+  string,
+  { verdict: Exclude<Nip05Lookup, { status: 'error' }>; expires: number }
+>()
+const authInFlight = new Map<string, Promise<Nip05Lookup>>()
+
 export function clearProbeCache(): void {
   cache.clear()
   inFlight.clear()
+  authCache.clear()
+  authInFlight.clear()
   // In-flight fetches keep their slots until they settle (their `finally`
   // releases them and their now-dropped result is discarded), so the slot
   // accounting stays consistent and parked waiters drain normally.
@@ -114,6 +142,102 @@ export function peekNip05(address: string): { pubkey: string | null } | null {
   const cached = cache.get(`${parts.localpart}@${parts.domain}`)
   if (cached && cached.expires > Date.now()) return { pubkey: cached.pubkey }
   return null
+}
+
+/**
+ * Resolve `address` for an AUTHORIZATION decision (may this key send as it?).
+ *
+ * Mirrors `nostr-bridge`'s `lookupNip05` rather than the routing probe above,
+ * because the two have different costs for being wrong:
+ *
+ * - A domain that answers with a usable NIP-05 document but does not list the
+ *   name is not the final word. A managed/workspace domain may publish a
+ *   well-known for other names while its records live in the backend, and a
+ *   just-registered alias can trail a CDN-cached well-known. Ask the backend
+ *   resolver, exactly as the bridge does, so the client never refuses mail the
+ *   bridge would accept.
+ * - A missing or unusable well-known is not "not owned" either. It means the
+ *   domain does not serve NIP-05 (the tenant case) or the lookup failed; the
+ *   resolver decides, and if it cannot be consulted the result is `error`.
+ *
+ * Errors are deliberately NOT cached: the send guard surfaces them as a
+ * transient "could not verify" and a retry must actually retry.
+ */
+export async function lookupNip05ForAuth(
+  address: string,
+  timeoutMs: number = BRIDGE_PROBE_TIMEOUT_MS,
+): Promise<Nip05Lookup> {
+  const parts = splitAddress(address)
+  if (!parts) return { status: 'error', message: `malformed address: ${address}` }
+
+  const key = `${parts.localpart}@${parts.domain}`
+  const cached = authCache.get(key)
+  if (cached && cached.expires > Date.now()) return cached.verdict
+
+  const pending = authInFlight.get(key)
+  if (pending) return pending
+
+  const query = (async (): Promise<Nip05Lookup> => {
+    // "answered" carries a usable document; "absent" is a 404; "unusable" is
+    // no usable answer at all (network failure, non-2xx, non-JSON body).
+    let wellKnown:
+      | { kind: 'found'; pubkey: string }
+      | { kind: 'answered'; names?: Record<string, string> }
+      | { kind: 'absent' }
+      | { kind: 'unusable' }
+
+    try {
+      const res = await fetch(
+        `https://${parts.domain}/.well-known/nostr.json?name=${encodeURIComponent(parts.localpart)}`,
+        { signal: AbortSignal.timeout(timeoutMs) },
+      )
+      if (res.status === 404) {
+        wellKnown = { kind: 'absent' }
+      } else if (!res.ok) {
+        wellKnown = { kind: 'unusable' }
+      } else {
+        try {
+          const json = (await res.json()) as { names?: Record<string, string> }
+          const pubkey = json.names?.[parts.localpart]
+          wellKnown = pubkey
+            ? { kind: 'found', pubkey }
+            : { kind: 'answered', names: json.names }
+        } catch {
+          // An SPA answering 200 for every path lands here, not in "absent".
+          wellKnown = { kind: 'unusable' }
+        }
+      }
+    } catch {
+      wellKnown = { kind: 'unusable' }
+    }
+
+    if (wellKnown.kind === 'found') {
+      return { status: 'found', pubkey: wellKnown.pubkey }
+    }
+
+    const viaResolver = await probeResolver(address, timeoutMs)
+    if (viaResolver) return { status: 'found', pubkey: viaResolver }
+
+    // A document did answer and simply lacks this name: normally its final
+    // answer. No usable document at all + resolver unreachable is a genuine
+    // "could not check", never a permanent negative. The bridge treats a
+    // resolver error here as not-found; the client must not, because that
+    // would print "you do not own this" for a lookup that never completed.
+    if (viaResolver === undefined) {
+      return { status: 'error', message: `NIP-05 lookup failed for ${address}` }
+    }
+    return { status: 'not-found' }
+  })()
+    .then((verdict) => {
+      if (verdict.status !== 'error') {
+        authCache.set(key, { verdict, expires: Date.now() + AUTH_TTL_MS })
+      }
+      return verdict
+    })
+    .finally(() => authInFlight.delete(key))
+
+  authInFlight.set(key, query)
+  return query
 }
 
 /**
