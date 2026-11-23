@@ -2281,3 +2281,40 @@ changed: both the staging keystore copy and the old local
 - Landing: personal and workspace mail presented side by side.
 - Version 0.5.2, Android `versionCode` 11. Built as the `direct`
   (Zapstore/sideload) flavor only, signed with cert `10549b63…`.
+
+## 2026-11-24 — Owned-alias send guard: resolver fallback, no false negatives
+
+**Reported:** customers saw `You do not own "<alias>", so it cannot be used
+as the From address.` even though the alias was correct and the account owned
+it — e.g. `josephus@mailstr.app`.
+
+**Root cause:** the send-time From guard reused `probeNip05`, the recipient
+*routing* probe, whose `null` means "not Nostr-native here" and deliberately
+collapses "not found" with "could not check". Two consequences:
+
+- A `200` well-known that had not yet listed a newly bought alias (or a stale
+  CDN copy) was treated as final. The bridge itself falls back to
+  `/api/nip-05/resolve` in that case, so the client refused mail the bridge
+  would accept.
+- A timeout/network failure was cached as a negative for 24 hours, so one slow
+  lookup kept producing the ownership error for the rest of the day.
+
+**Fix (client only; no bridge/backend changes):**
+
+- Added `lookupNip05ForAuth`. It mirrors the bridge: a well-known that answers
+  without the name is checked against the backend resolver; a missing or
+  unusable well-known also falls through to the resolver; an unreachable
+  resolver is a transient `error`, never `not-found`. Verdicts are cached for
+  60 seconds and errors are never cached.
+- The send path now distinguishes `owned` / `not-owned` / `unknown`.
+  `unknown` reports `Could not verify that you own "<alias>" — the NIP-05
+  lookup failed. Try again in a moment.` instead of falsely claiming
+  non-ownership.
+- `sendMail` accepts the composer's authenticated owned-alias list and treats
+  its entries as owned, so a stale public record cannot make an alias the
+  picker already offers unsendable.
+
+**Reproduced before the fix** with two failing tests: a stale well-known plus a
+resolver hit, and a transient network failure — both returned the reported
+`You do not own` error. All 585 client tests pass after the change; `tsc` and
+eslint are clean.
