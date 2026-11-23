@@ -163,6 +163,101 @@ describe('buildWraps', () => {
     expect(wraps.length).toBeGreaterThan(0)
   })
 
+  // The reported bug: an alias the backend has already assigned to this key
+  // (so it is certainly owned) was still refused when the public well-known
+  // answered with a stale document that did not list it yet — a just-bought
+  // alias, or a CDN-cached well-known. The bridge itself falls back to the
+  // backend resolver for exactly this case; the client did not, so a send the
+  // bridge would accept was blocked before it left the browser.
+  it('accepts an alias when its well-known is stale but the resolver knows it', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.includes('/api/nip-05/resolve')) {
+          return new Response(JSON.stringify({ pubkey: ALICE_PK }))
+        }
+        // A valid NIP-05 document that has not caught up with the new alias.
+        return new Response(JSON.stringify({ names: {} }))
+      }),
+    )
+    const { wraps, errors } = await buildWraps({
+      ...base,
+      from: { address: 'alice@mailstr.app' },
+      to: ['b@example.org'],
+    })
+    expect(errors).toEqual([])
+    expect(toBridge(wraps)).toHaveLength(1)
+  })
+
+  // A transient lookup failure is not evidence that the key does not own the
+  // address. Reporting "You do not own" here is both false and unactionable;
+  // the old shared probe cache then kept that false verdict for 24 hours.
+  it('does not claim an address is unowned when the lookup itself failed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        throw new TypeError('network down')
+      }),
+    )
+    const { wraps, errors } = await buildWraps({
+      ...base,
+      from: { address: 'alice@mailstr.app' },
+      to: ['b@example.org'],
+    })
+    expect(wraps).toEqual([])
+    expect(errors[0]).not.toMatch(/do not own/i)
+    expect(errors[0]).toMatch(/verify|lookup|try again/i)
+  })
+
+  // An alias the backend already lists as owned is sendable even when every
+  // lookup is unreachable. This is the customer's case: the address is correct
+  // and theirs, but a slow/blocked well-known used to veto the send.
+  it('accepts an owned alias when every NIP-05 lookup is unreachable', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        throw new TypeError('network down')
+      }),
+    )
+    const { wraps, errors } = await buildWraps({
+      ...base,
+      from: { address: 'alice@mailstr.app' },
+      ownedAliases: ['ALICE@mailstr.app'],
+      to: ['b@example.org'],
+    })
+    expect(errors).toEqual([])
+    expect(toBridge(wraps)).toHaveLength(1)
+  })
+
+  // The ownership lookup must not borrow the routing cache's 24h negative. A
+  // retry after the network returns has to actually re-check.
+  it('does not cache a transient ownership failure', async () => {
+    let down = true
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        if (down) throw new TypeError('network down')
+        return new Response(JSON.stringify({ names: { alice: ALICE_PK } }))
+      }),
+    )
+    const first = await buildWraps({
+      ...base,
+      from: { address: 'alice@mailstr.app' },
+      to: ['b@example.org'],
+    })
+    expect(first.errors[0]).toMatch(/could not verify/i)
+
+    down = false
+    const second = await buildWraps({
+      ...base,
+      from: { address: 'alice@mailstr.app' },
+      to: ['b@example.org'],
+    })
+    expect(second.errors).toEqual([])
+    expect(toBridge(second.wraps)).toHaveLength(1)
+  })
+
   // A workspace (tenant) domain is served by the same bridge, so a From on it
   // is a legal sender for external mail — provided the address resolves to the
   // sending key. Before localDomains included owned workspace domains, the

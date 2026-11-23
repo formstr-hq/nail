@@ -12,7 +12,7 @@ import {
 } from '@protocol'
 import { deliverWraps } from './deliver'
 import { BRIDGE_DOMAIN } from '@/app/lib/nostr/constants'
-import { probeNip05 } from '@/app/lib/nostr/nip05'
+import { lookupNip05ForAuth } from '@/app/lib/nostr/nip05'
 import { buildRfc2822 } from './rfc2822'
 import { resolveRecipients, type ResolveContext } from './resolve'
 import type { MailAddress } from '@/app/types/mail'
@@ -35,25 +35,59 @@ import { keyForAddress } from '@/app/lib/pgp/keyring'
  * `authorizeSender` exactly — no npub shortcut — and only when there are
  * external recipients that actually require the bridge.
  *
+ * `unknown` is a first-class outcome: a lookup that could not be completed is
+ * not evidence of non-ownership. Collapsing it into `not-owned` (the old
+ * behaviour) told users they did not own a correct alias whenever the NIP-05
+ * probe timed out, and the shared routing cache then kept that false verdict
+ * for 24 hours.
+ *
  * UX guard, not the security boundary. The bridge enforces against
  * `seal.pubkey`, the only version an attacker cannot route around; a modified
  * client can skip this entirely.
  */
-async function senderOwnsFromAddress(from: string, senderPubkey: string): Promise<boolean> {
+type Ownership = 'owned' | 'not-owned' | 'unknown'
+
+function isOwnedAlias(from: string, ownedAliases: string[] | undefined): boolean {
+  const target = from.trim().toLowerCase()
+  return (ownedAliases ?? []).some((a) => a.trim().toLowerCase() === target)
+}
+
+/** Look the address up and compare it to the signing key. */
+async function nip05OwnsFrom(from: string, senderPubkey: string): Promise<Ownership> {
+  const verdict = await lookupNip05ForAuth(from)
+  if (verdict.status === 'error') return 'unknown'
+  if (verdict.status === 'not-found') return 'not-owned'
+  return verdict.pubkey === senderPubkey ? 'owned' : 'not-owned'
+}
+
+async function senderOwnsFromAddress(
+  from: string,
+  senderPubkey: string,
+  ownedAliases: string[] | undefined,
+): Promise<Ownership> {
   const parts = splitAddress(from)
-  if (!parts) return false
+  if (!parts) return 'not-owned'
 
   // `<npub>@<domain>` is derived from the key itself, so ownership is provable
   // locally — no lookup, and it works before any name has been registered.
   if (isNpub(parts.localpart)) {
     try {
       return (nip19.decode(parts.localpart).data as string) === senderPubkey
+        ? 'owned'
+        : 'not-owned'
     } catch {
-      return false
+      return 'not-owned'
     }
   }
 
-  return (await probeNip05(from)) === senderPubkey
+  // The backend's owned-address list is the authority the composer itself was
+  // built from (`/api/nip-05/get-nip05`, NIP-98 authenticated). If an alias is
+  // in it, a stale public well-known or a transient probe failure must not
+  // override that: the alias may have just been bought, or its CDN copy may
+  // still be a version behind.
+  if (isOwnedAlias(from, ownedAliases)) return 'owned'
+
+  return nip05OwnsFrom(from, senderPubkey)
 }
 
 // The bridge relays outbound legacy mail only for a registered NIP-05 alias
@@ -69,6 +103,18 @@ export function unregisteredSenderError(fromAddress: string, domains: string[]):
     `${UNREGISTERED_SENDER_PHRASE} on ${domains.join('/')}. ` +
     `"${fromAddress}" is not one, so the bridge would bounce this message. ` +
     `Use a registered alias as the From, or remove the external recipients.`
+  )
+}
+
+/**
+ * The lookup needed to prove ownership could not be completed. This is NOT
+ * "you do not own it" — the address may be perfectly valid — so the copy says
+ * what actually happened and makes retrying the obvious next step.
+ */
+export function unverifiedSenderError(fromAddress: string): string {
+  return (
+    `Could not verify that you own "${fromAddress}" — the NIP-05 lookup failed. ` +
+    `Try again in a moment.`
   )
 }
 
@@ -90,6 +136,13 @@ export interface SendMailParams {
   references?: string[]
   ctx: ResolveContext
   signer: ProtocolSigner
+  /**
+   * The aliases the backend says this account owns (`get-nip05`). Authoritative
+   * for the client-side guard: the composer's From picker is built from this
+   * list, so a stale public well-known must not make one of its entries
+   * unsendable.
+   */
+  ownedAliases?: string[]
   /**
    * The active signer, used to NIP-98 authorize the bridge send-wrap API. A
    * `ProtocolSigner` cannot stand in: NIP-98 signs an unsigned template (no
@@ -132,14 +185,22 @@ export async function buildWraps(
   // Refuse before anything is published. Sending as an address you do not own
   // would be rejected by the bridge anyway, but only after a round trip — and
   // for Nostr-native recipients it would simply display as unverified, which
-  // is confusing rather than informative.
-  if (!(await senderOwnsFromAddress(from.address, senderPubkey))) {
+  // is confusing rather than informative. A lookup that could not be completed
+  // is reported as such, never as non-ownership.
+  const ownership = await senderOwnsFromAddress(
+    from.address,
+    senderPubkey,
+    params.ownedAliases,
+  )
+  if (ownership !== 'owned') {
     return {
       wraps: [],
       targets: [],
       errors: [
-        `You do not own "${from.address}", so it cannot be used as the From address. ` +
-          `Pick one of your own addresses in Settings.`,
+        ownership === 'unknown'
+          ? unverifiedSenderError(from.address)
+          : `You do not own "${from.address}", so it cannot be used as the From address. ` +
+            `Pick one of your own addresses in Settings.`,
       ],
     }
   }
@@ -318,11 +379,18 @@ export async function buildWraps(
     // must match the bridge exactly. Mail to local (Nostr-direct) recipients
     // never reaches this branch, so an npub From stays legal for internal mail.
     const fromParts = splitAddress(from.address)
-    if (
+    const bridgeOwnership: Ownership =
       !fromParts ||
       !ctx.localDomains.includes(fromParts.domain) ||
-      (await probeNip05(from.address)) !== senderPubkey
-    ) {
+      isNpub(fromParts.localpart)
+        ? 'not-owned'
+        : isOwnedAlias(from.address, params.ownedAliases)
+          ? 'owned'
+          : await nip05OwnsFrom(from.address, senderPubkey)
+    if (bridgeOwnership === 'unknown') {
+      return { wraps: [], targets: [], errors: [unverifiedSenderError(from.address)] }
+    }
+    if (bridgeOwnership !== 'owned') {
       return {
         wraps: [],
         targets: [],
