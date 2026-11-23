@@ -2262,3 +2262,22 @@ changed: both the staging keystore copy and the old local
   does not re-extract an imitation.
 - Version 0.5.1, Android `versionCode` 10. The patch release also invalidates
   the store's per-version icon cache.
+
+## 2026-11-24 — Release 0.5.2: owned-alias send fix and workspace/mail updates
+
+- Fixed the reported "You do not own ..." send failure for aliases the account
+  actually owns. The From guard no longer reuses the recipient routing probe:
+  it asks the backend resolver when a public well-known is stale or missing,
+  caches authorization for only 60s, never caches a lookup error, and accepts
+  aliases returned by the authenticated owned-address list. An unreachable
+  lookup now says "Could not verify..." rather than falsely claiming
+  non-ownership.
+- Workspace: shared npub seat pool shown across domains, and DNS names rendered
+  in the form providers expect.
+- Mail: large messages stored as encrypted Blossom pointers, with pinned blobs
+  and recipient-first deletion.
+- Sidebar: pinned inboxes and an address switcher; onboarding no longer
+  republishes unchanged relay lists and Skip stays local.
+- Landing: personal and workspace mail presented side by side.
+- Version 0.5.2, Android `versionCode` 11. Built as the `direct`
+  (Zapstore/sideload) flavor only, signed with cert `10549b63…`.
