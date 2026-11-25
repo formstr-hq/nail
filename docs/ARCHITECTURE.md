@@ -460,6 +460,15 @@ exposes the recipient's metadata. This is handled in the local relay, not here:
 discarded, so an account whose kind-10050 list pointed at an AUTH-gated relay
 saw almost none of its mail with no error anywhere.
 
+0.6.2's replay was still broken against relay.formstr.app, which registers an
+AUTH asynchronously (about one round trip before its `OK`): the REQs were
+replayed on the same tick as the `["AUTH", …]`, refused with `auth-required`,
+and never re-sent. Mail that lived only there never reached a fresh store (new
+device, cleared cache) while a warm desktop still showed it from IndexedDB.
+**0.7.2** waits for the `OK` (or a 600ms grace) before replaying and parks
+`auth-required` wires so a late `OK` replays them again.
+`localRelay.auth.test.ts` models the relay's timing and fails on 0.6.2.
+
 ### Outbound ingest: send-wrap API first, relay fallback
 
 The bridge-bound wrap (the one p-tagged to the bridge pubkey) has two possible
