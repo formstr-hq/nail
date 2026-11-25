@@ -2318,3 +2318,20 @@ collapses "not found" with "could not check". Two consequences:
 resolver hit, and a transient network failure — both returned the reported
 `You do not own` error. All 585 client tests pass after the change; `tsc` and
 eslint are clean.
+
+## 2026-11-25 — Release 0.5.3: mail from AUTH-gated relays reaches fresh devices
+
+- Mail delivered only to relay.formstr.app showed on a warm desktop but never
+  on mobile. The relay registers a NIP-42 AUTH about one round trip before its
+  `OK` and refuses kind-1059 REQs until then; `@formstr/local-relay` 0.6.2
+  replayed its REQs on the same tick as the AUTH, so the replay was always
+  refused and never re-sent. Measured on the live relay with a fresh store:
+  0.6.2 delivered 0/12, 0.7.2 12/12 (4/4 with ~900ms added latency). Bumped to
+  0.7.2, which waits for the `OK`; `localRelay.auth.test.ts` models the timing
+  and fails on 0.6.2.
+- Known gap, not fixed: relay.formstr.app serves a gift wrap only to the
+  authenticated recipient, so the key-free background notifier cannot read it.
+  Mail that exists only there produces no background notification (bridged
+  mail is unaffected — it is always also on relay.primal.net).
+- Version 0.5.3, Android `versionCode` 12. Built as the `direct`
+  (Zapstore/sideload) flavor only, signed with cert `10549b63…`.

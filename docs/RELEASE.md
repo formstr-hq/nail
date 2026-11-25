@@ -1,6 +1,6 @@
 # Android release runbook (Mail by Form*)
 
-Last used: **2026-11-24, v0.5.2**. Keep this file with the code; update it when
+Last used: **2026-11-25, v0.5.3**. Keep this file with the code; update it when
 the release path changes.
 
 ## What ships where
